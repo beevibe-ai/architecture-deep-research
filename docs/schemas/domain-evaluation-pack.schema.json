@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/adr-compiler/schemas/domain-evaluation-pack.schema.json",
+  "title": "Beevibe ADR Compiler Domain Evaluation Pack",
+  "type": "object",
+  "required": ["version", "suite", "target_topologies", "metrics", "test_cases"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "suite": {
+      "type": "string"
+    },
+    "target_topologies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "deterministic_lineage_rate": {
+          "type": "object",
+          "required": ["target"],
+          "properties": {
+            "target": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "boundary_spill_tolerance": {
+          "type": "object",
+          "required": ["target"],
+          "properties": {
+            "target": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "unsupported_answer_rate": {
+          "type": "object",
+          "required": ["target"],
+          "properties": {
+            "target": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "question", "expected_entities", "acceptance_criteria"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "question": { "type": "string" },
+          "expected_entities": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "minimum_citation_depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "abstention_rule": {
+            "type": "string"
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

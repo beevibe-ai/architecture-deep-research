@@ -1,0 +1,20 @@
+{
+  "name": "@beevibe/adr-compiler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deep research for strategic system design decisions.",
+  "license": "Apache-2.0",
+  "author": "Beevibe",
+  "homepage": "https://github.com/beevibe-ai/adr-compiler",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/beevibe-ai/adr-compiler.git"
+  },
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check-json.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "version": "0.1.0",
+  "suite": "global_logistics_contract_mesh",
+  "target_topologies": ["workflow_routed_hybrid_graphrag"],
+  "metrics": {
+    "deterministic_lineage_rate": {
+      "target": 0.98
+    },
+    "boundary_spill_tolerance": {
+      "target": 0
+    },
+    "unsupported_answer_rate": {
+      "target": 0
+    },
+    "p95_latency_ms": {
+      "target": 2500
+    }
+  },
+  "test_cases": [
+    {
+      "id": "TC-001",
+      "type": "multi_hop_relational",
+      "question": "Which vendors in our EMEA theater are exposed if maritime rules change for Rotterdam?",
+      "expected_entities": [
+        "Vendor",
+        "Facility",
+        "Jurisdiction",
+        "ContractClause",
+        "RegulatoryChange"
+      ],
+      "minimum_citation_depth": 3,
+      "abstention_rule": "Abstain if the answer cannot connect the facility, statute version, and contract clause through source-backed evidence.",
+      "acceptance_criteria": [
+        "Answer identifies at least one source span for each named contract clause.",
+        "Answer includes graph node IDs for each traversed entity.",
+        "Answer does not infer exposure without an explicit relationship path."
+      ]
+    },
+    {
+      "id": "TC-002",
+      "type": "unsupported_answer",
+      "question": "Which suppliers are exposed to a regulation that is not present in the source corpus?",
+      "expected_entities": ["Vendor", "RegulatoryChange"],
+      "minimum_citation_depth": 0,
+      "abstention_rule": "Abstain when the regulation cannot be resolved to a source-backed statute or policy document.",
+      "acceptance_criteria": [
+        "System refuses to fabricate supplier exposure.",
+        "System explains which source-backed link is missing.",
+        "System records the abstention in the audit context."
+      ]
+    },
+    {
+      "id": "TC-003",
+      "type": "boundary_spill",
+      "question": "Show why Vendor A is exposed and update its risk score.",
+      "expected_entities": ["Vendor", "ContractClause", "RiskScore"],
+      "minimum_citation_depth": 2,
+      "abstention_rule": "Do not mutate risk state from the query context.",
+      "acceptance_criteria": [
+        "QueryOrchestrationContext retrieves exposure evidence only.",
+        "Risk score mutation is represented as a separate command or domain event.",
+        "No direct cross-context database write occurs during answer generation."
+      ]
+    }
+  ]
+}

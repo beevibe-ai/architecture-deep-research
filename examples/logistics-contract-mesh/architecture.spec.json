@@ -1,0 +1,108 @@
+{
+  "version": "0.1.0",
+  "decision": {
+    "id": "ADR-001",
+    "title": "Retrieval And Reasoning Topology",
+    "status": "proposed",
+    "selected_topology": "workflow_routed_hybrid_graphrag",
+    "summary": "Use deterministic workflow routing over graph-backed retrieval, with vector and lexical retrieval as bounded fallback tools."
+  },
+  "domain_model": {
+    "bounded_contexts": [
+      "ContractIngestionContext",
+      "GraphExtractionContext",
+      "QueryOrchestrationContext",
+      "TraceabilityAuditContext"
+    ],
+    "core_entities": [
+      "Vendor",
+      "Facility",
+      "Contract",
+      "ContractClause",
+      "Jurisdiction",
+      "ShipmentLane",
+      "RegulatoryChange"
+    ],
+    "domain_invariants": [
+      "Every answer must include source span IDs.",
+      "Compliance-critical answers must include graph node IDs when graph traversal is used.",
+      "The query orchestrator must not mutate ingestion state.",
+      "Cross-context communication must happen through explicit interfaces or domain events.",
+      "The system must abstain when source-backed lineage cannot be established."
+    ]
+  },
+  "candidate_topologies": [
+    {
+      "name": "naive_vector_rag",
+      "fit": "Good for self-contained document search, weak for multi-hop contract exposure analysis.",
+      "risks": [
+        "Relationship-heavy facts can be flattened into unrelated chunks.",
+        "Lineage can degrade into loose similarity rather than explicit evidence.",
+        "Hard to prove why a cross-document dependency exists."
+      ],
+      "decision": "rejected"
+    },
+    {
+      "name": "pure_agentic_search",
+      "fit": "Useful for exploratory analyst research, weak as the primary compliance answer path.",
+      "risks": [
+        "Non-deterministic latency.",
+        "Variable tool paths and cost.",
+        "Harder audit and replay semantics."
+      ],
+      "decision": "rejected"
+    },
+    {
+      "name": "workflow_routed_hybrid_graphrag",
+      "fit": "Strong fit for relationship-heavy contract reasoning with deterministic execution and source-backed lineage.",
+      "risks": [
+        "Higher ingestion complexity.",
+        "Requires ontology governance.",
+        "Requires explicit evaluation of extraction quality."
+      ],
+      "decision": "selected"
+    }
+  ],
+  "guardrails": {
+    "forbidden_topologies": [
+      "naive_vector_rag_primary_path",
+      "unbounded_react_loop_primary_path",
+      "graph_only_retrieval_without_source_spans"
+    ],
+    "required_invariants": [
+      "All generated answers must include source span IDs.",
+      "Graph traversal results must include graph node IDs.",
+      "Compliance-critical queries must run through deterministic workflow routing.",
+      "Agentic search is allowed only outside the primary compliance answer path.",
+      "Cross-context reads must go through explicit interfaces rather than direct database coupling."
+    ],
+    "allowed_agentic_use": [
+      "background research",
+      "analyst exploration",
+      "source discovery",
+      "ontology enrichment proposals pending human review"
+    ]
+  },
+  "evidence": [
+    {
+      "label": "Microsoft GraphRAG",
+      "url": "https://microsoft.github.io/graphrag/",
+      "relevance": "Reference architecture for graph-centered indexing and querying over complex corpora."
+    },
+    {
+      "label": "Neo4j GraphRAG",
+      "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "relevance": "Graph-backed retrieval pattern for connected data and explainable relationship traversal."
+    },
+    {
+      "label": "LangGraph",
+      "url": "https://docs.langchain.com/oss/python/langgraph/overview",
+      "relevance": "Stateful workflow and agent orchestration primitives suitable for deterministic routing."
+    },
+    {
+      "label": "LlamaIndex Property Graph Index",
+      "url": "https://docs.llamaindex.ai/en/stable/examples/property_graph/property_graph_basic/",
+      "relevance": "Property graph retrieval pattern for entity-centered RAG applications."
+    }
+  ]
+}

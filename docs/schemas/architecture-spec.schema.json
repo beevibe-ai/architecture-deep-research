@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/adr-compiler/schemas/architecture-spec.schema.json",
+  "title": "Beevibe ADR Compiler Architecture Spec",
+  "type": "object",
+  "required": ["version", "decision", "domain_model", "candidate_topologies", "guardrails"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "object",
+      "required": ["id", "title", "status", "selected_topology", "summary"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["proposed", "approved", "superseded", "rejected"]
+        },
+        "selected_topology": { "type": "string" },
+        "summary": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "domain_model": {
+      "type": "object",
+      "required": ["bounded_contexts", "core_entities", "domain_invariants"],
+      "properties": {
+        "bounded_contexts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "core_entities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "domain_invariants": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "candidate_topologies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "fit", "risks", "decision"],
+        "properties": {
+          "name": { "type": "string" },
+          "fit": { "type": "string" },
+          "risks": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "decision": {
+            "type": "string",
+            "enum": ["selected", "rejected", "deferred"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "guardrails": {
+      "type": "object",
+      "required": ["forbidden_topologies", "required_invariants"],
+      "properties": {
+        "forbidden_topologies": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "required_invariants": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowed_agentic_use": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "url", "relevance"],
+        "properties": {
+          "label": { "type": "string" },
+          "url": { "type": "string" },
+          "relevance": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
