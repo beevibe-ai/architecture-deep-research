@@ -1265,7 +1265,7 @@ async function research({ inputPath, flags }) {
   return deepResearch({ inputPath, flags });
 }
 
-async function deepResearch({ inputPath, flags }) {
+async function prepareRun({ inputPath, flags }) {
   if (!inputPath || !flags.domain || !flags.decision || !flags.out) {
     throw new Error("Usage: adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir>");
   }
@@ -1299,7 +1299,10 @@ async function deepResearch({ inputPath, flags }) {
     needs_clarification: clarification.needs_clarification
   });
 
-  if (clarification.needs_clarification && flags["strict-clarification"]) {
+  const needsClarification =
+    clarification.needs_clarification && Boolean(flags["strict-clarification"]);
+
+  if (needsClarification) {
     await writeJson(path.join(outDir, "state.json"), {
       version: VERSION,
       status: "needs_clarification",
@@ -1309,10 +1312,19 @@ async function deepResearch({ inputPath, flags }) {
     await appendEvent(outDir, "run_waiting_for_clarification", {
       questions: clarification.questions
     });
-    console.log(`Clarification needed. Questions written to ${path.join(outDir, "clarification.json")}`);
-    return;
   }
 
+  return {
+    runtime,
+    outDir,
+    content,
+    context,
+    clarification,
+    needsClarification
+  };
+}
+
+async function planResearchPhase({ context, content, outDir, flags }) {
   const plan = await buildResearchPlan(context, content);
   const maxCycles = Number(flags["max-cycles"] || 2);
   const boundedPlan = {
@@ -1325,14 +1337,14 @@ async function deepResearch({ inputPath, flags }) {
     task_count: boundedPlan.tasks.length,
     max_cycles: maxCycles
   });
+  return boundedPlan;
+}
 
-  const researchResults = await runResearchAgents({
-    plan: boundedPlan,
-    context,
-    flags,
-    outDir
-  });
-  const evidenceItems = assignCitations(researchResults.flatMap((result) => result.evidence));
+async function executeResearchPhase({ plan, context, outDir, flags }) {
+  const researchResults = await runResearchAgents({ plan, context, flags, outDir });
+  const evidenceItems = assignCitations(
+    researchResults.flatMap((result) => result.evidence)
+  );
   const knowledgeMap = buildKnowledgeMap(evidenceItems);
 
   await writeJson(path.join(outDir, "evidence.json"), evidenceItems);
@@ -1346,12 +1358,27 @@ async function deepResearch({ inputPath, flags }) {
     promoted_candidate_count: knowledgeMap.promoted_candidates.length
   });
 
-  const spec = await synthesizeArchitectureSpec({ context, knowledgeMap, evidenceItems });
+  return { researchResults, evidenceItems, knowledgeMap };
+}
+
+async function synthesizeDecisionPhase({ context, knowledgeMap, evidenceItems }) {
+  return synthesizeArchitectureSpec({ context, knowledgeMap, evidenceItems });
+}
+
+async function writeRunArtifacts({
+  context,
+  plan,
+  spec,
+  evidenceItems,
+  researchResults,
+  knowledgeMap,
+  outDir
+}) {
   const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems);
   const handoff = buildExecutionHandoff(spec);
   const report = synthesizeResearchReport({
     context,
-    plan: boundedPlan,
+    plan,
     spec,
     evidenceItems,
     researchResults,
@@ -1379,9 +1406,56 @@ async function deepResearch({ inputPath, flags }) {
     evidence_count: evidenceItems.length
   });
 
-  console.log(`Deep research artifacts written to ${outDir}`);
-  console.log(`Selected topology: ${spec.decision.selected_topology}`);
-  console.log(`Evidence items: ${evidenceItems.length}`);
+  return {
+    selectedTopology: spec.decision.selected_topology,
+    evidenceCount: evidenceItems.length,
+    promotedCandidateCount: knowledgeMap.promoted_candidates.length,
+    handoffBoundary: "adr_stops_at_execution_handoff"
+  };
+}
+
+async function deepResearch({ inputPath, flags }) {
+  const prepared = await prepareRun({ inputPath, flags });
+  if (prepared.needsClarification) {
+    console.log(
+      `Clarification needed. Questions written to ${path.join(prepared.outDir, "clarification.json")}`
+    );
+    return;
+  }
+
+  const plan = await planResearchPhase({
+    context: prepared.context,
+    content: prepared.content,
+    outDir: prepared.outDir,
+    flags
+  });
+
+  const { researchResults, evidenceItems, knowledgeMap } = await executeResearchPhase({
+    plan,
+    context: prepared.context,
+    outDir: prepared.outDir,
+    flags
+  });
+
+  const spec = await synthesizeDecisionPhase({
+    context: prepared.context,
+    knowledgeMap,
+    evidenceItems
+  });
+
+  const result = await writeRunArtifacts({
+    context: prepared.context,
+    plan,
+    spec,
+    evidenceItems,
+    researchResults,
+    knowledgeMap,
+    outDir: prepared.outDir
+  });
+
+  console.log(`Deep research artifacts written to ${prepared.outDir}`);
+  console.log(`Selected topology: ${result.selectedTopology}`);
+  console.log(`Evidence items: ${result.evidenceCount}`);
   console.log("Boundary: ADR stops at Execution Handoff");
 }
 
@@ -1441,9 +1515,14 @@ export {
   buildStrategicContext,
   classifySource,
   deepResearch,
+  executeResearchPhase,
   getLlmJsonProvider,
+  planResearchPhase,
+  prepareRun,
   research,
   runResearchAgents,
   setLlmJsonProvider,
-  supersedeAdr
+  supersedeAdr,
+  synthesizeDecisionPhase,
+  writeRunArtifacts
 };

@@ -1,4 +1,9 @@
-import { runLangGraphDeepResearch } from "../adapters/langgraph.mjs";
+import {
+  createAdrLangGraph,
+  createAdrLangGraphLegacy,
+  runLangGraphDeepResearch
+} from "../adapters/langgraph.mjs";
+import { createLangChainJsonProvider } from "../adapters/langgraph-llm.mjs";
 import { createBeevibeArchitectAgentConfig } from "../adapters/beevibe.mjs";
 import {
   createAdkDeepResearchAgent,
@@ -15,6 +20,31 @@ import {
 
 if (typeof runLangGraphDeepResearch !== "function") {
   throw new Error("LangGraph adapter did not export runLangGraphDeepResearch.");
+}
+
+// Structural check: the full StateGraph compiles and exposes all phase nodes.
+const langGraph = createAdrLangGraph();
+const expectedNodes = [
+  "prepare_run",
+  "plan_research",
+  "execute_research",
+  "synthesize_decision",
+  "write_artifacts"
+];
+for (const node of expectedNodes) {
+  if (!langGraph.nodes || !langGraph.nodes[node]) {
+    throw new Error(`LangGraph runtime is missing the ${node} node.`);
+  }
+}
+if (typeof createAdrLangGraphLegacy !== "function") {
+  throw new Error("LangGraph adapter did not export createAdrLangGraphLegacy.");
+}
+if (typeof createLangChainJsonProvider !== "function") {
+  throw new Error("LangGraph LLM adapter did not export createLangChainJsonProvider.");
+}
+const lcProvider = createLangChainJsonProvider({ model: "openai:gpt-4.1-mini" });
+if (typeof lcProvider !== "function") {
+  throw new Error("createLangChainJsonProvider did not return a function.");
 }
 
 const adkAgent = createArchitectureDeepResearchAgent();

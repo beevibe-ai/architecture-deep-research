@@ -178,14 +178,17 @@ ADR keeps the kernel framework-neutral and exposes adapters:
 - `adapters/google-adk.mjs`
 - `adapters/beevibe.mjs`
 
-LangGraph:
+LangGraph (full StateGraph runtime; LangChain `initChatModel` for the LLM):
 
 ```bash
 npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
-  --out .adr-runs/langgraph-logistics
+  --out .adr-runs/langgraph-logistics \
+  --model openai:gpt-4.1-mini
 ```
+
+The `--model` string is passed to LangChain's universal `initChatModel`. Examples: `openai:gpt-4.1-mini`, `google-genai:gemini-2.5-flash`, `anthropic:claude-3-5-sonnet-latest`, `ollama:llama3.1`. Install the matching `@langchain/<provider>` package.
 
 Google ADK (Gemini as the LLM backend for the live agentic loop):
 

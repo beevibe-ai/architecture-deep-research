@@ -14,9 +14,10 @@ The product constraint is strict:
 Every real ADR run needs both:
 
 - A live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`.
-- An LLM provider for JSON synthesis. Two backends are supported:
+- An LLM provider for JSON synthesis. Three backends are supported:
   - **OpenAI-compatible** (default): `ADR_OPENAI_API_KEY` or `OPENAI_API_KEY`, with optional `ADR_OPENAI_BASE_URL`.
-  - **Gemini via Google ADK**: `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY`. Run through the `adr:adk` CLI or call `setLlmJsonProvider(createAdkJsonProvider({ model }))` before `deepResearch`. See [framework-adapters.md](./framework-adapters.md#gemini-as-llm-provider-adapter).
+  - **LangChain via the LangGraph runtime**: any provider supported by LangChain's `initChatModel` (OpenAI, Anthropic, Google, Bedrock, Mistral, Ollama, Groq, DeepSeek, ...). Run through the `adr:langgraph` CLI with `--model provider:model` or call `setLlmJsonProvider(createLangChainJsonProvider({ model }))` before `deepResearch`. See [framework-adapters.md](./framework-adapters.md#langgraph).
+  - **Gemini via Google ADK**: `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY`. Run through the `adr:adk` CLI or call `setLlmJsonProvider(createAdkJsonProvider({ model }))` before `deepResearch`. See [framework-adapters.md](./framework-adapters.md#google-adk).
 
 ```bash
 export BRAVE_SEARCH_API_KEY=...
@@ -89,7 +90,19 @@ npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md
   --max-sources 4
 ```
 
-Gemini / Google ADK runtime (same pipeline, different LLM backend):
+LangGraph runtime (full StateGraph orchestration; LLM via LangChain `initChatModel`):
+
+```bash
+npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out .adr-runs/langgraph-logistics \
+  --model openai:gpt-4.1-mini \
+  --max-cycles 2 \
+  --max-sources 4
+```
+
+Gemini / Google ADK runtime (same kernel pipeline, ADK-driven LLM backend):
 
 ```bash
 npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \

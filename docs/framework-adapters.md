@@ -4,40 +4,53 @@ ADR keeps the artifact kernel framework-neutral, then exposes real adapter entry
 
 ## LangGraph
 
-The LangGraph adapter lives in:
+The LangGraph runtime lives in:
 
 ```text
 adapters/langgraph.mjs
+adapters/langgraph-llm.mjs
 ```
 
-It uses:
+It owns orchestration, state, and checkpointing. The ADR kernel still owns the Strategic Context Model, evidence acquisition, the knowledge map, synthesis, and the Execution Handoff boundary — LangGraph just walks the kernel's phases as explicit graph nodes.
 
-- `StateGraph`
-- `START`
-- `END`
-- `MemorySaver`
-
-The graph is intentionally small:
+### Graph shape
 
 ```text
 START
-  -> run_adr_deep_research_kernel
-  -> load_execution_handoff
+  -> prepare_run                  (strategic context + clarification)
+       |
+       +-- needs_clarification? --> END
+       |
+  -> plan_research                (research plan)
+  -> execute_research             (search, claim extraction, knowledge map)
+  -> synthesize_decision          (architecture spec)
+  -> write_artifacts              (ADR.md, spec, eval pack, guardrails, handoff, ...)
   -> END
 ```
 
-This gives LangGraph ownership of orchestration/checkpointing while ADR still owns the Strategic Context Model, evidence preservation, artifact validation, and Execution Handoff boundary.
+Each node maps to an exported kernel phase function (`prepareRun`, `planResearchPhase`, `executeResearchPhase`, `synthesizeDecisionPhase`, `writeRunArtifacts`). The graph is checkpointed with `MemorySaver`, so a run can pause and resume on the same `thread_id`.
 
-Run:
+### LLM backend
+
+The LangGraph runtime installs a LangChain `initChatModel`-backed JSON provider on the kernel before invoking the graph. The default model is `openai:gpt-4.1-mini`, overridable via `--model` or the `LANGGRAPH_LLM` env var. Any provider supported by LangChain's universal initializer works (OpenAI, Anthropic, Google, Bedrock, Mistral, Ollama, Groq, DeepSeek, ...) — install the relevant `@langchain/<provider>` package, then pass `provider:model` as the model string.
+
+### CLI
 
 ```bash
 npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
-  --out /tmp/adr-langgraph-output
+  --out .adr-runs/langgraph-logistics \
+  --model openai:gpt-4.1-mini \
+  --max-cycles 2
 ```
 
-Programmatic use:
+Required env:
+
+- one live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`
+- the API key for the model in `--model` (for example `OPENAI_API_KEY`)
+
+### Programmatic use
 
 ```js
 import { runLangGraphDeepResearch } from "./adapters/langgraph.mjs";
@@ -46,11 +59,28 @@ await runLangGraphDeepResearch({
   inputPath: "examples/logistics-contract-mesh/product-context.md",
   domain: "global logistics contract analysis",
   decision: "retrieval topology",
-  outDir: "/tmp/adr-langgraph-output",
+  outDir: ".adr-runs/langgraph-logistics",
   flags: { "max-cycles": "2", "max-sources": "4" },
+  model: "google-genai:gemini-2.5-flash",
   threadId: "adr-demo"
 });
 ```
+
+To use the same LangChain provider with the kernel directly (no graph):
+
+```js
+import { deepResearch, setLlmJsonProvider } from "@beevibe/architecture-deep-research";
+import { createLangChainJsonProvider } from "@beevibe/architecture-deep-research/adapters/langgraph-llm";
+
+setLlmJsonProvider(createLangChainJsonProvider({ model: "anthropic:claude-3-5-sonnet-latest" }), {
+  label: "langchain:anthropic"
+});
+await deepResearch({ inputPath, flags: { domain, decision, out: outDir } });
+```
+
+### Back-compat
+
+The previous single-node graph is still available as `createAdrLangGraphLegacy()` for callers that already install an LLM provider externally (for example via the Google ADK adapter) and only want LangGraph as a thin orchestration shell.
 
 ## Google ADK
 
@@ -169,7 +199,8 @@ npm run smoke:frameworks
 
 This test verifies adapter shape only. It does not run fake research without live credentials.
 
-- the LangGraph adapter exports the deep research runner;
+- the LangGraph runtime compiles a StateGraph with all five phase nodes (`prepare_run`, `plan_research`, `execute_research`, `synthesize_decision`, `write_artifacts`) and exposes the legacy single-node graph for back-compat;
+- the LangChain JSON provider factory loads and returns a callable;
 - the Google ADK tool-wrapper adapter can construct an agent with the ADR function tool;
 - the Google ADK Gemini-as-provider adapter exports `createAdkJsonProvider`, `createAdkDeepResearchAgent`, and `createAdkDeepResearchTool`, and the kernel's `setLlmJsonProvider` / `getLlmJsonProvider` / `activeLlmProvider` hooks correctly install and report a custom provider label;
 - framework packages load without coupling the kernel to one orchestrator.
@@ -179,12 +210,14 @@ This test verifies adapter shape only. It does not run fake research without liv
 Current runtime integrations:
 
 - `@langchain/langgraph`
+- `langchain` (for the LangGraph runtime's `initChatModel`-based JSON provider)
 - `@google/adk`
 
-These are optional peer dependencies and dev dependencies in this repo. The ADR kernel remains callable without installing either framework in downstream deployments. Install the framework only when you use its adapter:
+These are optional peer dependencies and dev dependencies in this repo. The ADR kernel remains callable without installing any framework in downstream deployments. Install the framework only when you use its adapter:
 
 ```bash
-npm install @langchain/langgraph
+npm install @langchain/langgraph langchain @langchain/openai
+# or @langchain/google-genai / @langchain/anthropic / @langchain/ollama / ...
 npm install @google/adk
 ```
 
