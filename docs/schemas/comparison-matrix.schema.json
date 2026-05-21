@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/comparison-matrix.schema.json",
+  "title": "Beevibe Architecture Deep Research Comparison Matrix",
+  "type": "object",
+  "required": ["version", "axes", "candidates", "cells"],
+  "properties": {
+    "version": { "type": "string" },
+    "axes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "rationale": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "label"],
+        "properties": {
+          "name": { "type": "string" },
+          "label": { "type": "string" },
+          "promotion_status": { "type": "string" },
+          "evidence_count": { "type": "integer", "minimum": 0 },
+          "score": { "type": "number" },
+          "citations": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidate", "axis", "verdict"],
+        "properties": {
+          "candidate": { "type": "string" },
+          "axis": { "type": "string" },
+          "verdict": { "enum": ["strong", "mixed", "weak", "no_evidence"] },
+          "summary": { "type": "string" },
+          "evidence_citations": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "empty_cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidate", "axis"],
+        "properties": {
+          "candidate": { "type": "string" },
+          "axis": { "type": "string" },
+          "axis_label": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "adversarial_queries_run": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

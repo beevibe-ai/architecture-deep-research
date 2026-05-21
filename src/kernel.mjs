@@ -244,27 +244,6 @@ function inferOperationalEnvelope(content) {
   const scale = content.match(/\b(?:scale|concurrent|throughput|users|documents|requests)[^.\n]{0,80}/i)?.[0];
   const availability = content.match(/\b(?:availability|uptime|reliability|failover)[^.\n]{0,80}/i)?.[0];
 
-  const candidates = toArray(result.candidate_topologies).map((candidate) => ({
-    name: candidate.name || slugify(candidate.label || "unknown"),
-    label: candidate.label || titleCase(candidate.name || "unknown"),
-    fit: candidate.fit || "",
-    risks: toArray(candidate.risks),
-    decision: candidate.decision || (candidate.name === selected ? "selected" : "rejected"),
-    evidence_citations: toArray(candidate.evidence_citations),
-    confidence: Math.max(0, Math.min(1, Number(candidate.confidence || 0.5)))
-  }));
-  if (!candidates.some((candidate) => candidate.decision === "selected")) {
-    candidates.unshift({
-      name: selected,
-      label: titleCase(selected),
-      fit: result.decision?.summary || "Selected by the architecture synthesis agent.",
-      risks: [],
-      decision: "selected",
-      evidence_citations: toArray(result.decision?.evidence_citations),
-      confidence: 0.5
-    });
-  }
-
   return {
     latency: latency || "not_specified",
     cost: cost || "not_specified",
@@ -522,6 +501,61 @@ async function buildResearchPlan(context, content) {
   };
 }
 
+let cachedSourceManifest = null;
+
+async function loadSourceManifest() {
+  if (cachedSourceManifest !== null) return cachedSourceManifest;
+  try {
+    const manifestPath = new URL("../sources/manifest.json", import.meta.url);
+    const raw = await readFile(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    cachedSourceManifest = toArray(parsed.entries);
+  } catch {
+    cachedSourceManifest = [];
+  }
+  return cachedSourceManifest;
+}
+
+function scoreManifestEntryForQuery(entry, queryTokens, taskKeywords) {
+  const hayLower = `${entry.url} ${entry.note || ""} ${(entry.families || []).join(" ")} ${entry.type || ""}`.toLowerCase();
+  let score = 0;
+  for (const token of queryTokens) {
+    if (token.length < 4) continue;
+    if (hayLower.includes(token)) score += 1;
+  }
+  for (const keyword of taskKeywords) {
+    const k = String(keyword).toLowerCase();
+    if (k.length < 4) continue;
+    if (hayLower.includes(k)) score += 0.5;
+  }
+  return score;
+}
+
+async function manifestSeedResults({ query, task, keywords }) {
+  const entries = await loadSourceManifest();
+  if (entries.length === 0) return [];
+  const queryTokens = String(query)
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/i)
+    .filter((token) => token.length >= 4);
+  const scored = entries
+    .map((entry) => ({
+      entry,
+      score: scoreManifestEntryForQuery(entry, queryTokens, keywords)
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+  return scored.map(({ entry }) => ({
+    title: entry.note || entry.url,
+    url: entry.url,
+    snippet: entry.note || "",
+    provider: "manifest",
+    manifest_type: entry.type,
+    manifest_families: entry.families || []
+  }));
+}
+
 async function searchWithProvider(query) {
   if (process.env.BRAVE_SEARCH_API_KEY) {
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
@@ -627,6 +661,350 @@ async function openUrl(url, flags) {
   const contentType = response.headers.get("content-type") || "";
   const text = await response.text();
   return contentType.includes("html") ? htmlToText(text) : normalizeWhitespace(text);
+}
+
+function parseGithubRepoUrl(url) {
+  const match = url.match(/^https?:\/\/(?:www\.)?github\.com\/([^\/?#]+)\/([^\/?#]+)/i);
+  if (!match) return null;
+  const owner = match[1];
+  const repo = match[2].replace(/\.git$/, "");
+  if (
+    [
+      "orgs",
+      "topics",
+      "search",
+      "settings",
+      "marketplace",
+      "sponsors",
+      "explore",
+      "trending",
+      "notifications",
+      "issues",
+      "pulls",
+      "discussions",
+      "collections",
+      "events",
+      "features"
+    ].includes(owner.toLowerCase())
+  ) {
+    return null;
+  }
+  return { owner, repo };
+}
+
+function isGithubRepoUrl(url) {
+  return parseGithubRepoUrl(url) !== null;
+}
+
+const FAILURE_MODE_KEYWORDS = [
+  "regression",
+  "incident",
+  "outage",
+  "latency",
+  "slow",
+  "performance",
+  "memory leak",
+  "leak",
+  "crash",
+  "panic",
+  "data loss",
+  "stuck",
+  "hang",
+  "deadlock",
+  "race",
+  "broken",
+  "production"
+];
+
+async function githubApi(pathSuffix, flags) {
+  const headers = {
+    accept: "application/vnd.github+json",
+    "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)",
+    "x-github-api-version": "2022-11-28"
+  };
+  if (process.env.GITHUB_TOKEN) {
+    headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  const response = await fetch(`https://api.github.com${pathSuffix}`, {
+    headers,
+    signal: AbortSignal.timeout(Number(flags["fetch-timeout-ms"] || 20_000))
+  });
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    if (response.status === 403 || response.status === 429) return null;
+    throw new Error(`GitHub API ${pathSuffix} failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function fetchGithubFile({ owner, repo, filename, flags }) {
+  const data = await githubApi(
+    `/repos/${owner}/${repo}/contents/${encodeURIComponent(filename)}`,
+    flags
+  ).catch(() => null);
+  if (!data || !data.content) return null;
+  try {
+    return Buffer.from(data.content, data.encoding || "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function inspectGithubRepo(url, flags) {
+  const parsed = parseGithubRepoUrl(url);
+  if (!parsed) return null;
+  const { owner, repo } = parsed;
+
+  const meta = await githubApi(`/repos/${owner}/${repo}`, flags).catch(() => null);
+  if (!meta) return null;
+
+  const [contentsRaw, issuesRaw] = await Promise.allSettled([
+    githubApi(`/repos/${owner}/${repo}/contents/`, flags),
+    githubApi(
+      `/repos/${owner}/${repo}/issues?state=closed&sort=updated&per_page=30`,
+      flags
+    )
+  ]);
+
+  const topLevel =
+    contentsRaw.status === "fulfilled" && Array.isArray(contentsRaw.value)
+      ? contentsRaw.value
+          .map((entry) => ({ name: entry.name, type: entry.type }))
+          .slice(0, 40)
+      : [];
+
+  const readmeFile = topLevel.find((entry) => /^readme(\.|$)/i.test(entry.name))?.name;
+  const archFile = topLevel.find(
+    (entry) =>
+      /^architecture(\.|$)/i.test(entry.name) ||
+      /^design(\.|$)/i.test(entry.name) ||
+      /^docs$/i.test(entry.name)
+  )?.name;
+
+  const [readme, architecture] = await Promise.all([
+    fetchGithubFile({ owner, repo, filename: readmeFile, flags }),
+    archFile && !/^docs$/i.test(archFile)
+      ? fetchGithubFile({ owner, repo, filename: archFile, flags })
+      : Promise.resolve(null)
+  ]);
+
+  const failureModeIssues =
+    issuesRaw.status === "fulfilled" && Array.isArray(issuesRaw.value)
+      ? issuesRaw.value
+          .filter((issue) => !issue.pull_request)
+          .filter((issue) => {
+            const text = `${issue.title || ""} ${(issue.body || "").slice(0, 800)}`.toLowerCase();
+            return FAILURE_MODE_KEYWORDS.some((kw) => text.includes(kw));
+          })
+          .slice(0, 8)
+          .map((issue) => ({
+            title: String(issue.title || ""),
+            url: issue.html_url,
+            state: issue.state,
+            updated_at: issue.updated_at,
+            labels: toArray(issue.labels)
+              .map((label) => (typeof label === "string" ? label : label?.name))
+              .filter(Boolean)
+              .slice(0, 6)
+          }))
+      : [];
+
+  return {
+    url,
+    owner,
+    repo,
+    full_name: meta.full_name,
+    description: meta.description || "",
+    stars: Number(meta.stargazers_count || 0),
+    forks: Number(meta.forks_count || 0),
+    open_issues: Number(meta.open_issues_count || 0),
+    archived: Boolean(meta.archived),
+    last_pushed_at: meta.pushed_at || null,
+    default_branch: meta.default_branch || null,
+    license: meta.license?.spdx_id || null,
+    topics: toArray(meta.topics).slice(0, 12),
+    top_level_files: topLevel,
+    readme_excerpt: readme
+      ? normalizeWhitespace(readme).slice(0, 4000)
+      : null,
+    architecture_excerpt: architecture
+      ? normalizeWhitespace(architecture).slice(0, 4000)
+      : null,
+    failure_mode_issues: failureModeIssues
+  };
+}
+
+function isPaperUrl(url) {
+  return /^https?:\/\/(?:www\.)?(?:arxiv\.org|openreview\.net|aclanthology\.org|aclweb\.org|dl\.acm\.org|ieee\.org|ieeexplore\.ieee\.org|papers\.ssrn\.com|biorxiv\.org|medrxiv\.org)\//i.test(
+    url
+  );
+}
+
+function arxivIdFromUrl(url) {
+  const match = url.match(/arxiv\.org\/(?:abs|pdf)\/([\w.\-]+)(?:v\d+)?/i);
+  return match ? match[1].replace(/\.pdf$/, "") : null;
+}
+
+async function fetchArxivAbstract(url, flags) {
+  const id = arxivIdFromUrl(url);
+  if (!id) return null;
+  try {
+    const response = await fetch(
+      `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(id)}`,
+      {
+        headers: {
+          "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)"
+        },
+        signal: AbortSignal.timeout(Number(flags["fetch-timeout-ms"] || 20_000))
+      }
+    );
+    if (!response.ok) return null;
+    const xml = await response.text();
+    const title = xml.match(/<entry>[\s\S]*?<title>([\s\S]*?)<\/title>/i)?.[1] || "";
+    const summary = xml.match(/<entry>[\s\S]*?<summary>([\s\S]*?)<\/summary>/i)?.[1] || "";
+    const authorsRaw = [...xml.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi)];
+    const authors = authorsRaw.map((match) => normalizeWhitespace(match[1])).slice(0, 12);
+    const published = xml.match(/<entry>[\s\S]*?<published>([\s\S]*?)<\/published>/i)?.[1] || "";
+    const primaryCategory =
+      xml.match(/<arxiv:primary_category[^>]*term="([^"]+)"/i)?.[1] || "";
+    return {
+      id,
+      title: normalizeWhitespace(title),
+      abstract: normalizeWhitespace(summary),
+      authors,
+      published: normalizeWhitespace(published),
+      primary_category: primaryCategory
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPaperPageText(url, flags) {
+  const text = await openUrl(url, flags).catch(() => "");
+  return text ? text.slice(0, 12_000) : "";
+}
+
+async function digestPaper(url, { context, task, flags }) {
+  let arxivMeta = null;
+  let pageText = "";
+
+  if (/arxiv\.org/i.test(url)) {
+    arxivMeta = await fetchArxivAbstract(url, flags);
+  }
+  if (!arxivMeta) {
+    pageText = await fetchPaperPageText(url, flags);
+    if (!pageText) return null;
+  }
+
+  const sourcePayload = arxivMeta
+    ? {
+        kind: "arxiv",
+        id: arxivMeta.id,
+        title: arxivMeta.title,
+        abstract: arxivMeta.abstract,
+        authors: arxivMeta.authors,
+        published: arxivMeta.published,
+        primary_category: arxivMeta.primary_category
+      }
+    : { kind: "web_paper", url, text: pageText };
+
+  let digest;
+  try {
+    digest = await callLlmJson({
+      label: "paper_digest_extractor",
+      system: [
+        "You extract a structured digest of a research paper from the supplied abstract or page text.",
+        "Be conservative: only fill fields the source supports. Empty arrays / empty strings when missing.",
+        "Distinguish 'headline_results' (what the abstract claims) from 'measured_results' (specific numbers actually reported).",
+        "conflicts_of_interest: list industry affiliations or funding that bias the claims, plus 'none_apparent' if none seen.",
+        "Output JSON with {title,problem,methodology,datasets,baselines,headline_results,measured_results,ablations,limitations,conflicts_of_interest,relevant_to_decision}."
+      ].join("\n"),
+      user: JSON.stringify({
+        decision_domain: context.domain,
+        decision: context.decision,
+        task_objective: task.objective,
+        source: sourcePayload
+      })
+    });
+  } catch {
+    return null;
+  }
+
+  return {
+    url,
+    venue: arxivMeta ? "arxiv" : "web_paper",
+    title: String(digest.title || arxivMeta?.title || "").trim(),
+    authors: toArray(arxivMeta?.authors).slice(0, 12),
+    published: arxivMeta?.published || null,
+    primary_category: arxivMeta?.primary_category || null,
+    problem: String(digest.problem || "").trim(),
+    methodology: String(digest.methodology || "").trim(),
+    datasets: toArray(digest.datasets).map(String).slice(0, 12),
+    baselines: toArray(digest.baselines).map(String).slice(0, 12),
+    headline_results: toArray(digest.headline_results).map(String).slice(0, 8),
+    measured_results: toArray(digest.measured_results).map(String).slice(0, 8),
+    ablations: toArray(digest.ablations).map(String).slice(0, 8),
+    limitations: toArray(digest.limitations).map(String).slice(0, 8),
+    conflicts_of_interest: toArray(digest.conflicts_of_interest).map(String).slice(0, 6),
+    relevant_to_decision: String(digest.relevant_to_decision || "").trim(),
+    abstract: arxivMeta?.abstract || null
+  };
+}
+
+function formatPaperDigestAsText(digest) {
+  const lines = [
+    `Paper: ${digest.title}`,
+    digest.authors.length > 0 ? `Authors: ${digest.authors.join(", ")}` : null,
+    digest.published ? `Published: ${digest.published}` : null,
+    digest.primary_category ? `Category: ${digest.primary_category}` : null,
+    digest.problem ? `Problem: ${digest.problem}` : null,
+    digest.methodology ? `Methodology: ${digest.methodology}` : null,
+    digest.datasets.length > 0 ? `Datasets: ${digest.datasets.join(", ")}` : null,
+    digest.baselines.length > 0 ? `Baselines: ${digest.baselines.join(", ")}` : null,
+    digest.headline_results.length > 0
+      ? `Headline results: ${digest.headline_results.join("; ")}`
+      : null,
+    digest.measured_results.length > 0
+      ? `Measured results: ${digest.measured_results.join("; ")}`
+      : null,
+    digest.ablations.length > 0 ? `Ablations: ${digest.ablations.join("; ")}` : null,
+    digest.limitations.length > 0 ? `Limitations: ${digest.limitations.join("; ")}` : null,
+    digest.conflicts_of_interest.length > 0
+      ? `Conflicts of interest: ${digest.conflicts_of_interest.join("; ")}`
+      : null,
+    digest.relevant_to_decision
+      ? `Relevance to decision: ${digest.relevant_to_decision}`
+      : null,
+    digest.abstract ? `Abstract: ${digest.abstract}` : null
+  ].filter(Boolean);
+  return normalizeWhitespace(lines.join("\n"));
+}
+
+function formatRepoDigestAsText(digest) {
+  const lines = [
+    `Repository: ${digest.full_name}`,
+    `Description: ${digest.description || "(none)"}`,
+    `Stars: ${digest.stars}; Forks: ${digest.forks}; Open issues: ${digest.open_issues}; Archived: ${digest.archived ? "yes" : "no"}`,
+    `Last push: ${digest.last_pushed_at || "unknown"}; License: ${digest.license || "unknown"}`,
+    digest.topics.length > 0 ? `Topics: ${digest.topics.join(", ")}` : null,
+    digest.top_level_files.length > 0
+      ? `Top-level entries: ${digest.top_level_files.map((entry) => entry.name).join(", ")}`
+      : null
+  ].filter(Boolean);
+  if (digest.readme_excerpt) {
+    lines.push("", "== README excerpt ==", digest.readme_excerpt);
+  }
+  if (digest.architecture_excerpt) {
+    lines.push("", "== ARCHITECTURE excerpt ==", digest.architecture_excerpt);
+  }
+  if (digest.failure_mode_issues.length > 0) {
+    lines.push("", "== Recent failure-mode issues ==");
+    for (const issue of digest.failure_mode_issues) {
+      lines.push(`- ${issue.title} [${issue.state}] (${issue.url})`);
+    }
+  }
+  return normalizeWhitespace(lines.join("\n"));
 }
 
 function extractExcerpt(text, keywords) {
@@ -783,14 +1161,31 @@ async function gatherEvidenceForQuery({
   round,
   maxSources
 }) {
-  const results = await searchWithProvider(query);
-  for (const result of results) {
+  const seeds = await manifestSeedResults({ query, task, keywords });
+  const liveResults = await searchWithProvider(query);
+  const combinedResults = [...seeds, ...liveResults];
+  for (const result of combinedResults) {
     if (!result.url || seenUrls.has(result.url)) continue;
     seenUrls.add(result.url);
 
     const source_type = classifySource(result.url);
-    const opened = await openUrl(result.url, flags).catch(() => "");
-    const sourceText = opened || result.snippet || "";
+
+    let repoDigest = null;
+    let paperDigest = null;
+    let sourceText = "";
+    if (isGithubRepoUrl(result.url)) {
+      repoDigest = await inspectGithubRepo(result.url, flags).catch(() => null);
+      if (repoDigest) sourceText = formatRepoDigestAsText(repoDigest);
+    } else if (isPaperUrl(result.url)) {
+      paperDigest = await digestPaper(result.url, { context, task, flags }).catch(
+        () => null
+      );
+      if (paperDigest) sourceText = formatPaperDigestAsText(paperDigest);
+    }
+    if (!sourceText) {
+      const opened = await openUrl(result.url, flags).catch(() => "");
+      sourceText = opened || result.snippet || "";
+    }
     const excerpt = extractExcerpt(sourceText, keywords);
     if (!excerpt || excerpt.length < 120) continue;
 
@@ -813,7 +1208,9 @@ async function gatherEvidenceForQuery({
       round,
       claims,
       keyword_hits: scored.keyword_hits,
-      score: scored.score
+      score: scored.score,
+      repo_digest: repoDigest,
+      paper_digest: paperDigest
     });
 
     if (evidence.length >= maxSources) return;
@@ -1041,22 +1438,331 @@ function buildKnowledgeMap(evidenceItems) {
   };
 }
 
-async function synthesizeArchitectureSpec({ context, knowledgeMap, evidenceItems }) {
+function deriveComparisonAxes(context) {
+  const axes = [
+    {
+      id: "production_examples",
+      label: "Production examples",
+      rationale: "Mature OSS or engineering writeups documenting production deployments."
+    },
+    {
+      id: "operational_complexity",
+      label: "Operational complexity",
+      rationale: "Ingestion, indexing, runtime, and maintenance overhead."
+    },
+    {
+      id: "failure_modes",
+      label: "Failure modes",
+      rationale: "Known weaknesses surfaced by issues, postmortems, or limitations sections."
+    }
+  ];
+
+  const shapeNames = toArray(context.query_shapes).map((shape) => shape.name);
+  if (shapeNames.includes("multi_hop_relational")) {
+    axes.push({
+      id: "multi_hop_accuracy",
+      label: "Multi-hop accuracy",
+      rationale: "Domain has multi-hop relational queries."
+    });
+  }
+  if (shapeNames.includes("audit_traceability")) {
+    axes.push({
+      id: "lineage_support",
+      label: "Source lineage support",
+      rationale: "Domain demands citation-grade lineage on every answer."
+    });
+  }
+  if (shapeNames.includes("exploratory_research")) {
+    axes.push({
+      id: "exploration_support",
+      label: "Exploration support",
+      rationale: "Domain includes open-ended exploratory queries."
+    });
+  }
+  if (shapeNames.includes("self_contained_lookup")) {
+    axes.push({
+      id: "self_contained_lookup_accuracy",
+      label: "Self-contained lookup accuracy",
+      rationale: "Domain includes self-contained docs/FAQ-style lookups."
+    });
+  }
+  if (shapeNames.includes("transactional_state")) {
+    axes.push({
+      id: "transactional_integrity",
+      label: "Transactional integrity",
+      rationale: "Domain requires state-mutation safety."
+    });
+  }
+
+  const envelope = context.operational_envelope || {};
+  if (envelope.latency && envelope.latency !== "not_specified") {
+    axes.push({
+      id: "p95_latency",
+      label: "p95 latency",
+      rationale: `Envelope: ${envelope.latency}`
+    });
+  }
+  if (envelope.cost && envelope.cost !== "not_specified") {
+    axes.push({
+      id: "cost_envelope",
+      label: "Cost envelope",
+      rationale: `Envelope: ${envelope.cost}`
+    });
+  }
+  if (envelope.scale && envelope.scale !== "not_specified") {
+    axes.push({
+      id: "scale_envelope",
+      label: "Scale envelope",
+      rationale: `Envelope: ${envelope.scale}`
+    });
+  }
+  if (envelope.availability && envelope.availability !== "not_specified") {
+    axes.push({
+      id: "availability",
+      label: "Availability",
+      rationale: `Envelope: ${envelope.availability}`
+    });
+  }
+  if (toArray(context.compliance_constraints).length > 0) {
+    axes.push({
+      id: "audit_support",
+      label: "Audit / compliance support",
+      rationale: `Constraints: ${toArray(context.compliance_constraints).join(", ")}`
+    });
+  }
+
+  return axes;
+}
+
+function candidatesFromKnowledgeMap(knowledgeMap) {
+  const promoted = toArray(knowledgeMap?.promoted_candidates).map((item) => ({
+    name: item.name,
+    label: item.label,
+    promotion_status: "evidence_backed_candidate",
+    evidence_count: item.evidence_count,
+    score: item.score,
+    citations: item.citations
+  }));
+  const insufficient = toArray(knowledgeMap?.insufficient_evidence_candidates).map(
+    (item) => ({
+      name: item.name,
+      label: item.label,
+      promotion_status: "insufficient_evidence",
+      evidence_count: item.evidence_count,
+      score: item.score,
+      citations: item.citations
+    })
+  );
+  const seen = new Set();
+  const merged = [];
+  for (const candidate of [...promoted, ...insufficient]) {
+    if (!candidate.name || seen.has(candidate.name)) continue;
+    seen.add(candidate.name);
+    merged.push(candidate);
+  }
+  return merged;
+}
+
+async function fillComparisonMatrixCells({
+  context,
+  axes,
+  candidates,
+  evidenceItems
+}) {
+  if (candidates.length === 0 || axes.length === 0) {
+    return { cells: [], empty_cells: [] };
+  }
+
+  const result = await callLlmJson({
+    label: "comparison_matrix_filler",
+    system: [
+      "You build a candidate × axis comparison matrix for an architecture decision.",
+      "For each (candidate, axis) cell, return a verdict and a one-sentence summary.",
+      "verdict is one of: 'strong' | 'mixed' | 'weak' | 'no_evidence'.",
+      "Cite specific evidence_ids that justify the cell. If no evidence supports a verdict, return 'no_evidence' with empty evidence_citations.",
+      "Be conservative: only mark 'strong' or 'weak' when claims are clearly supportive or rejecting; otherwise 'mixed' or 'no_evidence'.",
+      "Do not invent evidence. Do not cite an evidence_id that does not appear in the supplied pool.",
+      "Output JSON with {cells:[{candidate,axis,verdict,summary,evidence_citations:[number]}]}."
+    ].join("\n"),
+    user: JSON.stringify({
+      domain: context.domain,
+      decision: context.decision,
+      axes,
+      candidates: candidates.map((candidate) => ({
+        name: candidate.name,
+        label: candidate.label,
+        promotion_status: candidate.promotion_status,
+        evidence_count: candidate.evidence_count
+      })),
+      evidence: evidenceItems.map((item) => ({
+        citation_id: item.citation_id,
+        title: item.title,
+        url: item.url,
+        source_type: item.source_type,
+        score: item.score,
+        claims: item.claims
+      }))
+    })
+  });
+
+  const cellMap = new Map();
+  for (const raw of toArray(result.cells)) {
+    const candidate = String(raw.candidate || "").trim();
+    const axis = String(raw.axis || "").trim();
+    if (!candidate || !axis) continue;
+    const verdict = ["strong", "mixed", "weak", "no_evidence"].includes(String(raw.verdict))
+      ? String(raw.verdict)
+      : "no_evidence";
+    cellMap.set(`${candidate}|${axis}`, {
+      candidate,
+      axis,
+      verdict,
+      summary: String(raw.summary || ""),
+      evidence_citations: toArray(raw.evidence_citations)
+        .map(Number)
+        .filter((id) => Number.isFinite(id))
+    });
+  }
+
+  const cells = [];
+  const empty_cells = [];
+  for (const candidate of candidates) {
+    for (const axis of axes) {
+      const key = `${candidate.name}|${axis.id}`;
+      const cell = cellMap.get(key) || {
+        candidate: candidate.name,
+        axis: axis.id,
+        verdict: "no_evidence",
+        summary: "",
+        evidence_citations: []
+      };
+      cells.push(cell);
+      if (cell.verdict === "no_evidence" || cell.evidence_citations.length === 0) {
+        empty_cells.push({
+          candidate: candidate.name,
+          axis: axis.id,
+          axis_label: axis.label
+        });
+      }
+    }
+  }
+  return { cells, empty_cells };
+}
+
+async function buildComparisonMatrix({
+  context,
+  knowledgeMap,
+  evidenceItems
+}) {
+  const axes = deriveComparisonAxes(context);
+  const candidates = candidatesFromKnowledgeMap(knowledgeMap);
+  if (candidates.length === 0 || axes.length === 0) {
+    return {
+      version: VERSION,
+      axes,
+      candidates,
+      cells: [],
+      empty_cells: [],
+      adversarial_queries_run: []
+    };
+  }
+  const { cells, empty_cells } = await fillComparisonMatrixCells({
+    context,
+    axes,
+    candidates,
+    evidenceItems
+  });
+
+  return {
+    version: VERSION,
+    axes,
+    candidates,
+    cells,
+    empty_cells,
+    adversarial_queries_run: []
+  };
+}
+
+async function buildAdversarialResearchPlan({
+  context,
+  matrix,
+  evidenceItems
+}) {
+  if (matrix.empty_cells.length === 0 && matrix.candidates.length === 0) {
+    return { tasks: [] };
+  }
+
+  const result = await callLlmJson({
+    label: "adversarial_research_planner",
+    system: [
+      "You are the adversarial research planner for Architecture Deep Research.",
+      "For each candidate architecture family, generate 1 task that hunts for the strongest case AGAINST the candidate:",
+      "production failure stories, latency or scale incidents, lineage/audit limitations, ops complexity, ecosystem decline.",
+      "If a comparison-matrix cell is empty (verdict 'no_evidence' or no citations), include one task that specifically targets that gap.",
+      "Each task needs {id,title,objective,search_queries:[string],source_targets:[string],target_candidate,target_axis?}.",
+      "Output JSON with {tasks:[...]}."
+    ].join("\n"),
+    user: JSON.stringify({
+      domain: context.domain,
+      decision: context.decision,
+      candidates: matrix.candidates.map((candidate) => ({
+        name: candidate.name,
+        label: candidate.label,
+        promotion_status: candidate.promotion_status
+      })),
+      axes: matrix.axes,
+      empty_cells: matrix.empty_cells,
+      existing_search_terms: [...new Set(evidenceItems.map((item) => item.query).filter(Boolean))].slice(
+        0,
+        25
+      )
+    })
+  });
+
+  return {
+    version: VERSION,
+    architecture: "adversarial_per_candidate",
+    max_parallel_research_agents: MAX_PARALLEL_RESEARCH_AGENTS,
+    tasks: toArray(result.tasks)
+      .slice(0, 6)
+      .map((task, index) => ({
+        id: task.id || `X${index + 1}`,
+        title: String(task.title || `Adversarial task ${index + 1}`),
+        objective: String(task.objective || ""),
+        search_queries: toArray(task.search_queries).map(String).slice(0, 4),
+        source_targets: toArray(task.source_targets).map(String).slice(0, 5),
+        success_criteria: toArray(task.success_criteria).map(String).slice(0, 5),
+        target_candidate: String(task.target_candidate || "").trim() || null,
+        target_axis: String(task.target_axis || "").trim() || null
+      }))
+      .filter((task) => task.search_queries.length > 0)
+  };
+}
+
+async function synthesizeArchitectureSpec({
+  context,
+  knowledgeMap,
+  evidenceItems,
+  comparisonMatrix
+}) {
   const result = await callLlmJson({
     label: "architecture_synthesis_agent",
     system: [
       "You are the Architecture Deep Research synthesis agent.",
       "Choose an architecture family only from evidence-backed research claims.",
-      "If evidence is insufficient, select requires_human_architecture_review.",
+      "Use the comparison_matrix as the primary input: a candidate is only 'strong' on an axis when the matrix says so with cited evidence.",
+      "If many cells are no_evidence or weak, prefer requires_human_architecture_review.",
       "Do not use a static pattern library.",
       "Do not implement the product.",
       "Output JSON with {decision, domain_model, candidate_topologies, guardrails, evidence_summary}.",
+      "decision needs {id,title,status,selected_topology,summary,evidence_citations}.",
       "candidate_topologies items need {name,label,fit,risks,decision,evidence_citations,confidence}.",
       "guardrails needs {forbidden_topologies,required_invariants,allowed_agentic_use,enforcement_notes}."
     ].join("\n"),
     user: JSON.stringify({
       context,
       knowledge_map: knowledgeMap,
+      comparison_matrix: comparisonMatrix,
       evidence: evidenceItems.map((item) => ({
         citation_id: item.citation_id,
         title: item.title,
@@ -1069,6 +1775,17 @@ async function synthesizeArchitectureSpec({ context, knowledgeMap, evidenceItems
   });
 
   const selected = result.decision?.selected_topology || "requires_human_architecture_review";
+  const candidates = toArray(result.candidate_topologies).map((candidate) => ({
+    name: String(candidate.name || ""),
+    label: String(candidate.label || candidate.name || ""),
+    fit: String(candidate.fit || ""),
+    risks: toArray(candidate.risks).map(String),
+    decision: String(candidate.decision || "considered"),
+    evidence_citations: toArray(candidate.evidence_citations)
+      .map(Number)
+      .filter((id) => Number.isFinite(id)),
+    confidence: Math.max(0, Math.min(1, Number(candidate.confidence || 0)))
+  }));
   return {
     version: VERSION,
     decision: {
@@ -1612,8 +2329,126 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
   return { researchResults, evidenceItems, knowledgeMap, adaptiveCycle };
 }
 
-async function synthesizeDecisionPhase({ context, knowledgeMap, evidenceItems }) {
-  return synthesizeArchitectureSpec({ context, knowledgeMap, evidenceItems });
+async function compareTopologiesPhase({
+  context,
+  knowledgeMap,
+  evidenceItems,
+  researchResults,
+  outDir,
+  flags
+}) {
+  const initialMatrix = await buildComparisonMatrix({
+    context,
+    knowledgeMap,
+    evidenceItems
+  });
+  await writeJson(path.join(outDir, "comparison-matrix.json"), initialMatrix);
+  await appendEvent(outDir, "comparison_matrix_built", {
+    axes: initialMatrix.axes.length,
+    candidates: initialMatrix.candidates.length,
+    cells: initialMatrix.cells.length,
+    empty_cells: initialMatrix.empty_cells.length
+  });
+
+  const maxAdversarialCycles = Math.max(
+    0,
+    Number(flags["max-adversarial-cycles"] || 1)
+  );
+  let matrix = initialMatrix;
+  let updatedResearchResults = researchResults;
+  let updatedEvidenceItems = evidenceItems;
+  let updatedKnowledgeMap = knowledgeMap;
+  let adversarialCycle = 0;
+
+  while (
+    adversarialCycle < maxAdversarialCycles &&
+    (matrix.empty_cells.length > 0 || matrix.candidates.length > 0)
+  ) {
+    adversarialCycle += 1;
+    let advPlan;
+    try {
+      advPlan = await buildAdversarialResearchPlan({
+        context,
+        matrix,
+        evidenceItems: updatedEvidenceItems
+      });
+    } catch (error) {
+      await appendEvent(outDir, "adversarial_research_cycle_skipped", {
+        cycle: adversarialCycle,
+        reason: `planner_failed: ${String(error?.message || error)}`
+      });
+      break;
+    }
+    if (!advPlan.tasks || advPlan.tasks.length === 0) {
+      await appendEvent(outDir, "adversarial_research_cycle_skipped", {
+        cycle: adversarialCycle,
+        reason: "no_adversarial_tasks"
+      });
+      break;
+    }
+    await writeJson(
+      path.join(outDir, `research-plan.adversarial-${adversarialCycle}.json`),
+      advPlan
+    );
+    await appendEvent(outDir, "adversarial_research_cycle_started", {
+      cycle: adversarialCycle,
+      task_count: advPlan.tasks.length
+    });
+
+    const moreResults = await runResearchAgents({
+      plan: advPlan,
+      context,
+      flags,
+      outDir
+    });
+    updatedResearchResults = [...updatedResearchResults, ...moreResults];
+    updatedEvidenceItems = assignCitations(
+      updatedResearchResults.flatMap((result) => result.evidence)
+    );
+    updatedKnowledgeMap = buildKnowledgeMap(updatedEvidenceItems);
+
+    await writeJson(path.join(outDir, "evidence.json"), updatedEvidenceItems);
+    await writeJson(path.join(outDir, "knowledge-map.json"), updatedKnowledgeMap);
+    await writeFile(
+      path.join(outDir, "intermediate-reports.md"),
+      updatedResearchResults.map((result) => result.report).join("\n")
+    );
+
+    matrix = await buildComparisonMatrix({
+      context,
+      knowledgeMap: updatedKnowledgeMap,
+      evidenceItems: updatedEvidenceItems
+    });
+    matrix.adversarial_queries_run = advPlan.tasks.flatMap((task) => task.search_queries);
+    await writeJson(path.join(outDir, "comparison-matrix.json"), matrix);
+    await appendEvent(outDir, "adversarial_research_cycle_completed", {
+      cycle: adversarialCycle,
+      evidence_count: updatedEvidenceItems.length,
+      empty_cells_after: matrix.empty_cells.length
+    });
+  }
+
+  return {
+    comparisonMatrix: matrix,
+    researchResults: updatedResearchResults,
+    evidenceItems: updatedEvidenceItems,
+    knowledgeMap: updatedKnowledgeMap,
+    adversarialCycles: adversarialCycle
+  };
+}
+
+async function synthesizeDecisionPhase({
+  context,
+  knowledgeMap,
+  evidenceItems,
+  comparisonMatrix
+}) {
+  return synthesizeArchitectureSpec({
+    context,
+    knowledgeMap,
+    evidenceItems,
+    comparisonMatrix
+  });
 }
 
 async function critiqueDecisionPhase({
@@ -1855,11 +2690,29 @@ async function writeRunArtifacts({
   knowledgeMap,
   outDir,
   critique,
-  citationAudit
+  citationAudit,
+  comparisonMatrix
 }) {
   const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems);
   const baseHandoff = buildExecutionHandoff(spec);
   let handoff = baseHandoff;
+  if (comparisonMatrix) {
+    handoff = {
+      ...handoff,
+      artifacts: {
+        ...handoff.artifacts,
+        comparison_matrix: "comparison-matrix.json"
+      },
+      comparison_matrix_summary: {
+        candidates: comparisonMatrix.candidates.length,
+        axes: comparisonMatrix.axes.length,
+        cells: comparisonMatrix.cells.length,
+        empty_cells: comparisonMatrix.empty_cells.length,
+        strong_cells: comparisonMatrix.cells.filter((cell) => cell.verdict === "strong").length,
+        weak_cells: comparisonMatrix.cells.filter((cell) => cell.verdict === "weak").length
+      }
+    };
+  }
   if (critique) {
     handoff = {
       ...handoff,
@@ -1908,13 +2761,15 @@ async function writeRunArtifacts({
     promoted_candidate_count: knowledgeMap.promoted_candidates.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
     citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
+    comparison_matrix_empty_cells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0,
     handoff_boundary: "adr_stops_at_execution_handoff"
   });
   await appendEvent(outDir, "run_completed", {
     selected_topology: spec.decision.selected_topology,
     evidence_count: evidenceItems.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
-    citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0
+    citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
+    comparison_matrix_empty_cells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0
   });
 
   return {
@@ -1923,7 +2778,8 @@ async function writeRunArtifacts({
     promotedCandidateCount: knowledgeMap.promoted_candidates.length,
     handoffBoundary: "adr_stops_at_execution_handoff",
     critiqueHighSeverityCount: critique ? critique.high_severity_count : 0,
-    citationAuditUnsupportedCount: citationAudit ? citationAudit.unsupported_count : 0
+    citationAuditUnsupportedCount: citationAudit ? citationAudit.unsupported_count : 0,
+    comparisonMatrixEmptyCells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0
   };
 }
 
@@ -1943,17 +2799,39 @@ async function deepResearch({ inputPath, flags }) {
     flags
   });
 
-  const { researchResults, evidenceItems, knowledgeMap } = await executeResearchPhase({
+  const executeResult = await executeResearchPhase({
     plan,
     context: prepared.context,
     outDir: prepared.outDir,
     flags
   });
+  let researchResults = executeResult.researchResults;
+  let evidenceItems = executeResult.evidenceItems;
+  let knowledgeMap = executeResult.knowledgeMap;
+
+  let comparisonMatrix = null;
+  let adversarialCycles = 0;
+  if (!flags["skip-comparison-matrix"]) {
+    const compareResult = await compareTopologiesPhase({
+      context: prepared.context,
+      knowledgeMap,
+      evidenceItems,
+      researchResults,
+      outDir: prepared.outDir,
+      flags
+    });
+    comparisonMatrix = compareResult.comparisonMatrix;
+    researchResults = compareResult.researchResults;
+    evidenceItems = compareResult.evidenceItems;
+    knowledgeMap = compareResult.knowledgeMap;
+    adversarialCycles = compareResult.adversarialCycles;
+  }
 
   const rawSpec = await synthesizeDecisionPhase({
     context: prepared.context,
     knowledgeMap,
-    evidenceItems
+    evidenceItems,
+    comparisonMatrix
   });
 
   const critique = flags["skip-critique"]
@@ -1996,12 +2874,18 @@ async function deepResearch({ inputPath, flags }) {
     knowledgeMap,
     outDir: prepared.outDir,
     critique,
-    citationAudit
+    citationAudit,
+    comparisonMatrix
   });
 
   console.log(`Deep research artifacts written to ${prepared.outDir}`);
   console.log(`Selected topology: ${result.selectedTopology}`);
   console.log(`Evidence items: ${result.evidenceCount}`);
+  if (comparisonMatrix) {
+    console.log(
+      `Comparison matrix: ${comparisonMatrix.candidates.length} candidates × ${comparisonMatrix.axes.length} axes, ${comparisonMatrix.empty_cells.length} empty (adversarial cycles: ${adversarialCycles})`
+    );
+  }
   if (critique && critique.issues.length > 0) {
     console.log(
       `Critique: ${critique.issues.length} issues (${critique.high_severity_count} high-severity)`
@@ -2066,16 +2950,25 @@ export {
   applyCritique,
   assessClarification,
   buildAdaptiveResearchPlan,
+  buildAdversarialResearchPlan,
+  buildComparisonMatrix,
   buildEvaluationPack,
   buildExecutionHandoff,
   buildKnowledgeMap,
   buildResearchPlan,
   buildStrategicContext,
   classifySource,
+  compareTopologiesPhase,
   critiqueDecisionPhase,
   deepResearch,
+  deriveComparisonAxes,
+  digestPaper,
   executeResearchPhase,
   getLlmJsonProvider,
+  inspectGithubRepo,
+  isGithubRepoUrl,
+  isPaperUrl,
+  loadSourceManifest,
   planResearchPhase,
   prepareRun,
   research,

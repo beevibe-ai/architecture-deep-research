@@ -9,6 +9,7 @@ const schemaByFilename = {
   "architecture.spec.json": "docs/schemas/architecture-spec.schema.json",
   "citation-audit.json": "docs/schemas/citation-audit.schema.json",
   "clarification.json": "docs/schemas/clarification.schema.json",
+  "comparison-matrix.json": "docs/schemas/comparison-matrix.schema.json",
   "critique.json": "docs/schemas/critique.schema.json",
   "domain-evaluation-pack.json": "docs/schemas/domain-evaluation-pack.schema.json",
   "evidence.json": "docs/schemas/evidence.schema.json",
