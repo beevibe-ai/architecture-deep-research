@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/evidence.schema.json",
+  "title": "Beevibe Architecture Deep Research Evidence Items",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "citation_id",
+      "task_id",
+      "title",
+      "url",
+      "query",
+      "excerpt",
+      "source_quality",
+      "score",
+      "relevance"
+    ],
+    "properties": {
+      "citation_id": { "type": "integer", "minimum": 1 },
+      "task_id": { "type": "string" },
+      "title": { "type": "string" },
+      "url": { "type": "string" },
+      "query": { "type": "string" },
+      "excerpt": { "type": "string" },
+      "source_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+      "score": { "type": "number", "minimum": 0 },
+      "relevance": { "type": "string" }
+    },
+    "additionalProperties": true
+  }
+}

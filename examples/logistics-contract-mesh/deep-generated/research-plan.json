@@ -1,0 +1,63 @@
+{
+  "version": "0.1.0",
+  "architecture": "two_level_shallow_deep_research",
+  "max_parallel_research_agents": 3,
+  "tasks": [
+    {
+      "id": "R1",
+      "title": "Domain shape and DDD fit",
+      "objective": "Determine which architecture families fit global logistics contract analysis, focusing on entities Vendor, Facility, Contract, ContractClause, Jurisdiction, ShipmentLane, Claim, Evidence and bounded-context ownership.",
+      "search_queries": [
+        "global logistics contract analysis DDD bounded contexts architecture retrieval topology",
+        "global logistics contract analysis domain model entities relationships architecture"
+      ],
+      "source_targets": [
+        "official_docs",
+        "production_writeups",
+        "mature_oss"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Retrieval topology precedent",
+      "objective": "Compare Hybrid RAG, Workflow-Routed Hybrid GraphRAG, GraphRAG, Relational / Domain-Model-First, Agentic Search, Naive Vector RAG using official docs and known production precedents.",
+      "search_queries": [
+        "GraphRAG official architecture entity relationship retrieval",
+        "hybrid RAG graph RAG agentic search tradeoffs production"
+      ],
+      "source_targets": [
+        "official_docs",
+        "benchmark_reports"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Failure modes and rejected alternatives",
+      "objective": "Find evidence for why tempting simpler patterns fail under auditability, lineage, multi-hop, latency, or operational constraints.",
+      "search_queries": [
+        "naive vector RAG failure modes multi hop traceability",
+        "agentic search failure modes latency audit compliance"
+      ],
+      "source_targets": [
+        "postmortems",
+        "engineering_blogs",
+        "issue_history"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Evaluation and enforcement",
+      "objective": "Identify evaluation metrics and guardrails that can prove the selected architecture preserves its domain invariants.",
+      "search_queries": [
+        "RAG evaluation lineage citation abstention multi-hop benchmark",
+        "agent guardrails architecture constraints workspace rules"
+      ],
+      "source_targets": [
+        "benchmarks",
+        "official_docs",
+        "mature_oss"
+      ]
+    }
+  ],
+  "max_cycles": 2
+}

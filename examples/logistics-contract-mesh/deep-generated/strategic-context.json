@@ -1,0 +1,94 @@
+{
+  "version": "0.1.0",
+  "source": {
+    "path": "examples/logistics-contract-mesh/product-context.md",
+    "content_hash": "2cae70b52357ee52cf4a0d2e4b83aef992beaa98318ec397b1501cdfacab7f90"
+  },
+  "domain": "global logistics contract analysis",
+  "decision": "retrieval topology",
+  "domain_entities": [
+    "Vendor",
+    "Facility",
+    "Contract",
+    "ContractClause",
+    "Jurisdiction",
+    "ShipmentLane",
+    "Claim",
+    "Evidence",
+    "Document",
+    "User",
+    "EMEA"
+  ],
+  "bounded_contexts": [
+    "IngestionContext",
+    "ExtractionContext",
+    "DomainModelContext",
+    "KnowledgeGraphContext",
+    "QueryOrchestrationContext",
+    "TraceabilityAuditContext"
+  ],
+  "query_shapes": [
+    {
+      "name": "multi_hop_relational",
+      "evidence": [
+        "multi-hop",
+        "trace",
+        "relationship",
+        "exposed"
+      ]
+    },
+    {
+      "name": "audit_traceability",
+      "evidence": [
+        "audit",
+        "traceability",
+        "lineage",
+        "source",
+        "source-backed",
+        "compliance",
+        "legal"
+      ]
+    },
+    {
+      "name": "exploratory_research",
+      "evidence": [
+        "research"
+      ]
+    },
+    {
+      "name": "self_contained_lookup",
+      "evidence": [
+        "search",
+        "support"
+      ]
+    }
+  ],
+  "risk_invariants": [
+    "Answers must resolve to source-backed evidence before being returned.",
+    "The primary topology must preserve explicit relationships between domain entities.",
+    "Compliance-critical flows must be deterministic, reviewable, and replayable.",
+    "Agentic search must be bounded by workflow controls and must not silently mutate source-of-truth state.",
+    "Bounded contexts must communicate through explicit interfaces or domain events."
+  ],
+  "operational_envelope": {
+    "latency": "p95 latency target for a reviewed answer path is 2500ms after indexing",
+    "cost": "Budget matters because ingestion may process thousands of contracts and appendices",
+    "scale": "documents, and evidence spans",
+    "availability": "not_specified"
+  },
+  "compliance_constraints": [
+    "Audit",
+    "Compliance",
+    "Legal",
+    "Traceability",
+    "Lineage"
+  ],
+  "candidate_architecture_families": [
+    "hybrid_rag",
+    "workflow_routed_hybrid_graphrag",
+    "graphrag",
+    "relational_domain_model_first",
+    "agentic_search",
+    "naive_vector_rag"
+  ]
+}

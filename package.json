@@ -16,6 +16,7 @@
   },
   "scripts": {
     "adr": "node scripts/adr.mjs",
+    "deep-research": "node scripts/adr.mjs deep-research",
     "check": "node scripts/check-json.mjs"
   },
   "engines": {

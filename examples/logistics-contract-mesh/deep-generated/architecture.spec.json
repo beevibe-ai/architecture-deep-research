@@ -1,0 +1,176 @@
+{
+  "version": "0.1.0",
+  "decision": {
+    "id": "ADR-001",
+    "title": "Retrieval Topology",
+    "status": "proposed",
+    "selected_topology": "workflow_routed_hybrid_graphrag",
+    "summary": "Best fit for high-audit systems that need deterministic routing plus graph, lexical, and vector retrieval tools."
+  },
+  "domain_model": {
+    "bounded_contexts": [
+      "IngestionContext",
+      "ExtractionContext",
+      "DomainModelContext",
+      "KnowledgeGraphContext",
+      "QueryOrchestrationContext",
+      "TraceabilityAuditContext"
+    ],
+    "core_entities": [
+      "Vendor",
+      "Facility",
+      "Contract",
+      "ContractClause",
+      "Jurisdiction",
+      "ShipmentLane",
+      "Claim",
+      "Evidence",
+      "Document",
+      "User",
+      "EMEA"
+    ],
+    "domain_invariants": [
+      "Answers must resolve to source-backed evidence before being returned.",
+      "The primary topology must preserve explicit relationships between domain entities.",
+      "Compliance-critical flows must be deterministic, reviewable, and replayable.",
+      "Agentic search must be bounded by workflow controls and must not silently mutate source-of-truth state.",
+      "Bounded contexts must communicate through explicit interfaces or domain events."
+    ]
+  },
+  "candidate_topologies": [
+    {
+      "name": "hybrid_rag",
+      "label": "Hybrid RAG",
+      "fit": "Good baseline for document search that needs lexical, vector, and metadata filtering.",
+      "risks": [
+        "Still limited when explicit relationships are the primary domain object.",
+        "Can hide bounded-context ownership behind retrieval plumbing."
+      ],
+      "decision": "rejected"
+    },
+    {
+      "name": "workflow_routed_hybrid_graphrag",
+      "label": "Workflow-Routed Hybrid GraphRAG",
+      "fit": "Best fit for high-audit systems that need deterministic routing plus graph, lexical, and vector retrieval tools.",
+      "risks": [
+        "More upfront architecture work.",
+        "Requires clear bounded-context ownership.",
+        "Requires evaluation of both retrieval quality and orchestration behavior."
+      ],
+      "decision": "selected"
+    },
+    {
+      "name": "graphrag",
+      "label": "GraphRAG",
+      "fit": "Strong for entity-heavy domains where relationships, traversal, and lineage are first-class.",
+      "risks": [
+        "Requires ontology discipline.",
+        "Raises ingestion and extraction complexity.",
+        "Can overfit if the domain does not have stable entities or relationships."
+      ],
+      "decision": "rejected"
+    },
+    {
+      "name": "relational_domain_model_first",
+      "label": "Relational / Domain-Model-First",
+      "fit": "Best when source-of-truth transactions, aggregates, and ownership matter more than generative retrieval.",
+      "risks": [
+        "May under-serve exploratory knowledge questions.",
+        "Can become too rigid when the corpus is unstructured and fast-changing."
+      ],
+      "decision": "rejected"
+    },
+    {
+      "name": "agentic_search",
+      "label": "Agentic Search",
+      "fit": "Useful for exploratory research across tools, APIs, and changing information sources.",
+      "risks": [
+        "Non-deterministic latency and cost.",
+        "Harder to audit and replay.",
+        "Dangerous as the primary path for compliance-critical answers."
+      ],
+      "decision": "rejected"
+    },
+    {
+      "name": "naive_vector_rag",
+      "label": "Naive Vector RAG",
+      "fit": "Good for simple, self-contained document lookup where semantic similarity is enough.",
+      "risks": [
+        "Weak for relationship-heavy questions.",
+        "Can lose source lineage when answers require cross-document joins.",
+        "Easy for downstream agents to overuse because it is simple to scaffold."
+      ],
+      "decision": "rejected"
+    }
+  ],
+  "guardrails": {
+    "forbidden_topologies": [
+      "naive_vector_rag_primary_path",
+      "unbounded_react_loop_primary_path",
+      "graph_or_vector_retrieval_without_source_spans"
+    ],
+    "required_invariants": [
+      "Answers must resolve to source-backed evidence before being returned.",
+      "The primary topology must preserve explicit relationships between domain entities.",
+      "Compliance-critical flows must be deterministic, reviewable, and replayable.",
+      "Agentic search must be bounded by workflow controls and must not silently mutate source-of-truth state.",
+      "Bounded contexts must communicate through explicit interfaces or domain events."
+    ],
+    "allowed_agentic_use": [
+      "background research",
+      "source discovery",
+      "architecture comparison",
+      "human-reviewed enrichment proposals"
+    ]
+  },
+  "evidence": [
+    {
+      "label": "[1] https://microsoft.github.io/graphrag/",
+      "url": "https://microsoft.github.io/graphrag/",
+      "relevance": "Determine which architecture families fit global logistics contract analysis, focusing on entities Vendor, Facility, Contract, ContractClause, Jurisdiction, ShipmentLane, Claim, Evidence and bounded-context ownership.",
+      "score": 2
+    },
+    {
+      "label": "[2] https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "relevance": "Determine which architecture families fit global logistics contract analysis, focusing on entities Vendor, Facility, Contract, ContractClause, Jurisdiction, ShipmentLane, Claim, Evidence and bounded-context ownership.",
+      "score": 2
+    },
+    {
+      "label": "[3] https://microsoft.github.io/graphrag/",
+      "url": "https://microsoft.github.io/graphrag/",
+      "relevance": "Compare Hybrid RAG, Workflow-Routed Hybrid GraphRAG, GraphRAG, Relational / Domain-Model-First, Agentic Search, Naive Vector RAG using official docs and known production precedents.",
+      "score": 2
+    },
+    {
+      "label": "[4] https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "relevance": "Compare Hybrid RAG, Workflow-Routed Hybrid GraphRAG, GraphRAG, Relational / Domain-Model-First, Agentic Search, Naive Vector RAG using official docs and known production precedents.",
+      "score": 2
+    },
+    {
+      "label": "[5] https://microsoft.github.io/graphrag/",
+      "url": "https://microsoft.github.io/graphrag/",
+      "relevance": "Find evidence for why tempting simpler patterns fail under auditability, lineage, multi-hop, latency, or operational constraints.",
+      "score": 2
+    },
+    {
+      "label": "[6] https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "relevance": "Find evidence for why tempting simpler patterns fail under auditability, lineage, multi-hop, latency, or operational constraints.",
+      "score": 2
+    },
+    {
+      "label": "[7] https://microsoft.github.io/graphrag/",
+      "url": "https://microsoft.github.io/graphrag/",
+      "relevance": "Identify evaluation metrics and guardrails that can prove the selected architecture preserves its domain invariants.",
+      "score": 1.8
+    },
+    {
+      "label": "[8] https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+      "relevance": "Identify evaluation metrics and guardrails that can prove the selected architecture preserves its domain invariants.",
+      "score": 1.8
+    }
+  ]
+}

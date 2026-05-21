@@ -1,0 +1,15 @@
+{"ts":"2026-05-21T04:58:48.539Z","type":"run_started","command":"deep-research","input_path":"examples/logistics-contract-mesh/product-context.md","domain":"global logistics contract analysis","decision":"retrieval topology"}
+{"ts":"2026-05-21T04:58:48.542Z","type":"strategic_context_created","query_shapes":["multi_hop_relational","audit_traceability","exploratory_research","self_contained_lookup"],"bounded_contexts":["IngestionContext","ExtractionContext","DomainModelContext","KnowledgeGraphContext","QueryOrchestrationContext","TraceabilityAuditContext"],"needs_clarification":false}
+{"ts":"2026-05-21T04:58:48.542Z","type":"research_plan_created","task_count":4,"max_cycles":2}
+{"ts":"2026-05-21T04:58:48.542Z","type":"research_batch_started","task_ids":["R1","R2","R3"]}
+{"ts":"2026-05-21T04:58:48.542Z","type":"research_agent_started","task_id":"R1","title":"Domain shape and DDD fit"}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_started","task_id":"R2","title":"Retrieval topology precedent"}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_started","task_id":"R3","title":"Failure modes and rejected alternatives"}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_finished","task_id":"R1","evidence_count":2}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_finished","task_id":"R2","evidence_count":2}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_finished","task_id":"R3","evidence_count":2}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_batch_started","task_ids":["R4"]}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_started","task_id":"R4","title":"Evaluation and enforcement"}
+{"ts":"2026-05-21T04:58:48.543Z","type":"research_agent_finished","task_id":"R4","evidence_count":2}
+{"ts":"2026-05-21T04:58:48.544Z","type":"evidence_collected","evidence_count":8}
+{"ts":"2026-05-21T04:58:48.545Z","type":"run_completed","selected_topology":"workflow_routed_hybrid_graphrag","evidence_count":8}

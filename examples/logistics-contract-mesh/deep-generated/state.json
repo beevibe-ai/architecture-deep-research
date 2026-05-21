@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0",
+  "status": "completed",
+  "completed_at": "2026-05-21T04:58:48.545Z",
+  "selected_topology": "workflow_routed_hybrid_graphrag",
+  "evidence_count": 8,
+  "handoff_boundary": "adr_stops_at_execution_handoff"
+}

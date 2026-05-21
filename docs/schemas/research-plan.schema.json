@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/research-plan.schema.json",
+  "title": "Beevibe Architecture Deep Research Plan",
+  "type": "object",
+  "required": ["version", "architecture", "max_parallel_research_agents", "tasks"],
+  "properties": {
+    "version": { "type": "string" },
+    "architecture": { "type": "string" },
+    "max_parallel_research_agents": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "max_cycles": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "objective", "search_queries", "source_targets"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "objective": { "type": "string" },
+          "search_queries": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "source_targets": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

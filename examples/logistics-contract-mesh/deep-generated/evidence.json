@@ -1,0 +1,90 @@
+[
+  {
+    "citation_id": 1,
+    "task_id": "R1",
+    "title": "https://microsoft.github.io/graphrag/",
+    "url": "https://microsoft.github.io/graphrag/",
+    "query": "global logistics contract analysis DDD bounded contexts architecture retrieval topology",
+    "excerpt": "Seed source for architecture research query: global logistics contract analysis DDD bounded contexts architecture retrieval topology",
+    "source_quality": 1,
+    "score": 2,
+    "relevance": "Determine which architecture families fit global logistics contract analysis, focusing on entities Vendor, Facility, Contract, ContractClause, Jurisdiction, ShipmentLane, Claim, Evidence and bounded-context ownership."
+  },
+  {
+    "citation_id": 2,
+    "task_id": "R1",
+    "title": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "query": "global logistics contract analysis DDD bounded contexts architecture retrieval topology",
+    "excerpt": "Seed source for architecture research query: global logistics contract analysis DDD bounded contexts architecture retrieval topology",
+    "source_quality": 1,
+    "score": 2,
+    "relevance": "Determine which architecture families fit global logistics contract analysis, focusing on entities Vendor, Facility, Contract, ContractClause, Jurisdiction, ShipmentLane, Claim, Evidence and bounded-context ownership."
+  },
+  {
+    "citation_id": 3,
+    "task_id": "R2",
+    "title": "https://microsoft.github.io/graphrag/",
+    "url": "https://microsoft.github.io/graphrag/",
+    "query": "GraphRAG official architecture entity relationship retrieval",
+    "excerpt": "Seed source for architecture research query: GraphRAG official architecture entity relationship retrieval",
+    "source_quality": 1,
+    "score": 2,
+    "relevance": "Compare Hybrid RAG, Workflow-Routed Hybrid GraphRAG, GraphRAG, Relational / Domain-Model-First, Agentic Search, Naive Vector RAG using official docs and known production precedents."
+  },
+  {
+    "citation_id": 4,
+    "task_id": "R2",
+    "title": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "query": "GraphRAG official architecture entity relationship retrieval",
+    "excerpt": "Seed source for architecture research query: GraphRAG official architecture entity relationship retrieval",
+    "source_quality": 1,
+    "score": 2,
+    "relevance": "Compare Hybrid RAG, Workflow-Routed Hybrid GraphRAG, GraphRAG, Relational / Domain-Model-First, Agentic Search, Naive Vector RAG using official docs and known production precedents."
+  },
+  {
+    "citation_id": 5,
+    "task_id": "R3",
+    "title": "https://microsoft.github.io/graphrag/",
+    "url": "https://microsoft.github.io/graphrag/",
+    "query": "naive vector RAG failure modes multi hop traceability",
+    "excerpt": "Seed source for architecture research query: naive vector RAG failure modes multi hop traceability",
+    "source_quality": 1,
+    "score": 2,
+    "relevance": "Find evidence for why tempting simpler patterns fail under auditability, lineage, multi-hop, latency, or operational constraints."
+  },
+  {
+    "citation_id": 6,
+    "task_id": "R3",
+    "title": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "query": "naive vector RAG failure modes multi hop traceability",
+    "excerpt": "Seed source for architecture research query: naive vector RAG failure modes multi hop traceability",
+    "source_quality": 1,
+    "score": 2,
+    "relevance": "Find evidence for why tempting simpler patterns fail under auditability, lineage, multi-hop, latency, or operational constraints."
+  },
+  {
+    "citation_id": 7,
+    "task_id": "R4",
+    "title": "https://microsoft.github.io/graphrag/",
+    "url": "https://microsoft.github.io/graphrag/",
+    "query": "RAG evaluation lineage citation abstention multi-hop benchmark",
+    "excerpt": "Seed source for architecture research query: RAG evaluation lineage citation abstention multi-hop benchmark",
+    "source_quality": 1,
+    "score": 1.8,
+    "relevance": "Identify evaluation metrics and guardrails that can prove the selected architecture preserves its domain invariants."
+  },
+  {
+    "citation_id": 8,
+    "task_id": "R4",
+    "title": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "url": "https://neo4j.com/labs/genai-ecosystem/graphrag/",
+    "query": "RAG evaluation lineage citation abstention multi-hop benchmark",
+    "excerpt": "Seed source for architecture research query: RAG evaluation lineage citation abstention multi-hop benchmark",
+    "source_quality": 1,
+    "score": 1.8,
+    "relevance": "Identify evaluation metrics and guardrails that can prove the selected architecture preserves its domain invariants."
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/clarification.schema.json",
+  "title": "Beevibe Architecture Deep Research Clarification",
+  "type": "object",
+  "required": ["version", "needs_clarification", "questions", "action"],
+  "properties": {
+    "version": { "type": "string" },
+    "needs_clarification": { "type": "boolean" },
+    "questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 5
+    },
+    "action": { "type": "string" }
+  },
+  "additionalProperties": true
+}

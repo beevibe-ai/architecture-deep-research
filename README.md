@@ -340,12 +340,16 @@ This repository starts with the artifact contracts and an example decision pack:
 .
 ├── README.md
 ├── docs/
+│   ├── deep-research-agent.md
 │   ├── implementation-plan.md
 │   ├── orchestration-strategy.md
 │   └── schemas/
 │       ├── architecture-spec.schema.json
+│       ├── clarification.schema.json
 │       ├── domain-evaluation-pack.schema.json
+│       ├── evidence.schema.json
 │       ├── execution-handoff.schema.json
+│       ├── research-plan.schema.json
 │       └── strategic-context.schema.json
 ├── scripts/
 │   ├── adr.mjs
@@ -357,8 +361,22 @@ This repository starts with the artifact contracts and an example decision pack:
         ├── architecture.spec.json
         ├── domain-evaluation-pack.json
         ├── agent-guardrails.md
-        └── generated/
+        ├── generated/
             ├── strategic-context.json
+            ├── ADR.md
+            ├── architecture.spec.json
+            ├── domain-evaluation-pack.json
+            ├── agent-guardrails.md
+            ├── execution-handoff.json
+            └── sources.md
+        └── deep-generated/
+            ├── events.jsonl
+            ├── clarification.json
+            ├── strategic-context.json
+            ├── research-plan.json
+            ├── evidence.json
+            ├── intermediate-reports.md
+            ├── research-report.md
             ├── ADR.md
             ├── architecture.spec.json
             ├── domain-evaluation-pack.json
@@ -393,6 +411,42 @@ Expected output:
   agent-guardrails.md
   execution-handoff.json
   sources.md
+```
+
+## Try Deep Research
+
+ADR also includes a shallow, production-oriented deep research agent inspired by Onyx's published Deep Research architecture: planning is isolated from execution, an orchestrator delegates to research agents, evidence is preserved before synthesis, and the final output remains an Execution Handoff rather than implementation.
+
+```bash
+npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out /tmp/adr-deep-output \
+  --max-cycles 2
+```
+
+For deterministic local testing:
+
+```bash
+npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out /tmp/adr-deep-output \
+  --offline \
+  --max-cycles 2
+```
+
+Deep research outputs include `events.jsonl`, `research-plan.json`, `evidence.json`, `intermediate-reports.md`, and `research-report.md` in addition to the standard ADR artifacts. See [docs/deep-research-agent.md](./docs/deep-research-agent.md).
+
+To include local architecture notes or repo docs as internal search material, pass one or more corpus directories:
+
+```bash
+npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out /tmp/adr-deep-output \
+  --corpus-dir ./docs \
+  --corpus-dir ./examples
 ```
 
 ## Roadmap
