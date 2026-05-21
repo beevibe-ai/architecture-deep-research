@@ -65,17 +65,23 @@ export BRAVE_SEARCH_API_KEY=...
 # or SERPER_API_KEY / TAVILY_API_KEY / SEARXNG_URL
 ```
 
-Set one OpenAI-compatible LLM provider:
+Set one LLM provider. Two backends are supported:
+
+OpenAI-compatible (default):
 
 ```bash
 export ADR_OPENAI_API_KEY=...
 export ADR_MODEL=gpt-4.1-mini
+# optional local/OpenAI-compatible server:
+export ADR_OPENAI_BASE_URL=http://localhost:1234/v1
 ```
 
-Optional local/OpenAI-compatible server:
+Gemini via Google ADK (use the `adr:adk` CLI):
 
 ```bash
-export ADR_OPENAI_BASE_URL=http://localhost:1234/v1
+export GEMINI_API_KEY=...
+# optional model override:
+export ADR_ADK_MODEL=gemini-2.5-pro
 ```
 
 ## Quick Start
@@ -179,6 +185,15 @@ npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
   --out .adr-runs/langgraph-logistics
+```
+
+Google ADK (Gemini as the LLM backend for the live agentic loop):
+
+```bash
+npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out .adr-runs/adk-logistics-contract-mesh
 ```
 
 Beevibe handoff:

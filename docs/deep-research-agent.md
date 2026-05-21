@@ -14,12 +14,18 @@ The product constraint is strict:
 Every real ADR run needs both:
 
 - A live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`.
-- An OpenAI-compatible LLM provider: `ADR_OPENAI_API_KEY` or `OPENAI_API_KEY`, with optional `ADR_OPENAI_BASE_URL`.
+- An LLM provider for JSON synthesis. Two backends are supported:
+  - **OpenAI-compatible** (default): `ADR_OPENAI_API_KEY` or `OPENAI_API_KEY`, with optional `ADR_OPENAI_BASE_URL`.
+  - **Gemini via Google ADK**: `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY`. Run through the `adr:adk` CLI or call `setLlmJsonProvider(createAdkJsonProvider({ model }))` before `deepResearch`. See [framework-adapters.md](./framework-adapters.md#gemini-as-llm-provider-adapter).
 
 ```bash
 export BRAVE_SEARCH_API_KEY=...
 export ADR_OPENAI_API_KEY=...
 export ADR_MODEL=gpt-4.1-mini
+
+# or, for the Gemini / ADK runtime:
+export BRAVE_SEARCH_API_KEY=...
+export GEMINI_API_KEY=...
 ```
 
 ## Flow
@@ -72,11 +78,24 @@ If evidence is weak, the synthesis agent should choose `requires_human_architect
 
 ## CLI
 
+OpenAI-compatible runtime (default):
+
 ```bash
 npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
   --out .adr-runs/logistics-contract-mesh \
+  --max-cycles 2 \
+  --max-sources 4
+```
+
+Gemini / Google ADK runtime (same pipeline, different LLM backend):
+
+```bash
+npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out .adr-runs/adk-logistics-contract-mesh \
   --max-cycles 2 \
   --max-sources 4
 ```
