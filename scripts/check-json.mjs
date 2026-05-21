@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 
-const ignoredDirs = new Set([".adr-runs", ".git", "node_modules"]);
+const ignoredDirs = new Set([".adr-runs", ".smoke-runs", ".git", "node_modules", "dist"]);
 
 const schemaByFilename = {
   "architecture.spec.json": "docs/schemas/architecture-spec.schema.json",

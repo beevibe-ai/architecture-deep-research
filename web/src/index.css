@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    -webkit-font-smoothing: antialiased;
+  }
+  code,
+  pre,
+  .font-mono {
+    font-variant-ligatures: none;
+  }
+}
+
+@layer components {
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-ink-700 bg-ink-800/60 px-2.5 py-0.5 text-xs uppercase tracking-wide;
+  }
+  .pill-success {
+    @apply pill border-success-600/40 bg-success-500/10 text-success-500;
+  }
+  .pill-warn {
+    @apply pill border-warn-600/40 bg-warn-500/10 text-warn-500;
+  }
+  .pill-danger {
+    @apply pill border-danger-600/40 bg-danger-500/10 text-danger-500;
+  }
+  .pill-info {
+    @apply pill border-accent-600/40 bg-accent-500/10 text-accent-400;
+  }
+  .card {
+    @apply rounded-xl border border-ink-800 bg-ink-900/60 shadow-sm;
+  }
+  .card-title {
+    @apply text-sm font-semibold uppercase tracking-wide text-ink-400;
+  }
+  .kbd {
+    @apply rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-xs font-mono text-ink-300;
+  }
+  .link {
+    @apply text-accent-400 underline-offset-2 hover:underline;
+  }
+  .matrix-cell {
+    @apply rounded-md border px-2 py-1.5 text-xs;
+  }
+  .matrix-strong {
+    @apply matrix-cell border-success-600/40 bg-success-500/10 text-success-500;
+  }
+  .matrix-mixed {
+    @apply matrix-cell border-warn-600/40 bg-warn-500/10 text-warn-500;
+  }
+  .matrix-weak {
+    @apply matrix-cell border-danger-600/40 bg-danger-500/10 text-danger-500;
+  }
+  .matrix-empty {
+    @apply matrix-cell border-dashed border-ink-700 bg-ink-900/40 text-ink-500;
+  }
+}

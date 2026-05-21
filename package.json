@@ -21,12 +21,16 @@
   "bin": {
     "adr": "./scripts/adr.mjs",
     "adr-langgraph": "./scripts/adr-langgraph.mjs",
-    "adr-adk": "./scripts/adr-adk.mjs"
+    "adr-adk": "./scripts/adr-adk.mjs",
+    "adr-web": "./scripts/adr-web.mjs"
   },
   "scripts": {
     "adr": "node scripts/adr.mjs",
     "adr:langgraph": "node scripts/adr-langgraph.mjs",
     "adr:adk": "node scripts/adr-adk.mjs",
+    "adr:web": "node scripts/adr-web.mjs",
+    "web:dev": "vite --config web/vite.config.js",
+    "web:build": "vite build --config web/vite.config.js",
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:live": "node scripts/benchmark.mjs --strict",
     "benchmark:live:fast": "node scripts/benchmark.mjs --config benchmarks/configs/live-fast.json --strict",
@@ -34,7 +38,8 @@
     "deep-research": "node scripts/adr.mjs deep-research",
     "check": "node scripts/check-json.mjs",
     "smoke:frameworks": "node scripts/smoke-frameworks.mjs",
-    "test": "npm run check && npm run smoke:frameworks"
+    "smoke:web": "node scripts/smoke-web.mjs",
+    "test": "npm run check && npm run smoke:frameworks && npm run smoke:web"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -59,7 +64,17 @@
     "@google/adk": "^1.1.0",
     "@langchain/langgraph": "^1.3.2",
     "@langchain/openai": "^1.0.0",
-    "langchain": "^1.0.0"
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "langchain": "^1.0.0",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "tailwindcss": "^3.4.16",
+    "vite": "^5.4.11"
   },
   "dependencies": {
     "ajv": "^8.20.0"
