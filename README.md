@@ -170,6 +170,20 @@ npm run adr -- supersede .adr-runs/logistics-contract-mesh \
 
 The new run writes `supersedes.json` and appends a supersession section to the ADR.
 
+## Web UI
+
+A single web app with two modes, both reading the kernel's artifacts on disk:
+
+- **Operator mode** — Onyx-style, product-facing. Decision card, comparison matrix, plan, evidence panel, run-quality sidebar.
+- **Developer mode** — Google ADK Dev UI-style, observability-facing. Live event timeline (SSE tail of `events.jsonl`), JSON inspector, per-artifact browser.
+
+```bash
+npm run web:build                          # builds web/dist
+npm run adr:web -- --runs .adr-runs --open # serves the UI + watches runs
+```
+
+See [docs/web-ui.md](./docs/web-ui.md).
+
 ## Framework Adapters
 
 ADR keeps the kernel framework-neutral and exposes adapters:
