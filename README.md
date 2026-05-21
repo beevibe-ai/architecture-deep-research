@@ -385,6 +385,16 @@ Beevibe is the agent-native operating system for companies. Architecture Deep Re
 
 Beevibe coordinates people and agents. Architecture Deep Research gives them better architecture decisions to coordinate around.
 
+ADR fits Beevibe as a full product because the core Beevibe primitives already match what strategic architecture research needs:
+
+- **Agent identity:** an Architect specialist is just a configured Beevibe Agent at the team or org level, with `hierarchy_level`, `parent_agent_id`, `runtime_config`, and `review_policy`.
+- **Bounded domain memory:** architecture knowledge lives in the Architect's durable memory, where OSS precedents, DDD invariants, and failure-mode notes accumulate over time.
+- **Mesh handoff:** when an IC coding agent reaches an architectural boundary, it asks the Architect through the mesh, receives a topology spec, and continues implementation under that constraint.
+- **Hierarchy and review:** architectural constraints flow down with delegated tasks, while sensitive decisions can require human review.
+- **Self-hosted privacy:** architecture context stays inside the same Beevibe workspace, Postgres database, daemon runtime, and MCP tool surface.
+
+Beevibe is not an agent OS plus a separate ADR product. Beevibe is where ADR can become a real product, because deep architecture research needs persistent memory, specialist routing, hierarchy enforcement, human review, and private infrastructure.
+
 In the long run, a Beevibe task should be able to carry:
 
 - The product goal.
