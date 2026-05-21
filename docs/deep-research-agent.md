@@ -136,6 +136,8 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
 - `--max-adaptive-cycles <n>` (default 1): max gap-filling re-research cycles when the knowledge map has no promoted candidates.
 - `--skip-critique`: do not run the critique agent.
 - `--enforce-critique`: when set, high-severity critique with `recommend_human_review` auto-downgrades the selected topology to `requires_human_architecture_review` (original choice preserved in `state.json`).
+- `--skip-citation-audit`: do not run the post-hoc citation verifier.
+- `--plan-approval` (LangGraph runtime only): pause after planning so the operator can edit `research-plan.json` and resume programmatically.
 - `--strict-clarification`: stop before research if the PRD is too thin.
 
 Outputs:
@@ -151,6 +153,7 @@ evidence.json
 knowledge-map.json
 intermediate-reports.md
 critique.json
+citation-audit.json
 research-report.md
 ADR.md
 architecture.spec.json

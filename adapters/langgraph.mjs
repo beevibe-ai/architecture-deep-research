@@ -1,9 +1,11 @@
 import {
   Annotation,
+  Command,
   END,
   MemorySaver,
   START,
-  StateGraph
+  StateGraph,
+  interrupt
 } from "@langchain/langgraph";
 import {
   applyCritique,
@@ -15,6 +17,7 @@ import {
   prepareRun,
   setLlmJsonProvider,
   synthesizeDecisionPhase,
+  verifyCitationsPhase,
   writeRunArtifacts
 } from "../src/kernel.mjs";
 import {
@@ -43,6 +46,7 @@ const AdrLangGraphState = Annotation.Root({
   researchResults: Annotation(),
   spec: Annotation(),
   critique: Annotation(),
+  citationAudit: Annotation(),
   decisionDowngraded: Annotation(),
 
   // Terminal status.
@@ -91,13 +95,43 @@ async function prepareRunNode(state) {
 }
 
 async function planResearchNode(state) {
+  const flags = buildFlags(state);
   const plan = await planResearchPhase({
     context: state.context,
     content: state.content,
     outDir: state.resolvedOutDir,
-    flags: buildFlags(state)
+    flags
   });
-  return { plan, status: "plan_ready" };
+
+  if (!flags["plan-approval"]) {
+    return { plan, status: "plan_ready" };
+  }
+
+  // Human-in-the-loop: pause and let the operator approve or edit the plan.
+  // `interrupt` throws GraphInterrupt; the value below is surfaced as
+  // `task.interrupts[].value` for the caller. Resume with
+  //   graph.invoke(new Command({ resume: { action: "approve" } }))
+  // or graph.invoke(new Command({ resume: { action: "edit", plan: newPlan } }))
+  const response = interrupt({
+    type: "plan_approval",
+    plan,
+    instructions: [
+      "Resume with Command({ resume: { action: 'approve' } }) to accept the plan as-is.",
+      "Resume with Command({ resume: { action: 'edit', plan: <plan object> } }) to replace the plan.",
+      "Resume with Command({ resume: { action: 'abort' } }) to terminate the run."
+    ]
+  });
+
+  if (response?.action === "abort") {
+    return {
+      status: "aborted_by_human",
+      handoffBoundary: "adr_aborted_during_plan_approval"
+    };
+  }
+  if (response?.action === "edit" && response.plan) {
+    return { plan: response.plan, status: "plan_edited_by_human" };
+  }
+  return { plan, status: "plan_approved_by_human" };
 }
 
 async function executeResearchNode(state) {
@@ -150,6 +184,20 @@ async function critiqueDecisionNode(state) {
   };
 }
 
+async function verifyCitationsNode(state) {
+  const flags = buildFlags(state);
+  if (flags["skip-citation-audit"]) {
+    return { citationAudit: null, status: "citation_audit_skipped" };
+  }
+  const citationAudit = await verifyCitationsPhase({
+    context: state.context,
+    spec: state.spec,
+    evidenceItems: state.evidenceItems,
+    outDir: state.resolvedOutDir
+  });
+  return { citationAudit, status: "citation_audit_completed" };
+}
+
 async function writeArtifactsNode(state) {
   const result = await writeRunArtifacts({
     context: state.context,
@@ -159,7 +207,8 @@ async function writeArtifactsNode(state) {
     researchResults: state.researchResults,
     knowledgeMap: state.knowledgeMap,
     outDir: state.resolvedOutDir,
-    critique: state.critique || null
+    critique: state.critique || null,
+    citationAudit: state.citationAudit || null
   });
   return {
     status: "completed",
@@ -174,6 +223,10 @@ function routeAfterPrepare(state) {
   return state.needsClarification ? END : "plan_research";
 }
 
+function routeAfterPlan(state) {
+  return state.status === "aborted_by_human" ? END : "execute_research";
+}
+
 export function createAdrLangGraph({ checkpointer } = {}) {
   return new StateGraph(AdrLangGraphState)
     .addNode("prepare_run", prepareRunNode)
@@ -181,16 +234,21 @@ export function createAdrLangGraph({ checkpointer } = {}) {
     .addNode("execute_research", executeResearchNode)
     .addNode("synthesize_decision", synthesizeDecisionNode)
     .addNode("critique_decision", critiqueDecisionNode)
+    .addNode("verify_citations", verifyCitationsNode)
     .addNode("write_artifacts", writeArtifactsNode)
     .addEdge(START, "prepare_run")
     .addConditionalEdges("prepare_run", routeAfterPrepare, {
       plan_research: "plan_research",
       [END]: END
     })
-    .addEdge("plan_research", "execute_research")
+    .addConditionalEdges("plan_research", routeAfterPlan, {
+      execute_research: "execute_research",
+      [END]: END
+    })
     .addEdge("execute_research", "synthesize_decision")
     .addEdge("synthesize_decision", "critique_decision")
-    .addEdge("critique_decision", "write_artifacts")
+    .addEdge("critique_decision", "verify_citations")
+    .addEdge("verify_citations", "write_artifacts")
     .addEdge("write_artifacts", END)
     .compile({
       checkpointer: checkpointer || new MemorySaver()
@@ -205,7 +263,8 @@ export async function runLangGraphDeepResearch({
   flags = {},
   model = DEFAULT_MODEL_STRING,
   threadId = `adr-${Date.now()}`,
-  checkpointer
+  checkpointer,
+  graph
 }) {
   if (!inputPath || !domain || !decision || !outDir) {
     throw new Error(
@@ -219,11 +278,48 @@ export async function runLangGraphDeepResearch({
   });
 
   try {
-    const graph = createAdrLangGraph({ checkpointer });
-    return await graph.invoke(
+    const compiledGraph = graph || createAdrLangGraph({ checkpointer });
+    return await compiledGraph.invoke(
       { inputPath, domain, decision, outDir, flags, model },
       { configurable: { thread_id: threadId } }
     );
+  } finally {
+    setLlmJsonProvider(previousProvider || null, {
+      label: previousProvider ? "restored" : "none"
+    });
+  }
+}
+
+/**
+ * Resume a paused LangGraph deep-research run. The caller must reuse the
+ * same compiled graph (or supply the same checkpointer) and the same
+ * threadId that was used in the original `runLangGraphDeepResearch` call.
+ *
+ * @param {object} params
+ * @param {object} params.graph compiled graph from createAdrLangGraph
+ * @param {string} params.threadId the thread_id used for the original run
+ * @param {{ action: 'approve' | 'edit' | 'abort', plan?: object }} params.resume
+ * @param {string} [params.model] keep the same model as the original run
+ */
+export async function resumeLangGraphDeepResearch({
+  graph,
+  threadId,
+  resume,
+  model = DEFAULT_MODEL_STRING
+}) {
+  if (!graph) throw new Error("resumeLangGraphDeepResearch requires graph.");
+  if (!threadId) throw new Error("resumeLangGraphDeepResearch requires threadId.");
+  if (!resume) throw new Error("resumeLangGraphDeepResearch requires a resume payload.");
+
+  const previousProvider = getLlmJsonProvider();
+  setLlmJsonProvider(createLangChainJsonProvider({ model }), {
+    label: `langchain:${model}`
+  });
+
+  try {
+    return await graph.invoke(new Command({ resume }), {
+      configurable: { thread_id: threadId }
+    });
   } finally {
     setLlmJsonProvider(previousProvider || null, {
       label: previousProvider ? "restored" : "none"
@@ -251,4 +347,4 @@ export function createAdrLangGraphLegacy() {
     .compile({ checkpointer: new MemorySaver() });
 }
 
-export { DEFAULT_MODEL_STRING };
+export { Command, DEFAULT_MODEL_STRING };

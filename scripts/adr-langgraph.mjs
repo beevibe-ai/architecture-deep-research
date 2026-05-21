@@ -30,7 +30,7 @@ function parseArgs(argv) {
 function usage() {
   return `Usage:
   adr-langgraph <product-context.md> --domain <domain> --decision <decision> --out <dir> \\
-    [--model <langchain-model-string>] [--thread-id <id>]
+    [--model <langchain-model-string>] [--thread-id <id>] [--plan-approval] [flags...]
 
 Examples of --model (passed to LangChain initChatModel):
   openai:gpt-4.1-mini       (default; needs OPENAI_API_KEY + @langchain/openai)
@@ -40,9 +40,42 @@ Examples of --model (passed to LangChain initChatModel):
 
 The model can also be set via LANGGRAPH_LLM env var.
 
+Tuning flags (forwarded to the kernel):
+  --max-rounds <n>          inner research loop rounds per task (default 2)
+  --max-sources <n>         evidence items per task (default 5)
+  --max-cycles <n>          bound on planned task count (default 2)
+  --max-adaptive-cycles <n> gap-filling cycles after empty knowledge map (default 1)
+  --skip-critique           do not run the critique agent
+  --enforce-critique        auto-downgrade high-severity critique to requires_human_architecture_review
+  --skip-citation-audit     do not run the post-hoc citation verifier
+  --plan-approval           pause after planning so the operator can edit research-plan.json
+                            (programmatic resume via resumeLangGraphDeepResearch)
+  --strict-clarification    stop before research if the PRD is too thin
+
 Required runtime:
   - one live search provider: BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, or SEARXNG_URL
   - the API key for the provider in --model (e.g. OPENAI_API_KEY)`;
+}
+
+function describeInterrupt(result, outDir) {
+  const interrupts = Array.isArray(result?.__interrupt__)
+    ? result.__interrupt__
+    : result?.__interrupt__
+      ? [result.__interrupt__]
+      : [];
+  if (interrupts.length === 0) return null;
+  const interruptValues = interrupts.map((entry) => entry?.value || entry);
+  return {
+    paused: true,
+    reason: "plan_approval_requested",
+    interrupts: interruptValues,
+    next_steps: [
+      `Plan written to ${outDir}/research-plan.json.`,
+      "Edit that file if needed, then call resumeLangGraphDeepResearch programmatically",
+      "with the same compiled graph + thread-id and { action: 'approve' | 'edit' | 'abort' }.",
+      "Resume from the CLI is not yet supported (the in-memory checkpointer does not survive process exit)."
+    ]
+  };
 }
 
 const { inputPath, flags } = parseArgs(process.argv.slice(2));
@@ -62,6 +95,11 @@ try {
     model: flags.model,
     threadId: flags["thread-id"]
   });
+  const interruptInfo = describeInterrupt(result, flags.out);
+  if (interruptInfo) {
+    console.log(JSON.stringify(interruptInfo, null, 2));
+    process.exit(0);
+  }
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   console.error(error?.message || error);

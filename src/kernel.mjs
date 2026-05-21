@@ -1689,6 +1689,135 @@ async function critiqueDecisionPhase({
   return critique;
 }
 
+async function verifyCitationsPhase({
+  context,
+  spec,
+  evidenceItems,
+  outDir
+}) {
+  const evidenceById = new Map(
+    evidenceItems.map((item) => [Number(item.citation_id), item])
+  );
+
+  const citedPoints = [];
+  for (const id of toArray(spec.decision?.evidence_citations).map(Number)) {
+    if (Number.isFinite(id)) {
+      citedPoints.push({
+        citation_id: id,
+        claim_context: "selected_topology_summary",
+        claim_text: spec.decision?.summary || ""
+      });
+    }
+  }
+  for (const candidate of toArray(spec.candidate_topologies)) {
+    for (const id of toArray(candidate.evidence_citations).map(Number)) {
+      if (Number.isFinite(id)) {
+        citedPoints.push({
+          citation_id: id,
+          claim_context: `candidate:${candidate.name}:${candidate.decision || "n/a"}`,
+          claim_text: `${candidate.label || candidate.name} — fit: ${candidate.fit || ""}; risks: ${
+            (candidate.risks || []).join("; ") || "n/a"
+          }`
+        });
+      }
+    }
+  }
+
+  const items = [];
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "citation_verifier",
+      system: [
+        "You are the citation verifier for Architecture Deep Research.",
+        "For each (claim_text, citation_id) pair, decide whether the cited evidence's claims and excerpt actually support the claim_text.",
+        "Be strict: a citation that only loosely touches the topic is NOT supporting.",
+        "If the evidence is missing or empty, mark verified:false with reason 'no_evidence'.",
+        "Output JSON with {items:[{citation_id,claim_context,verified:boolean,confidence:0..1,reason:string}]}."
+      ].join("\n"),
+      user: JSON.stringify({
+        domain: context.domain,
+        decision: context.decision,
+        selected_topology: spec.decision?.selected_topology,
+        cited_points: citedPoints,
+        evidence_lookup: citedPoints.map((point) => {
+          const item = evidenceById.get(Number(point.citation_id));
+          return {
+            citation_id: point.citation_id,
+            present: Boolean(item),
+            title: item?.title,
+            url: item?.url,
+            source_type: item?.source_type,
+            score: item?.score,
+            claims: item?.claims || [],
+            excerpt: (item?.excerpt || "").slice(0, 1200)
+          };
+        })
+      })
+    });
+  } catch (error) {
+    raw = {
+      items: citedPoints.map((point) => ({
+        citation_id: point.citation_id,
+        claim_context: point.claim_context,
+        verified: false,
+        confidence: 0,
+        reason: `verifier_failed: ${String(error?.message || error)}`
+      }))
+    };
+  }
+
+  for (const item of toArray(raw.items)) {
+    const citationId = Number(item.citation_id);
+    if (!Number.isFinite(citationId)) continue;
+    items.push({
+      citation_id: citationId,
+      claim_context: String(item.claim_context || ""),
+      verified: Boolean(item.verified),
+      confidence: Math.max(0, Math.min(1, Number(item.confidence || 0))),
+      reason: String(item.reason || ""),
+      evidence_present: evidenceById.has(citationId)
+    });
+  }
+
+  // Synthesize: any cited_point not returned by the verifier is unverified.
+  const returnedKey = (item) => `${item.citation_id}|${item.claim_context}`;
+  const returnedKeys = new Set(items.map(returnedKey));
+  for (const point of citedPoints) {
+    const key = `${point.citation_id}|${point.claim_context}`;
+    if (!returnedKeys.has(key)) {
+      items.push({
+        citation_id: point.citation_id,
+        claim_context: point.claim_context,
+        verified: false,
+        confidence: 0,
+        reason: "verifier_did_not_return_item",
+        evidence_present: evidenceById.has(Number(point.citation_id))
+      });
+    }
+  }
+
+  const totalCitations = items.length;
+  const verifiedCount = items.filter((item) => item.verified).length;
+  const unsupportedCount = totalCitations - verifiedCount;
+  const audit = {
+    version: VERSION,
+    selected_topology: spec.decision?.selected_topology,
+    total_citations: totalCitations,
+    verified_count: verifiedCount,
+    unsupported_count: unsupportedCount,
+    items
+  };
+
+  await writeJson(path.join(outDir, "citation-audit.json"), audit);
+  await appendEvent(outDir, "citation_audit_completed", {
+    total_citations: totalCitations,
+    verified_count: verifiedCount,
+    unsupported_count: unsupportedCount
+  });
+  return audit;
+}
+
 function applyCritique({ spec, critique, flags }) {
   if (!critique) return { spec, downgraded: false };
   if (!flags["enforce-critique"]) return { spec, downgraded: false };
@@ -1725,21 +1854,34 @@ async function writeRunArtifacts({
   researchResults,
   knowledgeMap,
   outDir,
-  critique
+  critique,
+  citationAudit
 }) {
   const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems);
   const baseHandoff = buildExecutionHandoff(spec);
-  const handoff = critique
-    ? {
-        ...baseHandoff,
-        artifacts: { ...baseHandoff.artifacts, critique: "critique.json" },
-        critique_summary: {
-          issue_count: critique.issues.length,
-          high_severity_count: critique.high_severity_count,
-          recommend_human_review: critique.recommend_human_review
-        }
+  let handoff = baseHandoff;
+  if (critique) {
+    handoff = {
+      ...handoff,
+      artifacts: { ...handoff.artifacts, critique: "critique.json" },
+      critique_summary: {
+        issue_count: critique.issues.length,
+        high_severity_count: critique.high_severity_count,
+        recommend_human_review: critique.recommend_human_review
       }
-    : baseHandoff;
+    };
+  }
+  if (citationAudit) {
+    handoff = {
+      ...handoff,
+      artifacts: { ...handoff.artifacts, citation_audit: "citation-audit.json" },
+      citation_audit_summary: {
+        total_citations: citationAudit.total_citations,
+        verified_count: citationAudit.verified_count,
+        unsupported_count: citationAudit.unsupported_count
+      }
+    };
+  }
   const report = synthesizeResearchReport({
     context,
     plan,
@@ -1765,12 +1907,14 @@ async function writeRunArtifacts({
     evidence_count: evidenceItems.length,
     promoted_candidate_count: knowledgeMap.promoted_candidates.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
+    citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
     handoff_boundary: "adr_stops_at_execution_handoff"
   });
   await appendEvent(outDir, "run_completed", {
     selected_topology: spec.decision.selected_topology,
     evidence_count: evidenceItems.length,
-    critique_high_severity_count: critique ? critique.high_severity_count : 0
+    critique_high_severity_count: critique ? critique.high_severity_count : 0,
+    citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0
   });
 
   return {
@@ -1778,7 +1922,8 @@ async function writeRunArtifacts({
     evidenceCount: evidenceItems.length,
     promotedCandidateCount: knowledgeMap.promoted_candidates.length,
     handoffBoundary: "adr_stops_at_execution_handoff",
-    critiqueHighSeverityCount: critique ? critique.high_severity_count : 0
+    critiqueHighSeverityCount: critique ? critique.high_severity_count : 0,
+    citationAuditUnsupportedCount: citationAudit ? citationAudit.unsupported_count : 0
   };
 }
 
@@ -1821,6 +1966,15 @@ async function deepResearch({ inputPath, flags }) {
         outDir: prepared.outDir
       });
 
+  const citationAudit = flags["skip-citation-audit"]
+    ? null
+    : await verifyCitationsPhase({
+        context: prepared.context,
+        spec: rawSpec,
+        evidenceItems,
+        outDir: prepared.outDir
+      });
+
   const { spec: finalSpec, downgraded } = applyCritique({
     spec: rawSpec,
     critique,
@@ -1841,7 +1995,8 @@ async function deepResearch({ inputPath, flags }) {
     researchResults,
     knowledgeMap,
     outDir: prepared.outDir,
-    critique
+    critique,
+    citationAudit
   });
 
   console.log(`Deep research artifacts written to ${prepared.outDir}`);
@@ -1850,6 +2005,11 @@ async function deepResearch({ inputPath, flags }) {
   if (critique && critique.issues.length > 0) {
     console.log(
       `Critique: ${critique.issues.length} issues (${critique.high_severity_count} high-severity)`
+    );
+  }
+  if (citationAudit && citationAudit.total_citations > 0) {
+    console.log(
+      `Citation audit: ${citationAudit.verified_count}/${citationAudit.total_citations} verified, ${citationAudit.unsupported_count} unsupported`
     );
   }
   console.log("Boundary: ADR stops at Execution Handoff");
@@ -1923,5 +2083,6 @@ export {
   setLlmJsonProvider,
   supersedeAdr,
   synthesizeDecisionPhase,
+  verifyCitationsPhase,
   writeRunArtifacts
 };

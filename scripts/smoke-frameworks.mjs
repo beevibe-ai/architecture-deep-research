@@ -1,6 +1,8 @@
 import {
+  Command,
   createAdrLangGraph,
   createAdrLangGraphLegacy,
+  resumeLangGraphDeepResearch,
   runLangGraphDeepResearch
 } from "../adapters/langgraph.mjs";
 import { createLangChainJsonProvider } from "../adapters/langgraph-llm.mjs";
@@ -30,6 +32,7 @@ const expectedNodes = [
   "execute_research",
   "synthesize_decision",
   "critique_decision",
+  "verify_citations",
   "write_artifacts"
 ];
 for (const node of expectedNodes) {
@@ -39,6 +42,12 @@ for (const node of expectedNodes) {
 }
 if (typeof createAdrLangGraphLegacy !== "function") {
   throw new Error("LangGraph adapter did not export createAdrLangGraphLegacy.");
+}
+if (typeof resumeLangGraphDeepResearch !== "function") {
+  throw new Error("LangGraph adapter did not export resumeLangGraphDeepResearch.");
+}
+if (typeof Command !== "function") {
+  throw new Error("LangGraph adapter did not re-export Command for resume.");
 }
 if (typeof createLangChainJsonProvider !== "function") {
   throw new Error("LangGraph LLM adapter did not export createLangChainJsonProvider.");

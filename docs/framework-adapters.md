@@ -22,13 +22,55 @@ START
        +-- needs_clarification? --> END
        |
   -> plan_research                (research plan)
-  -> execute_research             (search, claim extraction, knowledge map)
+       |
+       +-- --plan-approval flag set? --> interrupt() → resume with Command
+       |
+  -> execute_research             (search + claim extraction + adaptive gap-filling)
   -> synthesize_decision          (architecture spec)
+  -> critique_decision            (find uncited claims, contradictions, weak evidence)
+  -> verify_citations             (post-hoc per-citation verification)
   -> write_artifacts              (ADR.md, spec, eval pack, guardrails, handoff, ...)
   -> END
 ```
 
-Each node maps to an exported kernel phase function (`prepareRun`, `planResearchPhase`, `executeResearchPhase`, `synthesizeDecisionPhase`, `writeRunArtifacts`). The graph is checkpointed with `MemorySaver`, so a run can pause and resume on the same `thread_id`.
+Each node maps to an exported kernel phase function (`prepareRun`, `planResearchPhase`, `executeResearchPhase`, `synthesizeDecisionPhase`, `critiqueDecisionPhase`, `verifyCitationsPhase`, `writeRunArtifacts`). The graph is checkpointed with `MemorySaver`, so a run can pause and resume on the same `thread_id`.
+
+### Human-in-the-loop plan approval
+
+Pass `--plan-approval` (or `flags: { "plan-approval": true }` programmatically) to pause after the planner. The `plan_research` node calls LangGraph's `interrupt()`, persisting the plan to `research-plan.json` and returning control to the caller.
+
+```js
+import {
+  Command,
+  createAdrLangGraph,
+  resumeLangGraphDeepResearch,
+  runLangGraphDeepResearch
+} from "./adapters/langgraph.mjs";
+
+const graph = createAdrLangGraph();   // share between run + resume
+const threadId = "adr-logistics-mesh-2026-05-21";
+
+const first = await runLangGraphDeepResearch({
+  graph,
+  threadId,
+  inputPath: "./product-context.md",
+  domain: "global logistics contract analysis",
+  decision: "retrieval topology",
+  outDir: ".adr-runs/langgraph-logistics",
+  flags: { "plan-approval": true }
+});
+
+// first.__interrupt__ contains the plan and resume instructions.
+// Edit research-plan.json on disk if you want, then:
+
+await resumeLangGraphDeepResearch({
+  graph,
+  threadId,
+  resume: { action: "approve" }            // or "edit" + plan, or "abort"
+});
+```
+
+`MemorySaver` lives for the lifetime of the Node process. For cross-process pause/resume, swap in a persistent checkpointer (`@langchain/langgraph-checkpoint-sqlite`, `@langchain/langgraph-checkpoint-postgres`) via the `checkpointer` option.
 
 ### LLM backend
 
