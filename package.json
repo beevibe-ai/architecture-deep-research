@@ -13,6 +13,7 @@
   "exports": {
     ".": "./src/kernel.mjs",
     "./adapters/langgraph": "./adapters/langgraph.mjs",
+    "./adapters/langgraph-llm": "./adapters/langgraph-llm.mjs",
     "./adapters/google-adk": "./adapters/google-adk.mjs",
     "./adapters/google-adk-deep-research": "./adapters/google-adk-deep-research.mjs",
     "./adapters/beevibe": "./adapters/beevibe.mjs"
@@ -40,7 +41,8 @@
   },
   "peerDependencies": {
     "@google/adk": "^1.1.0",
-    "@langchain/langgraph": "^1.3.2"
+    "@langchain/langgraph": "^1.3.2",
+    "langchain": "^1.0.0"
   },
   "peerDependenciesMeta": {
     "@google/adk": {
@@ -48,11 +50,16 @@
     },
     "@langchain/langgraph": {
       "optional": true
+    },
+    "langchain": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@google/adk": "^1.1.0",
-    "@langchain/langgraph": "^1.3.2"
+    "@langchain/langgraph": "^1.3.2",
+    "@langchain/openai": "^1.0.0",
+    "langchain": "^1.0.0"
   },
   "dependencies": {
     "ajv": "^8.20.0"

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/citation-audit.schema.json",
+  "title": "Beevibe Architecture Deep Research Citation Audit",
+  "type": "object",
+  "required": ["version", "total_citations", "verified_count", "unsupported_count", "items"],
+  "properties": {
+    "version": { "type": "string" },
+    "selected_topology": { "type": ["string", "null"] },
+    "total_citations": { "type": "integer", "minimum": 0 },
+    "verified_count": { "type": "integer", "minimum": 0 },
+    "unsupported_count": { "type": "integer", "minimum": 0 },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["citation_id", "claim_context", "verified", "reason"],
+        "properties": {
+          "citation_id": { "type": "integer", "minimum": 1 },
+          "claim_context": { "type": "string" },
+          "verified": { "type": "boolean" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "reason": { "type": "string" },
+          "evidence_present": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

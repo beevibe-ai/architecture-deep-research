@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/critique.schema.json",
+  "title": "Beevibe Architecture Deep Research Critique",
+  "type": "object",
+  "required": ["version", "issues", "summary", "high_severity_count", "recommend_human_review"],
+  "properties": {
+    "version": { "type": "string" },
+    "selected_topology": { "type": ["string", "null"] },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "description"],
+        "properties": {
+          "severity": { "enum": ["high", "medium", "low"] },
+          "category": { "type": "string" },
+          "description": { "type": "string" },
+          "evidence_citations": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "summary": { "type": "string" },
+    "high_severity_count": { "type": "integer", "minimum": 0 },
+    "recommend_human_review": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}
