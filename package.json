@@ -14,15 +14,18 @@
     ".": "./src/kernel.mjs",
     "./adapters/langgraph": "./adapters/langgraph.mjs",
     "./adapters/google-adk": "./adapters/google-adk.mjs",
+    "./adapters/google-adk-deep-research": "./adapters/google-adk-deep-research.mjs",
     "./adapters/beevibe": "./adapters/beevibe.mjs"
   },
   "bin": {
     "adr": "./scripts/adr.mjs",
-    "adr-langgraph": "./scripts/adr-langgraph.mjs"
+    "adr-langgraph": "./scripts/adr-langgraph.mjs",
+    "adr-adk": "./scripts/adr-adk.mjs"
   },
   "scripts": {
     "adr": "node scripts/adr.mjs",
     "adr:langgraph": "node scripts/adr-langgraph.mjs",
+    "adr:adk": "node scripts/adr-adk.mjs",
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:live": "node scripts/benchmark.mjs --strict",
     "benchmark:live:fast": "node scripts/benchmark.mjs --config benchmarks/configs/live-fast.json --strict",

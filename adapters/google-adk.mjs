@@ -1,5 +1,18 @@
 import { Agent, FunctionTool } from "@google/adk";
 import { deepResearch } from "../src/kernel.mjs";
+import {
+  createAdkDeepResearchAgent,
+  createAdkDeepResearchTool,
+  createAdkJsonProvider,
+  runAdkDeepResearch
+} from "./google-adk-deep-research.mjs";
+
+export {
+  createAdkDeepResearchAgent,
+  createAdkDeepResearchTool,
+  createAdkJsonProvider,
+  runAdkDeepResearch
+};
 
 export async function runArchitectureDeepResearchTool(input) {
   const {

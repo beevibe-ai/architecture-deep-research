@@ -370,7 +370,23 @@ function activeSearchProviders() {
   return providers;
 }
 
+let customLlmJsonProvider = null;
+let customLlmProviderLabel = null;
+
+function setLlmJsonProvider(fn, { label = "custom" } = {}) {
+  if (fn !== null && typeof fn !== "function") {
+    throw new Error("setLlmJsonProvider expects a function or null.");
+  }
+  customLlmJsonProvider = fn;
+  customLlmProviderLabel = fn ? label : null;
+}
+
+function getLlmJsonProvider() {
+  return customLlmJsonProvider;
+}
+
 function activeLlmProvider() {
+  if (customLlmJsonProvider) return customLlmProviderLabel || "custom";
   const provider = process.env.ADR_LLM_PROVIDER || "openai-compatible";
   const baseUrl =
     process.env.ADR_OPENAI_BASE_URL ||
@@ -416,6 +432,10 @@ async function appendEvent(outDir, type, payload = {}) {
 }
 
 async function callLlmJson({ system, user, label = "llm_json" }) {
+  if (customLlmJsonProvider) {
+    return customLlmJsonProvider({ system, user, label });
+  }
+
   const provider = process.env.ADR_LLM_PROVIDER || "openai-compatible";
   if (provider !== "openai-compatible") {
     throw new Error(`Unsupported ADR_LLM_PROVIDER: ${provider}`);
@@ -1411,6 +1431,7 @@ This ADR supersedes ${supersedes.previous_decision_id || "the previous ADR"} fro
 
 export {
   VERSION,
+  activeLlmProvider,
   activeSearchProviders,
   assessClarification,
   buildEvaluationPack,
@@ -1420,7 +1441,9 @@ export {
   buildStrategicContext,
   classifySource,
   deepResearch,
+  getLlmJsonProvider,
   research,
   runResearchAgents,
+  setLlmJsonProvider,
   supersedeAdr
 };

@@ -54,30 +54,19 @@ await runLangGraphDeepResearch({
 
 ## Google ADK
 
-The Google ADK adapter lives in:
+There are two complementary Google ADK adapters.
+
+### Tool Wrapper Adapter
 
 ```text
 adapters/google-adk.mjs
 ```
 
-It uses:
+Wraps the kernel's `deepResearch` as an `Agent` + `FunctionTool` so the existing pipeline (with whatever LLM provider is configured via env) can be embedded inside an ADK multi-agent system.
 
-- `Agent`
-- `FunctionTool`
-
-The exported ADK tool is:
-
-```text
-run_architecture_deep_research
-```
-
-The exported agent is:
-
-```js
-rootAgent
-```
-
-Programmatic use:
+- Tool: `run_architecture_deep_research`
+- Agent factory: `createArchitectureDeepResearchAgent`
+- Default export: `rootAgent`
 
 ```js
 import {
@@ -89,7 +78,64 @@ const agent = createArchitectureDeepResearchAgent();
 const tool = createArchitectureDeepResearchTool();
 ```
 
-The ADK agent instruction explicitly preserves the product boundary:
+### Gemini-as-LLM-Provider Adapter
+
+```text
+adapters/google-adk-deep-research.mjs
+```
+
+Installs Gemini (via `@google/adk`) as the kernel's LLM backend, so the entire live-agentic loop — planner, claim extraction, synthesis, evaluation pack — runs through Gemini instead of an OpenAI-compatible API. The kernel still owns orchestration, evidence preservation, knowledge-map gating, and the Execution Handoff boundary.
+
+The integration point is `setLlmJsonProvider` on the kernel: the ADK adapter constructs an `LlmAgent` per JSON call with `responseMimeType: "application/json"`, runs it via `InMemoryRunner.runEphemeral`, and parses the result. Every existing kernel invariant (no offline, no static pattern library, evidence-only candidate promotion, `requires_human_architecture_review` fallback when evidence is weak) is preserved.
+
+CLI:
+
+```bash
+npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out .adr-runs/adk-logistics-contract-mesh \
+  --max-cycles 2
+```
+
+Required env:
+
+- `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` (or `GOOGLE_API_KEY`)
+- one live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`
+
+Optional env: `ADR_ADK_MODEL` (default `gemini-2.5-flash`).
+
+Programmatic use:
+
+```js
+import {
+  createAdkDeepResearchAgent,
+  createAdkDeepResearchTool,
+  runAdkDeepResearch
+} from "./adapters/google-adk.mjs";
+
+await runAdkDeepResearch({
+  inputPath: "examples/logistics-contract-mesh/product-context.md",
+  domain: "global logistics contract analysis",
+  decision: "retrieval topology",
+  outDir: ".adr-runs/adk-logistics-contract-mesh"
+});
+```
+
+Or use the JSON provider directly with the kernel's `deepResearch`:
+
+```js
+import { deepResearch, setLlmJsonProvider } from "@beevibe/architecture-deep-research";
+import { createAdkJsonProvider } from "@beevibe/architecture-deep-research/adapters/google-adk-deep-research";
+
+setLlmJsonProvider(createAdkJsonProvider({ model: "gemini-2.5-pro" }), {
+  label: "adk-gemini:pro"
+});
+
+await deepResearch({ inputPath, flags: { domain, decision, out: outDir } });
+```
+
+The agent instruction preserves the product boundary:
 
 ```text
 Stop at Execution Handoff; never implement the downstream product.
@@ -124,7 +170,8 @@ npm run smoke:frameworks
 This test verifies adapter shape only. It does not run fake research without live credentials.
 
 - the LangGraph adapter exports the deep research runner;
-- the Google ADK adapter can construct an agent with the ADR function tool;
+- the Google ADK tool-wrapper adapter can construct an agent with the ADR function tool;
+- the Google ADK Gemini-as-provider adapter exports `createAdkJsonProvider`, `createAdkDeepResearchAgent`, and `createAdkDeepResearchTool`, and the kernel's `setLlmJsonProvider` / `getLlmJsonProvider` / `activeLlmProvider` hooks correctly install and report a custom provider label;
 - framework packages load without coupling the kernel to one orchestrator.
 
 ## Dependency Notes
