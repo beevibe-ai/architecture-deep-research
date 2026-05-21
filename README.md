@@ -15,13 +15,13 @@ For retrieval-heavy systems, that failure often looks like this:
 - A domain with explicit entities and relationships gets flattened into anonymous chunks.
 - A system that needs auditability ships without source lineage, abstention rules, or bounded context ownership.
 
-Architecture Deep Research exists to move AI-assisted development up one layer. It does not try to be another coding assistant. It researches, compares, and compiles architecture decisions into artifacts that humans can review and coding agents can obey.
+Architecture Deep Research exists to move AI-assisted development up one layer. It does not try to be another coding assistant. It researches, compares, and turns architecture decisions into artifacts that humans can review and coding agents can obey.
 
 ## The Category
 
 Architecture Deep Research is a dedicated **deep research layer for system design**.
 
-It applies deep research to system design decisions, then compiles the result into:
+It applies deep research to system design decisions, then turns the result into:
 
 1. An Architecture Decision Record.
 2. A machine-readable architecture spec.
@@ -87,7 +87,7 @@ Architecture Deep Research researches the domain shape first:
 | Agentic Search | Open-ended investigation across tools and APIs | Non-deterministic latency, cost, and traceability |
 | Workflow-Routed Hybrid | Production systems that need deterministic control with multiple retrieval modes | More design work upfront |
 
-For a high-audit logistics contract mesh, the compiled decision might be:
+For a high-audit logistics contract mesh, the final decision might be:
 
 ```text
 Decision:
@@ -107,7 +107,7 @@ Guardrail:
 Every answer must resolve to source document spans and graph node IDs before it can be returned.
 ```
 
-## What The Compiler Produces
+## What The System Produces
 
 ### 1. ADR
 
@@ -225,7 +225,7 @@ Architecture Deep Research follows a research-to-spec pipeline.
 
 ### 1. Intake
 
-The compiler ingests the strategic context:
+The research engine ingests the strategic context:
 
 - Product brief or PRD.
 - Domain description.
@@ -248,7 +248,7 @@ It decomposes the problem into architecture-relevant dimensions:
 
 ### 3. Deep Research
 
-The compiler researches proven patterns and failure modes across:
+The research engine investigates proven patterns and failure modes across:
 
 - Official framework documentation.
 - Open-source implementations.
@@ -260,7 +260,7 @@ The research goal is not citation volume. The goal is pattern fit.
 
 ### 4. Pattern Selection
 
-The compiler compares candidate architecture families:
+The research engine compares candidate architecture families:
 
 - Vector RAG.
 - Hybrid RAG.
@@ -275,7 +275,7 @@ It scores each candidate against domain constraints, operational cost, implement
 
 ### 5. Spec Compilation
 
-The selected decision is compiled into durable artifacts:
+The selected decision is captured in durable artifacts:
 
 - `ADR.md`
 - `architecture.spec.json`
@@ -289,7 +289,7 @@ These artifacts become the bridge between principal-engineer reasoning and agent
 
 ### Strategic Before Tactical
 
-The compiler chooses the architecture family before implementation begins. Lower-level choices still matter, but they happen after the topology is clear.
+The research engine chooses the architecture family before implementation begins. Lower-level choices still matter, but they happen after the topology is clear.
 
 ### Decisions Need Rejections
 
@@ -297,7 +297,7 @@ A useful ADR must explain what was rejected and why. Coding agents drift when re
 
 ### DDD Is A First-Class Signal
 
-Architecture selection should respect bounded contexts, aggregate ownership, and domain invariants. The compiler treats boundary violations as design failures, not style issues.
+Architecture selection should respect bounded contexts, aggregate ownership, and domain invariants. The research engine treats boundary violations as design failures, not style issues.
 
 ### Evaluation Packs Are Product Assets
 
@@ -337,7 +337,7 @@ Runtime code will come after the contracts are stable. That is intentional. This
 - Define the domain evaluation pack schema.
 - Provide one high-quality reference example.
 
-### Milestone 1: Research Compiler CLI
+### Milestone 1: Research CLI
 
 Target interface:
 
