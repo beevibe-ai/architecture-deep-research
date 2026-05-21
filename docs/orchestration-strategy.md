@@ -172,6 +172,8 @@ Initial priority:
 
 This keeps the product centered on strategic architecture research rather than any one agent framework.
 
+The repository now includes real adapter entry points for LangGraph and Google ADK. See [framework-adapters.md](./framework-adapters.md).
+
 ## Sources
 
 - LangGraph Graph API: https://docs.langchain.com/oss/python/langgraph/graph-api

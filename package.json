@@ -11,15 +11,40 @@
     "url": "https://github.com/beevibe-ai/architecture-deep-research.git"
   },
   "type": "module",
+  "exports": {
+    ".": "./scripts/adr.mjs",
+    "./adapters/langgraph": "./adapters/langgraph.mjs",
+    "./adapters/google-adk": "./adapters/google-adk.mjs"
+  },
   "bin": {
-    "adr": "./scripts/adr.mjs"
+    "adr": "./scripts/adr.mjs",
+    "adr-langgraph": "./scripts/adr-langgraph.mjs"
   },
   "scripts": {
     "adr": "node scripts/adr.mjs",
+    "adr:langgraph": "node scripts/adr-langgraph.mjs",
     "deep-research": "node scripts/adr.mjs deep-research",
-    "check": "node scripts/check-json.mjs"
+    "check": "node scripts/check-json.mjs",
+    "smoke:frameworks": "node scripts/smoke-frameworks.mjs",
+    "test": "npm run check && npm run smoke:frameworks"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "@google/adk": "^1.1.0",
+    "@langchain/langgraph": "^1.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@google/adk": {
+      "optional": true
+    },
+    "@langchain/langgraph": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@google/adk": "^1.1.0",
+    "@langchain/langgraph": "^1.3.2"
   }
 }

@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const VERSION = "0.1.0";
 const MAX_PARALLEL_RESEARCH_AGENTS = 3;
@@ -1453,7 +1454,22 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+export {
+  assessClarification,
+  buildArchitectureSpec,
+  buildEvaluationPack,
+  buildExecutionHandoff,
+  buildResearchPlan,
+  buildStrategicContext,
+  deepResearch,
+  deterministicResearchPlan,
+  research,
+  runResearchAgents
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

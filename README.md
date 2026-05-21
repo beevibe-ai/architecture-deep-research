@@ -339,8 +339,12 @@ This repository starts with the artifact contracts and an example decision pack:
 ```text
 .
 ├── README.md
+├── adapters/
+│   ├── google-adk.mjs
+│   └── langgraph.mjs
 ├── docs/
 │   ├── deep-research-agent.md
+│   ├── framework-adapters.md
 │   ├── implementation-plan.md
 │   ├── orchestration-strategy.md
 │   └── schemas/
@@ -352,8 +356,10 @@ This repository starts with the artifact contracts and an example decision pack:
 │       ├── research-plan.schema.json
 │       └── strategic-context.schema.json
 ├── scripts/
+│   ├── adr-langgraph.mjs
 │   ├── adr.mjs
-│   └── check-json.mjs
+│   ├── check-json.mjs
+│   └── smoke-frameworks.mjs
 └── examples/
     └── logistics-contract-mesh/
         ├── product-context.md
@@ -448,6 +454,30 @@ npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md
   --corpus-dir ./docs \
   --corpus-dir ./examples
 ```
+
+## Use Real Framework Adapters
+
+ADR ships real adapter entry points for LangGraph and Google ADK while keeping the ADR kernel framework-neutral.
+
+LangGraph:
+
+```bash
+npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out /tmp/adr-langgraph-output \
+  --offline
+```
+
+Google ADK:
+
+```js
+import { createArchitectureDeepResearchAgent } from "./adapters/google-adk.mjs";
+
+const rootAgent = createArchitectureDeepResearchAgent();
+```
+
+See [docs/framework-adapters.md](./docs/framework-adapters.md).
 
 ## Roadmap
 
