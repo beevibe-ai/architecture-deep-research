@@ -1,0 +1,21 @@
+{
+  "id": "docs-support-knowledge-base",
+  "domain": "developer documentation support search",
+  "decision": "retrieval topology",
+  "input": "product-context.md",
+  "expected": {
+    "selected_topology": "hybrid_rag",
+    "forbidden_topologies": [
+      "naive_vector_rag_primary_path"
+    ],
+    "required_invariant_substrings": [
+      "source-backed evidence"
+    ],
+    "evaluation_test_types": [
+      "baseline_domain_lookup",
+      "adversarial_multi_hop",
+      "boundary_spill"
+    ],
+    "needs_clarification": false
+  }
+}

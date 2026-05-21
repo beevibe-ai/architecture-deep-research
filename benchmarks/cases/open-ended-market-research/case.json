@@ -1,0 +1,22 @@
+{
+  "id": "open-ended-market-research",
+  "domain": "open-ended market research workspace",
+  "decision": "research topology",
+  "input": "product-context.md",
+  "expected": {
+    "selected_topology": "agentic_search",
+    "forbidden_topologies": [
+      "naive_vector_rag_primary_path"
+    ],
+    "required_invariant_substrings": [
+      "source-backed evidence",
+      "Agentic search"
+    ],
+    "evaluation_test_types": [
+      "baseline_domain_lookup",
+      "adversarial_multi_hop",
+      "boundary_spill"
+    ],
+    "needs_clarification": false
+  }
+}

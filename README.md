@@ -342,8 +342,17 @@ This repository starts with the artifact contracts and an example decision pack:
 ├── adapters/
 │   ├── google-adk.mjs
 │   └── langgraph.mjs
+├── benchmarks/
+│   ├── configs/
+│   │   └── offline.json
+│   └── cases/
+│       ├── docs-support-knowledge-base/
+│       ├── logistics-contract-mesh/
+│       ├── open-ended-market-research/
+│       └── transactional-approval-workflow/
 ├── docs/
 │   ├── deep-research-agent.md
+│   ├── experiments.md
 │   ├── framework-adapters.md
 │   ├── implementation-plan.md
 │   ├── orchestration-strategy.md
@@ -478,6 +487,22 @@ const rootAgent = createArchitectureDeepResearchAgent();
 ```
 
 See [docs/framework-adapters.md](./docs/framework-adapters.md).
+
+## Run Benchmarks
+
+ADR includes a deterministic offline benchmark suite for architecture-family selection and handoff quality.
+
+```bash
+npm run benchmark
+```
+
+CI/strict mode:
+
+```bash
+npm run benchmark:ci
+```
+
+Benchmark outputs are written to `.adr-runs/benchmarks/offline/latest/` and ignored by Git. See [benchmarks/README.md](./benchmarks/README.md) and [docs/experiments.md](./docs/experiments.md).
 
 ## Roadmap
 

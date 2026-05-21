@@ -23,10 +23,12 @@
   "scripts": {
     "adr": "node scripts/adr.mjs",
     "adr:langgraph": "node scripts/adr-langgraph.mjs",
+    "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:ci": "node scripts/benchmark.mjs --strict",
     "deep-research": "node scripts/adr.mjs deep-research",
     "check": "node scripts/check-json.mjs",
     "smoke:frameworks": "node scripts/smoke-frameworks.mjs",
-    "test": "npm run check && npm run smoke:frameworks"
+    "test": "npm run check && npm run smoke:frameworks && npm run benchmark:ci"
   },
   "engines": {
     "node": ">=20.0.0"

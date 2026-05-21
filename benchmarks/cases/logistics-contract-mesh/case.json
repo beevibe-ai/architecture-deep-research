@@ -1,0 +1,26 @@
+{
+  "id": "logistics-contract-mesh",
+  "domain": "global logistics contract analysis",
+  "decision": "retrieval topology",
+  "input": "product-context.md",
+  "expected": {
+    "selected_topology": "workflow_routed_hybrid_graphrag",
+    "forbidden_topologies": [
+      "naive_vector_rag_primary_path",
+      "unbounded_react_loop_primary_path",
+      "graph_or_vector_retrieval_without_source_spans"
+    ],
+    "required_invariant_substrings": [
+      "source-backed evidence",
+      "explicit relationships",
+      "deterministic, reviewable, and replayable",
+      "Bounded contexts"
+    ],
+    "evaluation_test_types": [
+      "baseline_domain_lookup",
+      "adversarial_multi_hop",
+      "boundary_spill"
+    ],
+    "needs_clarification": false
+  }
+}

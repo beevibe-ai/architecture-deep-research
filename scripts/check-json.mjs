@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const ignoredDirs = new Set([".git", "node_modules"]);
+const ignoredDirs = new Set([".adr-runs", ".git", "node_modules"]);
 
 async function collectJsonFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true });

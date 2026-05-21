@@ -123,8 +123,6 @@ const QUERY_SHAPE_RULES = [
       "audit",
       "traceability",
       "lineage",
-      "citation",
-      "source",
       "source-backed",
       "compliance",
       "legal",
@@ -278,9 +276,26 @@ function contentHash(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function hasNegationBefore(content, index) {
+  const window = content.slice(Math.max(0, index - 80), index).toLowerCase();
+  return /\b(does not|do not|doesn't|don't|not|no|without|avoid|is not|are not|less important than)\b/.test(
+    window
+  );
+}
+
 function findEvidence(content, patterns) {
   const normalized = content.toLowerCase();
-  return patterns.filter((pattern) => normalized.includes(pattern));
+  return patterns.filter((pattern) => {
+    const normalizedPattern = pattern.toLowerCase();
+    let index = normalized.indexOf(normalizedPattern);
+
+    while (index !== -1) {
+      if (!hasNegationBefore(normalized, index)) return true;
+      index = normalized.indexOf(normalizedPattern, index + normalizedPattern.length);
+    }
+
+    return false;
+  });
 }
 
 function inferEntities(content, domain) {
@@ -388,7 +403,15 @@ function inferCandidateFamilies(queryShapes, content) {
   if (queryShapes.some((shape) => shape.name === "self_contained_lookup")) {
     names.add("naive_vector_rag");
   }
-  if (/transaction|aggregate|source of truth|source-of-truth/i.test(content)) {
+  const transactionalEvidence = findEvidence(content, [
+    "transaction",
+    "transactions",
+    "aggregate",
+    "aggregates",
+    "source of truth",
+    "source-of-truth"
+  ]);
+  if (transactionalEvidence.length > 0) {
     names.add("relational_domain_model_first");
   }
 

@@ -1,0 +1,22 @@
+{
+  "id": "transactional-approval-workflow",
+  "domain": "enterprise access approval workflow",
+  "decision": "system topology",
+  "input": "product-context.md",
+  "expected": {
+    "selected_topology": "relational_domain_model_first",
+    "forbidden_topologies": [
+      "naive_vector_rag_primary_path"
+    ],
+    "required_invariant_substrings": [
+      "Bounded contexts",
+      "source-of-truth state"
+    ],
+    "evaluation_test_types": [
+      "baseline_domain_lookup",
+      "adversarial_multi_hop",
+      "boundary_spill"
+    ],
+    "needs_clarification": false
+  }
+}
