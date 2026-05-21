@@ -315,6 +315,7 @@ This repository starts with the artifact contracts and an example decision pack:
 .
 ├── README.md
 ├── docs/
+│   ├── orchestration-strategy.md
 │   └── schemas/
 │       ├── architecture-spec.schema.json
 │       └── domain-evaluation-pack.schema.json
@@ -327,6 +328,8 @@ This repository starts with the artifact contracts and an example decision pack:
 ```
 
 Runtime code will come after the contracts are stable. That is intentional. This product is only valuable if the decision artifacts are crisp enough to guide humans and constrain agents.
+
+See [docs/orchestration-strategy.md](./docs/orchestration-strategy.md) for the framework strategy: ADR owns the research state, artifact schemas, bounded-context model, and evaluation contracts; LangGraph, Google ADK, Beevibe-native execution, and custom graph code are adapters.
 
 ## Roadmap
 
@@ -365,6 +368,13 @@ adr-output/
 - Store ADRs as shared team memory.
 - Attach architecture specs to implementation tasks.
 - Inject guardrails into coding-agent sessions.
+
+### Milestone 2.5: Orchestration Adapters
+
+- Keep the ADR core framework-neutral.
+- Ship a Beevibe-native adapter first.
+- Add LangGraph for cyclic open-source research workflows.
+- Add Google ADK for Google Cloud and Gemini Enterprise deployments.
 
 ### Milestone 3: Evaluation Runner
 
