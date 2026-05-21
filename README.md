@@ -340,21 +340,60 @@ This repository starts with the artifact contracts and an example decision pack:
 .
 ├── README.md
 ├── docs/
+│   ├── implementation-plan.md
 │   ├── orchestration-strategy.md
 │   └── schemas/
 │       ├── architecture-spec.schema.json
-│       └── domain-evaluation-pack.schema.json
+│       ├── domain-evaluation-pack.schema.json
+│       ├── execution-handoff.schema.json
+│       └── strategic-context.schema.json
+├── scripts/
+│   ├── adr.mjs
+│   └── check-json.mjs
 └── examples/
     └── logistics-contract-mesh/
+        ├── product-context.md
         ├── ADR.md
         ├── architecture.spec.json
         ├── domain-evaluation-pack.json
-        └── agent-guardrails.md
+        ├── agent-guardrails.md
+        └── generated/
+            ├── strategic-context.json
+            ├── ADR.md
+            ├── architecture.spec.json
+            ├── domain-evaluation-pack.json
+            ├── agent-guardrails.md
+            ├── execution-handoff.json
+            └── sources.md
 ```
 
-Runtime code will come after the contracts are stable. That is intentional. This product is only valuable if the decision artifacts are crisp enough to guide humans and constrain agents.
+The current runtime is intentionally small: a local artifact kernel plus schemas and examples. This product is only valuable if the decision artifacts are crisp enough to guide humans and constrain agents.
 
 See [docs/orchestration-strategy.md](./docs/orchestration-strategy.md) for the framework strategy: ADR owns the research state, artifact schemas, bounded-context model, and evaluation contracts; LangGraph, Google ADK, Beevibe-native execution, and custom graph code are adapters.
+
+## Try The Kernel
+
+The first implementation slice is a local, framework-neutral artifact kernel. It does not perform live web research yet. It turns a product brief into the ADR artifact set and marks the boundary at Execution Handoff.
+
+```bash
+npm run adr -- research examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" \
+  --decision "retrieval topology" \
+  --out /tmp/adr-output
+```
+
+Expected output:
+
+```text
+/tmp/adr-output/
+  strategic-context.json
+  ADR.md
+  architecture.spec.json
+  domain-evaluation-pack.json
+  agent-guardrails.md
+  execution-handoff.json
+  sources.md
+```
 
 ## Roadmap
 

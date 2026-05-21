@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/execution-handoff.schema.json",
+  "title": "Beevibe Architecture Deep Research Execution Handoff",
+  "type": "object",
+  "required": [
+    "version",
+    "decision_id",
+    "handoff_boundary",
+    "artifacts",
+    "agent_targets",
+    "required_invariants",
+    "forbidden_topologies"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "decision_id": { "type": "string" },
+    "handoff_boundary": {
+      "type": "string",
+      "const": "adr_stops_at_execution_handoff"
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "adr",
+        "architecture_spec",
+        "domain_evaluation_pack",
+        "agent_guardrails"
+      ],
+      "properties": {
+        "adr": { "type": "string" },
+        "architecture_spec": { "type": "string" },
+        "domain_evaluation_pack": { "type": "string" },
+        "agent_guardrails": { "type": "string" },
+        "sources": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "agent_targets": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required_invariants": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "forbidden_topologies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "feedback_contract": {
+      "type": "object",
+      "properties": {
+        "expected_inputs_from_execution": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "may_trigger_superseding_adr": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

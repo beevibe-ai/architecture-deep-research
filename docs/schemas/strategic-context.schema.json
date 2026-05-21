@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/strategic-context.schema.json",
+  "title": "Beevibe Architecture Deep Research Strategic Context Model",
+  "type": "object",
+  "required": [
+    "version",
+    "source",
+    "domain",
+    "decision",
+    "domain_entities",
+    "bounded_contexts",
+    "query_shapes",
+    "risk_invariants",
+    "operational_envelope",
+    "compliance_constraints",
+    "candidate_architecture_families"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["path", "content_hash"],
+      "properties": {
+        "path": { "type": "string" },
+        "content_hash": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "domain": { "type": "string" },
+    "decision": { "type": "string" },
+    "domain_entities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "bounded_contexts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "query_shapes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "evidence"],
+        "properties": {
+          "name": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "risk_invariants": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "operational_envelope": {
+      "type": "object",
+      "properties": {
+        "latency": { "type": "string" },
+        "cost": { "type": "string" },
+        "scale": { "type": "string" },
+        "availability": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "compliance_constraints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "candidate_architecture_families": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

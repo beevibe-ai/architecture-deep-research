@@ -11,7 +11,11 @@
     "url": "https://github.com/beevibe-ai/architecture-deep-research.git"
   },
   "type": "module",
+  "bin": {
+    "adr": "./scripts/adr.mjs"
+  },
   "scripts": {
+    "adr": "node scripts/adr.mjs",
     "check": "node scripts/check-json.mjs"
   },
   "engines": {

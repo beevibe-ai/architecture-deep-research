@@ -1,0 +1,39 @@
+{
+  "version": "0.1.0",
+  "decision_id": "ADR-001",
+  "handoff_boundary": "adr_stops_at_execution_handoff",
+  "artifacts": {
+    "adr": "ADR.md",
+    "architecture_spec": "architecture.spec.json",
+    "domain_evaluation_pack": "domain-evaluation-pack.json",
+    "agent_guardrails": "agent-guardrails.md",
+    "sources": "sources.md"
+  },
+  "agent_targets": [
+    "beevibe_agent_mesh",
+    "claude_code_workspace_rules",
+    "cursor_workspace_rules",
+    "codex_workspace_rules"
+  ],
+  "required_invariants": [
+    "Answers must resolve to source-backed evidence before being returned.",
+    "The primary topology must preserve explicit relationships between domain entities.",
+    "Compliance-critical flows must be deterministic, reviewable, and replayable.",
+    "Agentic search must be bounded by workflow controls and must not silently mutate source-of-truth state.",
+    "Bounded contexts must communicate through explicit interfaces or domain events."
+  ],
+  "forbidden_topologies": [
+    "naive_vector_rag_primary_path",
+    "unbounded_react_loop_primary_path",
+    "graph_or_vector_retrieval_without_source_spans"
+  ],
+  "feedback_contract": {
+    "expected_inputs_from_execution": [
+      "domain evaluation results",
+      "architecture drift reports",
+      "constraint violation reports",
+      "operator review notes"
+    ],
+    "may_trigger_superseding_adr": true
+  }
+}

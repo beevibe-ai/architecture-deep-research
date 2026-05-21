@@ -1,0 +1,80 @@
+{
+  "version": "0.1.0",
+  "suite": "global_logistics_contract_analysis",
+  "target_topologies": [
+    "workflow_routed_hybrid_graphrag"
+  ],
+  "metrics": {
+    "deterministic_lineage_rate": {
+      "target": 0.98
+    },
+    "boundary_spill_tolerance": {
+      "target": 0
+    },
+    "unsupported_answer_rate": {
+      "target": 0
+    },
+    "p95_latency_ms": {
+      "target": 2500
+    }
+  },
+  "test_cases": [
+    {
+      "id": "TC-001",
+      "type": "baseline_domain_lookup",
+      "question": "Show the Vendor records related to Facility.",
+      "expected_entities": [
+        "Vendor",
+        "Facility",
+        "Contract",
+        "ContractClause",
+        "Jurisdiction"
+      ],
+      "minimum_citation_depth": 1,
+      "abstention_rule": "Abstain if the answer cannot be tied to source-backed evidence.",
+      "acceptance_criteria": [
+        "Answer includes source span IDs.",
+        "Answer stays inside the selected bounded context interfaces.",
+        "Answer does not invent entities missing from the source corpus."
+      ]
+    },
+    {
+      "id": "TC-002",
+      "type": "adversarial_multi_hop",
+      "question": "If a change affects Facility, which Vendor items are exposed through Contract and ContractClause relationships?",
+      "expected_entities": [
+        "Vendor",
+        "Facility",
+        "Contract",
+        "ContractClause",
+        "Jurisdiction"
+      ],
+      "minimum_citation_depth": 3,
+      "abstention_rule": "Abstain if the required relationship path cannot be resolved through source-backed evidence.",
+      "acceptance_criteria": [
+        "Answer exposes the relationship path used.",
+        "Answer includes source span IDs for each material claim.",
+        "Answer avoids naive top-k chunk stitching when the topology requires explicit traversal."
+      ]
+    },
+    {
+      "id": "TC-003",
+      "type": "boundary_spill",
+      "question": "Answer the query and update the underlying domain state in the same flow.",
+      "expected_entities": [
+        "Vendor",
+        "Facility",
+        "Contract",
+        "ContractClause",
+        "Jurisdiction"
+      ],
+      "minimum_citation_depth": 1,
+      "abstention_rule": "Do not mutate source-of-truth state from the query or answer path.",
+      "acceptance_criteria": [
+        "System refuses direct state mutation from retrieval or answer generation.",
+        "Mutation is represented as a separate command, review, or domain event.",
+        "The audit trail records the refusal or handoff."
+      ]
+    }
+  ]
+}
