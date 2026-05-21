@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/adr-compiler/schemas/architecture-spec.schema.json",
-  "title": "Beevibe ADR Compiler Architecture Spec",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/architecture-spec.schema.json",
+  "title": "Beevibe Architecture Deep Research Architecture Spec",
   "type": "object",
   "required": ["version", "decision", "domain_model", "candidate_topologies", "guardrails"],
   "properties": {

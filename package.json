@@ -1,14 +1,14 @@
 {
-  "name": "@beevibe/adr-compiler",
+  "name": "@beevibe/architecture-deep-research",
   "version": "0.1.0",
   "private": true,
   "description": "Deep research for strategic system design decisions.",
   "license": "Apache-2.0",
   "author": "Beevibe",
-  "homepage": "https://github.com/beevibe-ai/adr-compiler",
+  "homepage": "https://github.com/beevibe-ai/architecture-deep-research",
   "repository": {
     "type": "git",
-    "url": "https://github.com/beevibe-ai/adr-compiler.git"
+    "url": "https://github.com/beevibe-ai/architecture-deep-research.git"
   },
   "type": "module",
   "scripts": {

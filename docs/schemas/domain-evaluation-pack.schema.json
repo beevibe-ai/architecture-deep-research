@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/adr-compiler/schemas/domain-evaluation-pack.schema.json",
-  "title": "Beevibe ADR Compiler Domain Evaluation Pack",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/domain-evaluation-pack.schema.json",
+  "title": "Beevibe Architecture Deep Research Domain Evaluation Pack",
   "type": "object",
   "required": ["version", "suite", "target_topologies", "metrics", "test_cases"],
   "properties": {

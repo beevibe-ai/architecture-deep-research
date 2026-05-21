@@ -1,8 +1,8 @@
-# Beevibe ADR Compiler
+# Beevibe Architecture Deep Research
 
 **Deep research for strategic system design.**
 
-Beevibe ADR Compiler is a flagship Beevibe project for answering the most expensive question in AI-assisted engineering:
+Beevibe Architecture Deep Research, or **ADR**, is a flagship Beevibe project for answering the most expensive question in AI-assisted engineering:
 
 > Given this product, domain, data shape, compliance envelope, team maturity, and operating budget, which architecture family should we bet on before a coding agent writes the first file?
 
@@ -15,11 +15,11 @@ For retrieval-heavy systems, that failure often looks like this:
 - A domain with explicit entities and relationships gets flattened into anonymous chunks.
 - A system that needs auditability ships without source lineage, abstention rules, or bounded context ownership.
 
-ADR Compiler exists to move AI-assisted development up one layer. It does not try to be another coding assistant. It researches, compares, and compiles architecture decisions into artifacts that humans can review and coding agents can obey.
+Architecture Deep Research exists to move AI-assisted development up one layer. It does not try to be another coding assistant. It researches, compares, and compiles architecture decisions into artifacts that humans can review and coding agents can obey.
 
 ## The Category
 
-ADR Compiler is an **Architecture Decision Researcher**.
+Architecture Deep Research is a dedicated **deep research layer for system design**.
 
 It applies deep research to system design decisions, then compiles the result into:
 
@@ -35,7 +35,7 @@ The goal is not a beautiful PDF. The goal is strategic alignment before implemen
 Product context / PRD / constraints
               |
               v
-      ADR Deep Research Compiler
+      Architecture Deep Research
               |
       +-------+--------------------+
       |                            |
@@ -57,7 +57,7 @@ The AI coding era has split software design into two different layers:
 | Implementation | Claude Code, Cursor, Codex, Copilot | File edits, tests, local correctness | Builds the wrong system quickly |
 | Strategic architecture | Mostly human principal engineers | Domain fit, trade-offs, precedent, risk | Too slow, not consistently encoded for agents |
 
-ADR Compiler targets the second layer.
+Architecture Deep Research targets the second layer.
 
 The product insight is simple: once code generation becomes cheap, the scarce skill becomes choosing the right architecture family and preserving that decision through implementation.
 
@@ -77,7 +77,7 @@ PDF loader -> chunking -> embeddings -> top-k similarity search -> answer
 
 That may pass a demo. It may even pass unit tests. But it can be structurally wrong if the real domain requires multi-hop reasoning across vendors, facilities, jurisdictions, contract clauses, shipment events, and changing regulatory constraints.
 
-ADR Compiler researches the domain shape first:
+Architecture Deep Research researches the domain shape first:
 
 | Pattern | Best Fit | Strategic Risk |
 | --- | --- | --- |
@@ -221,7 +221,7 @@ Instructions that can be handed to Claude Code, Codex, Cursor, or Beevibe agents
 
 ## How It Works
 
-ADR Compiler follows a research-to-spec pipeline.
+Architecture Deep Research follows a research-to-spec pipeline.
 
 ### 1. Intake
 
@@ -342,7 +342,7 @@ Runtime code will come after the contracts are stable. That is intentional. This
 Target interface:
 
 ```bash
-adr-compiler research ./product-context.md \
+adr research ./product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
   --out ./adr-output
@@ -361,7 +361,7 @@ adr-output/
 
 ### Milestone 2: Beevibe Integration
 
-- Run ADR Compiler as a Beevibe strategic research agent.
+- Run Architecture Deep Research as a Beevibe strategic research agent.
 - Store ADRs as shared team memory.
 - Attach architecture specs to implementation tasks.
 - Inject guardrails into coding-agent sessions.
@@ -381,9 +381,9 @@ adr-output/
 
 ## Relationship To Beevibe
 
-Beevibe is the agent-native operating system for companies. ADR Compiler is the strategic architecture layer inside that vision.
+Beevibe is the agent-native operating system for companies. Architecture Deep Research is the strategic architecture layer inside that vision.
 
-Beevibe coordinates people and agents. ADR Compiler gives them better architecture decisions to coordinate around.
+Beevibe coordinates people and agents. Architecture Deep Research gives them better architecture decisions to coordinate around.
 
 In the long run, a Beevibe task should be able to carry:
 
@@ -407,7 +407,7 @@ This project builds on a visible shift across the ecosystem:
 - ArchBench and related research benchmarks show that software architecture evaluation is becoming a distinct concern from code-generation evaluation.
 - SWE-bench and LiveCodeBench remain important, but they mostly evaluate implementation correctness rather than strategic architecture selection.
 
-ADR Compiler focuses on the missing layer between these pieces: choosing the right architecture family for the domain.
+Architecture Deep Research focuses on the missing layer between these pieces: choosing the right architecture family for the domain.
 
 ## Status
 
