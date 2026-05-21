@@ -88,7 +88,7 @@ Beevibe is the natural product runtime for ADR because it already has the requir
 - An Architect specialist can be represented as a normal Agent with `hierarchy_level`, `parent_agent_id`, `runtime_config`, and `review_policy`.
 - Durable architecture knowledge can live in bounded domain memory and pgvector-backed fact storage.
 - IC coding agents can ask the Architect through the mesh when they reach an architecture boundary.
-- Team and org hierarchy can route architecture decisions downward into implementation tasks.
+- Team and org hierarchy can route architecture decisions downward into execution handoff tasks.
 - Human review can be enforced with the existing review policy.
 - Self-hosted deployment keeps architecture context inside the user's own workspace.
 
@@ -145,7 +145,7 @@ Use it when:
 - The runtime is Beevibe-native and already has sessions, review, hierarchy, and memory.
 - A framework would introduce more abstraction than the current milestone needs.
 
-Custom orchestration should still follow the adapter contract so the implementation can later be swapped for LangGraph or ADK.
+Custom orchestration should still follow the adapter contract so the runtime can later be swapped for LangGraph or ADK.
 
 ## Framework Selection Matrix
 

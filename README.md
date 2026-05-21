@@ -28,8 +28,9 @@ It applies deep research to system design decisions, then turns the result into:
 3. A domain evaluation pack.
 4. Coding-agent guardrails.
 5. A source map of evidence, rejected alternatives, and trade-offs.
+6. An execution handoff for downstream coding agents.
 
-The goal is not a beautiful PDF. The goal is strategic alignment before implementation begins.
+The goal is not a beautiful PDF. The goal is enforceable architecture state before downstream builders begin.
 
 ```text
 Product context / PRD / constraints
@@ -46,6 +47,12 @@ Architecture Spec          Domain Evaluation Pack
 - rejected alternatives    - lineage expectations
 - invariants               - SLA/cost envelopes
 - agent guardrails         - abstention checks
+              |
+              v
+       Execution Handoff
+       - coding-agent guardrails
+       - workspace rules
+       - Beevibe task context
 ```
 
 ## Why This Exists
@@ -59,7 +66,7 @@ The AI coding era has split software design into two different layers:
 
 Architecture Deep Research targets the second layer.
 
-The product insight is simple: once code generation becomes cheap, the scarce skill becomes choosing the right architecture family and preserving that decision through implementation.
+The product insight is simple: once code generation becomes cheap, the scarce skill becomes choosing the right architecture family and preserving that decision through execution.
 
 ## Example Decision: RAG vs Agentic Search vs GraphRAG
 
@@ -135,7 +142,7 @@ Consequences:
 
 ### 2. Architecture Spec
 
-A machine-readable contract for agents and implementation tooling:
+A machine-readable contract for agents and execution tooling:
 
 ```json
 {
@@ -285,11 +292,25 @@ The selected decision is captured in durable artifacts:
 
 These artifacts become the bridge between principal-engineer reasoning and agentic execution.
 
+### 6. Execution Handoff
+
+ADR does not build the product. It hands off enforceable architecture state to the systems that do.
+
+The handoff can include:
+
+- Workspace guardrails for coding agents.
+- Beevibe task context for IC agents.
+- Required architecture invariants.
+- Rejected topology warnings.
+- Evaluation pack references.
+
+Downstream tools such as Claude Code, Cursor, Codex, and Beevibe execution agents consume these artifacts, build under their constraints, and return evaluation results or drift signals. Those signals can trigger a new or superseding ADR, but implementation remains outside the ADR core loop.
+
 ## Design Principles
 
 ### Strategic Before Tactical
 
-The research engine chooses the architecture family before implementation begins. Lower-level choices still matter, but they happen after the topology is clear.
+The research engine chooses the architecture family before execution begins. Lower-level choices still matter, but they happen after the topology is clear.
 
 ### Decisions Need Rejections
 
@@ -306,6 +327,10 @@ The domain evaluation pack is as important as the ADR. It turns vague architectu
 ### Agents Need Machine-Readable Constraints
 
 A long report is not enough. The output must be structured so downstream agents can consume, enforce, and test against it.
+
+### ADR Stops At Handoff
+
+ADR creates architecture decisions, constraints, evaluation packs, and guardrails. It does not own the implementation loop. Implementation is a downstream consumer, and its results feed back into ADR only as evidence for validation, drift detection, or superseding decisions.
 
 ## Initial Repository Shape
 
@@ -366,7 +391,7 @@ adr-output/
 
 - Run Architecture Deep Research as a Beevibe strategic research agent.
 - Store ADRs as shared team memory.
-- Attach architecture specs to implementation tasks.
+- Attach architecture specs to execution handoff tasks.
 - Inject guardrails into coding-agent sessions.
 
 ### Milestone 2.5: Orchestration Adapters
@@ -378,7 +403,7 @@ adr-output/
 
 ### Milestone 3: Evaluation Runner
 
-- Run domain evaluation packs against candidate implementations.
+- Run domain evaluation packs against constrained build outputs.
 - Score lineage, boundary spill, abstention, latency, and cost.
 - Compare architecture families before production build-out.
 
@@ -399,7 +424,7 @@ ADR fits Beevibe as a full product because the core Beevibe primitives already m
 
 - **Agent identity:** an Architect specialist is just a configured Beevibe Agent at the team or org level, with `hierarchy_level`, `parent_agent_id`, `runtime_config`, and `review_policy`.
 - **Bounded domain memory:** architecture knowledge lives in the Architect's durable memory, where OSS precedents, DDD invariants, and failure-mode notes accumulate over time.
-- **Mesh handoff:** when an IC coding agent reaches an architectural boundary, it asks the Architect through the mesh, receives a topology spec, and continues implementation under that constraint.
+- **Mesh handoff:** when an IC coding agent reaches an architectural boundary, it asks the Architect through the mesh, receives a topology spec, and resumes execution under that constraint.
 - **Hierarchy and review:** architectural constraints flow down with delegated tasks, while sensitive decisions can require human review.
 - **Self-hosted privacy:** architecture context stays inside the same Beevibe workspace, Postgres database, daemon runtime, and MCP tool surface.
 
@@ -414,7 +439,7 @@ In the long run, a Beevibe task should be able to carry:
 - The guardrails passed to coding agents.
 - The source-backed reasoning behind the decision.
 
-That turns AI-assisted development from "prompt and hope" into "research, decide, constrain, build, evaluate."
+That turns AI-assisted development from "prompt and hope" into "research, decide, constrain, hand off, evaluate."
 
 ## References And Adjacent Work
 
