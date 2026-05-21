@@ -16,7 +16,16 @@ import {
 } from "../adapters/google-adk.mjs";
 import {
   activeLlmProvider,
+  buildComparisonMatrix,
+  buildKnowledgeMap,
+  buildStrategicContext,
+  deriveComparisonAxes,
+  digestPaper,
   getLlmJsonProvider,
+  inspectGithubRepo,
+  isGithubRepoUrl,
+  isPaperUrl,
+  loadSourceManifest,
   setLlmJsonProvider
 } from "../src/kernel.mjs";
 
@@ -30,6 +39,7 @@ const expectedNodes = [
   "prepare_run",
   "plan_research",
   "execute_research",
+  "compare_topologies",
   "synthesize_decision",
   "critique_decision",
   "verify_citations",
@@ -107,6 +117,65 @@ if (activeLlmProvider() !== "adk-gemini:test") {
 setLlmJsonProvider(previousProvider || null);
 if (getLlmJsonProvider() !== previousProvider) {
   throw new Error("setLlmJsonProvider did not restore the previous provider.");
+}
+
+// Structural smoke for code-aware, paper-aware, comparison-matrix exports.
+if (typeof inspectGithubRepo !== "function" || typeof isGithubRepoUrl !== "function") {
+  throw new Error("Kernel did not export GitHub inspection helpers.");
+}
+if (!isGithubRepoUrl("https://github.com/langchain-ai/langgraph")) {
+  throw new Error("isGithubRepoUrl failed on a known github URL.");
+}
+if (isGithubRepoUrl("https://example.com/foo/bar")) {
+  throw new Error("isGithubRepoUrl matched a non-github URL.");
+}
+if (isGithubRepoUrl("https://github.com/orgs/anthropic")) {
+  throw new Error("isGithubRepoUrl matched a non-repo github route.");
+}
+
+if (typeof digestPaper !== "function" || typeof isPaperUrl !== "function") {
+  throw new Error("Kernel did not export paper digest helpers.");
+}
+if (!isPaperUrl("https://arxiv.org/abs/2404.16130")) {
+  throw new Error("isPaperUrl failed on an arXiv URL.");
+}
+if (!isPaperUrl("https://aclanthology.org/2024.acl-long.123")) {
+  throw new Error("isPaperUrl failed on an ACL anthology URL.");
+}
+if (isPaperUrl("https://example.com/random-blog-post")) {
+  throw new Error("isPaperUrl matched a non-paper URL.");
+}
+
+if (typeof loadSourceManifest !== "function") {
+  throw new Error("Kernel did not export loadSourceManifest.");
+}
+const manifest = await loadSourceManifest();
+if (!Array.isArray(manifest) || manifest.length === 0) {
+  throw new Error("Source manifest failed to load or is empty.");
+}
+
+if (typeof buildComparisonMatrix !== "function") {
+  throw new Error("Kernel did not export buildComparisonMatrix.");
+}
+const sampleContext = buildStrategicContext({
+  sourcePath: "smoke",
+  content:
+    "Build a logistics contract knowledge system with audit lineage, multi-hop entity relationships, and deterministic retrieval routing.",
+  domain: "logistics contract analysis",
+  decision: "retrieval topology"
+});
+const axes = deriveComparisonAxes(sampleContext);
+if (!Array.isArray(axes) || axes.length < 4) {
+  throw new Error("deriveComparisonAxes returned too few axes for a rich context.");
+}
+// With empty knowledge map, comparison matrix should short-circuit without calling LLM.
+const emptyMatrix = await buildComparisonMatrix({
+  context: sampleContext,
+  knowledgeMap: buildKnowledgeMap([]),
+  evidenceItems: []
+});
+if (emptyMatrix.candidates.length !== 0 || emptyMatrix.cells.length !== 0) {
+  throw new Error("buildComparisonMatrix should short-circuit on empty knowledge map.");
 }
 
 console.log("framework smoke ok");

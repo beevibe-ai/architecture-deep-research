@@ -2,12 +2,24 @@
 
 Architecture Deep Research is a live agentic research loop for strategic system design decisions.
 
+## Why this is not a generic deep-research agent
+
+In the vibe coding era, code generation is cheap; the bottleneck is **whether the right architecture was chosen at all**. General deep-research agents (OpenAI, Anthropic, Gemini, Perplexity, LangChain `open_deep_research`) average over consensus blog posts and produce a long-form report. ADR refuses to do that. Our flagship is producing the **fair, OSS- and paper-grounded architecture comparison that no human writes and no general deep-research agent does**:
+
+- **Code-aware research.** GitHub URLs are inspected as repositories (README, ARCHITECTURE.md, top-level layout, stars, last push, license, recent failure-mode issues) — not stripped to 1600-char text excerpts.
+- **Paper-aware research.** arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv URLs are digested into structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` — distinguishing "what the abstract claims" from "what the paper actually measured".
+- **Curated source manifest.** A vetted starting library of canonical sources per architecture family seeds the search pool, so vendor blog posts and SEO listicles can't crowd out official docs, mature OSS, and peer-reviewed papers.
+- **Comparison matrix, not just a report.** The primary research artifact is `comparison-matrix.json`: candidates × axes derived from the Strategic Context Matrix, every cell carrying a `strong`/`mixed`/`weak`/`no_evidence` verdict and citation_ids. Empty cells are tracked.
+- **Adversarial per-candidate research.** When the matrix has empty cells, an adversarial planner generates "find the strongest case AGAINST candidate X" tasks. Production incidents, latency stories, ecosystem decline. The matrix is re-built after each adversarial cycle.
+- **Evidence-only promotion gate.** A candidate only reaches the synthesizer when the knowledge map has ≥2 cited evidence items including ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark`. `requires_human_architecture_review` is a first-class output when evidence is weak.
+
 The product constraint is strict:
 
 - No offline research mode.
 - No deterministic mock research.
 - No static pattern library that forces the answer.
 - Architecture candidates must be acquired from live evidence and synthesized with citations.
+- The comparison matrix is the synthesizer's primary input; raw evidence is the audit trail, not the substitute.
 
 ## Runtime Requirements
 
@@ -38,13 +50,21 @@ Raw PRD / product context
 Strategic Context Matrix
         |
         v
-Planning Agent
+Planning Agent  (curated source manifest seeds the search pool)
         |
         v
 Research Orchestrator
         |
         +--> Source acquisition agent (per-task iterative loop)
-        |       search -> open -> extract claims
+        |       search -> dispatch:
+        |                  - GitHub URL  -> inspectGithubRepo (README, ARCHITECTURE,
+        |                                   issues, stars, last push, license)
+        |                  - arXiv/ACL/IEEE/ACM -> digestPaper (problem, methodology,
+        |                                          datasets, baselines, headline vs
+        |                                          measured results, limitations,
+        |                                          conflicts of interest)
+        |                  - else       -> openUrl (HTML to text)
+        |       -> extract claims
         |              ^                |
         |              |  completeness  |
         |              +-- judge <------+
@@ -61,10 +81,22 @@ Evidence-Only Knowledge Map
         |                              run additional research cycle
         |
         v
-Architecture Synthesis Agent
+Comparison Matrix Builder
+        |
+        +-- empty cells or weak coverage? --> Adversarial per-candidate planner
+        |                                              |
+        |                                              v
+        |                                   targeted "against X" research,
+        |                                   then re-build matrix
+        |
+        v
+Architecture Synthesis Agent  (consumes the matrix, not the raw pool)
         |
         v
 Critique Agent (flags uncited claims, contradictions, weak evidence)
+        |
+        v
+Citation Verifier (per-citation supported/unsupported verdict)
         |
         v
 Adversarial Evaluation Pack Agent
@@ -73,13 +105,18 @@ Adversarial Evaluation Pack Agent
 Execution Handoff
 ```
 
-The research loop is shallow but iterative:
+The flagship moves are research-quality moves:
 
-- **Per-task inner loop.** Each research agent runs up to `--max-rounds` rounds (default 2). After each round a completeness judge LLM decides whether the task objective is answered or proposes 1–3 follow-up queries.
-- **Adaptive outer cycle.** If the knowledge map has no `promoted_candidates` after the initial plan, an adaptive gap-filling planner generates 2–4 new tasks and the research phase runs again (up to `--max-adaptive-cycles`, default 1).
-- **Critique pass.** A critique agent reads the synthesized spec, the knowledge map, and the evidence pool, and writes `critique.json` flagging uncited claims, contradictions, weak evidence, or selected topologies not actually backed by promoted candidates. With `--enforce-critique`, high-severity issues automatically downgrade the decision to `requires_human_architecture_review`.
+- **Code-aware evidence.** When a research agent surfaces a `github.com/<owner>/<repo>` URL, `inspectGithubRepo` reads it as a repository, not a blog post: README + ARCHITECTURE/docs entries, top-level directory layout, stars, forks, last push, license, topics, and recent closed issues filtered for failure-mode keywords. The evidence item carries the `repo_digest` for downstream auditability. With `GITHUB_TOKEN` set, the rate limit jumps from 60/hr to 5000/hr.
+- **Paper-aware evidence.** When a URL points to arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv, `digestPaper` extracts structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` rather than slicing 1600 chars of HTML. Distinguishes "what the abstract claims" from "what the paper actually measured".
+- **Curated source manifest.** `sources/manifest.json` lists vetted starting URLs (official docs, mature OSS, canonical papers, engineering postmortems) per architecture family. The planner seeds these into the search pool before falling back to web results, so vendor blog posts can't crowd out canonical sources.
+- **Comparison matrix as the primary input to synthesis.** Before the synthesizer picks a topology, `compareTopologiesPhase` builds `comparison-matrix.json`: rows = candidates (from the knowledge map), columns = axes (derived from `query_shapes`, `risk_invariants`, `operational_envelope`, `compliance_constraints`). Each cell carries a verdict (`strong`/`mixed`/`weak`/`no_evidence`) and citation_ids. Empty cells are tracked.
+- **Adversarial per-candidate research.** When the matrix has empty cells or weak coverage, a per-candidate adversarial planner generates "find the strongest case AGAINST X" tasks. Production incidents, latency stories, lineage limitations, ecosystem decline. The matrix is re-built after each adversarial cycle. Bounded by `--max-adversarial-cycles` (default 1).
+- **Per-task inner loop.** Each research agent runs up to `--max-rounds` rounds (default 2) with a completeness judge proposing follow-up queries when evidence is thin.
+- **Adaptive outer cycle.** If the knowledge map has no `promoted_candidates`, an adaptive gap-filling planner generates 2–4 new tasks. Bounded by `--max-adaptive-cycles` (default 1).
+- **Critique pass + citation verifier.** Critique agent flags uncited claims, contradictions, weak evidence, and unbacked selections. Citation verifier walks every `evidence_citations` reference and emits a per-citation supported/unsupported verdict.
 
-These keep the orchestrator/researcher topology shallow (no nested sub-agents) while making the loop actually adaptive to evidence quality.
+These keep the orchestrator/researcher topology shallow (no nested sub-agents) while turning the loop into one that actually distinguishes good architectures from merely popular ones.
 
 ## Knowledge Acquisition Rule
 
@@ -134,11 +171,17 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
 - `--max-sources <n>` (default 5): max evidence items per task.
 - `--max-cycles <n>` (default 2): bound on planned task count.
 - `--max-adaptive-cycles <n>` (default 1): max gap-filling re-research cycles when the knowledge map has no promoted candidates.
+- `--max-adversarial-cycles <n>` (default 1): max adversarial per-candidate cycles when the comparison matrix has empty cells.
+- `--skip-comparison-matrix`: skip the comparison-matrix phase (and the adversarial per-candidate research that depends on it).
 - `--skip-critique`: do not run the critique agent.
 - `--enforce-critique`: when set, high-severity critique with `recommend_human_review` auto-downgrades the selected topology to `requires_human_architecture_review` (original choice preserved in `state.json`).
 - `--skip-citation-audit`: do not run the post-hoc citation verifier.
 - `--plan-approval` (LangGraph runtime only): pause after planning so the operator can edit `research-plan.json` and resume programmatically.
 - `--strict-clarification`: stop before research if the PRD is too thin.
+
+### Optional env
+
+- `GITHUB_TOKEN`: lifts the unauthenticated 60/hr GitHub API ceiling to 5000/hr. Required in practice for any run that surfaces multiple GitHub URLs.
 
 Outputs:
 
@@ -148,9 +191,11 @@ state.json
 clarification.json
 strategic-context.json
 research-plan.json
-research-plan.adaptive-<n>.json   (one per gap-filling cycle, if any)
+research-plan.adaptive-<n>.json    (one per gap-filling cycle, if any)
+research-plan.adversarial-<n>.json (one per adversarial cycle, if any)
 evidence.json
 knowledge-map.json
+comparison-matrix.json
 intermediate-reports.md
 critique.json
 citation-audit.json

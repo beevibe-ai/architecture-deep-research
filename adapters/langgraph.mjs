@@ -9,6 +9,7 @@ import {
 } from "@langchain/langgraph";
 import {
   applyCritique,
+  compareTopologiesPhase,
   critiqueDecisionPhase,
   deepResearch,
   executeResearchPhase,
@@ -45,6 +46,8 @@ const AdrLangGraphState = Annotation.Root({
   knowledgeMap: Annotation(),
   researchResults: Annotation(),
   spec: Annotation(),
+  comparisonMatrix: Annotation(),
+  adversarialCycles: Annotation(),
   critique: Annotation(),
   citationAudit: Annotation(),
   decisionDowngraded: Annotation(),
@@ -150,11 +153,41 @@ async function executeResearchNode(state) {
   };
 }
 
+async function compareTopologiesNode(state) {
+  const flags = buildFlags(state);
+  if (flags["skip-comparison-matrix"]) {
+    return { comparisonMatrix: null, status: "comparison_matrix_skipped" };
+  }
+  const {
+    comparisonMatrix,
+    researchResults,
+    evidenceItems,
+    knowledgeMap,
+    adversarialCycles
+  } = await compareTopologiesPhase({
+    context: state.context,
+    knowledgeMap: state.knowledgeMap,
+    evidenceItems: state.evidenceItems,
+    researchResults: state.researchResults,
+    outDir: state.resolvedOutDir,
+    flags
+  });
+  return {
+    comparisonMatrix,
+    researchResults,
+    evidenceItems,
+    knowledgeMap,
+    adversarialCycles,
+    status: "comparison_matrix_ready"
+  };
+}
+
 async function synthesizeDecisionNode(state) {
   const spec = await synthesizeDecisionPhase({
     context: state.context,
     knowledgeMap: state.knowledgeMap,
-    evidenceItems: state.evidenceItems
+    evidenceItems: state.evidenceItems,
+    comparisonMatrix: state.comparisonMatrix
   });
   return { spec, status: "decision_synthesized" };
 }
@@ -208,7 +241,8 @@ async function writeArtifactsNode(state) {
     knowledgeMap: state.knowledgeMap,
     outDir: state.resolvedOutDir,
     critique: state.critique || null,
-    citationAudit: state.citationAudit || null
+    citationAudit: state.citationAudit || null,
+    comparisonMatrix: state.comparisonMatrix || null
   });
   return {
     status: "completed",
@@ -232,6 +266,7 @@ export function createAdrLangGraph({ checkpointer } = {}) {
     .addNode("prepare_run", prepareRunNode)
     .addNode("plan_research", planResearchNode)
     .addNode("execute_research", executeResearchNode)
+    .addNode("compare_topologies", compareTopologiesNode)
     .addNode("synthesize_decision", synthesizeDecisionNode)
     .addNode("critique_decision", critiqueDecisionNode)
     .addNode("verify_citations", verifyCitationsNode)
@@ -245,7 +280,8 @@ export function createAdrLangGraph({ checkpointer } = {}) {
       execute_research: "execute_research",
       [END]: END
     })
-    .addEdge("execute_research", "synthesize_decision")
+    .addEdge("execute_research", "compare_topologies")
+    .addEdge("compare_topologies", "synthesize_decision")
     .addEdge("synthesize_decision", "critique_decision")
     .addEdge("critique_decision", "verify_citations")
     .addEdge("verify_citations", "write_artifacts")
