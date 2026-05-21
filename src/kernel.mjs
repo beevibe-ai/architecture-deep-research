@@ -699,8 +699,7 @@ function scoreEvidence({ sourceType, excerpt, context, task, claims }) {
   };
 }
 
-async function extractClaims({ context, task, source }) {
-  const result = await callLlmJson({
+async function extractClaims({ context, task, source }) {  const result = await callLlmJson({
     label: "source_claim_extractor",
     system: [
       "You extract architecture-decision evidence from sources.",
@@ -733,72 +732,213 @@ async function extractClaims({ context, task, source }) {
     .filter((claim) => claim.claim);
 }
 
+async function judgeResearchProgress({ task, evidence, alreadyQueried }) {
+  if (evidence.length === 0) {
+    return { complete: false, reason: "no evidence yet", next_queries: [] };
+  }
+  try {
+    const result = await callLlmJson({
+      label: "research_completeness_judge",
+      system: [
+        "You decide whether a research task has gathered enough evidence to answer its objective.",
+        "Be conservative: return complete:true only when the evidence clearly supports a strong answer.",
+        "If incomplete, propose 1-3 new web search queries that fill the specific gaps.",
+        "Do not repeat queries already tried.",
+        "Output JSON with {complete, reason, next_queries:[string]}."
+      ].join("\n"),
+      user: JSON.stringify({
+        task: { id: task.id, title: task.title, objective: task.objective },
+        already_queried: alreadyQueried,
+        evidence: evidence.map((item) => ({
+          title: item.title,
+          url: item.url,
+          source_type: item.source_type,
+          score: item.score,
+          claims: (item.claims || []).map((claim) => claim.claim).slice(0, 4)
+        }))
+      })
+    });
+    return {
+      complete: Boolean(result.complete),
+      reason: String(result.reason || ""),
+      next_queries: toArray(result.next_queries).map(String).slice(0, 3)
+    };
+  } catch (error) {
+    return {
+      complete: false,
+      reason: `judge_failed: ${String(error?.message || error)}`,
+      next_queries: []
+    };
+  }
+}
+
+async function gatherEvidenceForQuery({
+  query,
+  task,
+  context,
+  flags,
+  keywords,
+  seenUrls,
+  evidence,
+  round,
+  maxSources
+}) {
+  const results = await searchWithProvider(query);
+  for (const result of results) {
+    if (!result.url || seenUrls.has(result.url)) continue;
+    seenUrls.add(result.url);
+
+    const source_type = classifySource(result.url);
+    const opened = await openUrl(result.url, flags).catch(() => "");
+    const sourceText = opened || result.snippet || "";
+    const excerpt = extractExcerpt(sourceText, keywords);
+    if (!excerpt || excerpt.length < 120) continue;
+
+    const partial = {
+      task_id: task.id,
+      title: result.title || result.url,
+      url: result.url,
+      provider: result.provider,
+      query,
+      excerpt,
+      source_type,
+      source_quality: sourceQuality(source_type),
+      relevance: task.objective
+    };
+    const claims = await extractClaims({ context, task, source: partial });
+    const scored = scoreEvidence({ sourceType: source_type, excerpt, context, task, claims });
+
+    evidence.push({
+      ...partial,
+      round,
+      claims,
+      keyword_hits: scored.keyword_hits,
+      score: scored.score
+    });
+
+    if (evidence.length >= maxSources) return;
+  }
+}
+
 async function runResearchAgent({ task, context, flags, outDir }) {
   const maxSources = Number(flags["max-sources"] || 5);
-  const queries = toArray(task.search_queries).slice(0, 5);
+  const maxRounds = Math.max(1, Number(flags["max-rounds"] || 2));
+  const seedQueries = toArray(task.search_queries).slice(0, 5);
   const keywords = evidenceKeywords(context, task);
   const seenUrls = new Set();
+  const triedQueries = new Set();
   const evidence = [];
 
-  await appendEvent(outDir, "research_agent_started", { task_id: task.id, title: task.title });
+  await appendEvent(outDir, "research_agent_started", {
+    task_id: task.id,
+    title: task.title,
+    max_rounds: maxRounds,
+    max_sources: maxSources
+  });
 
-  for (const query of queries) {
-    const results = await searchWithProvider(query);
-    for (const result of results) {
-      if (!result.url || seenUrls.has(result.url)) continue;
-      seenUrls.add(result.url);
+  let pendingQueries = [...seedQueries];
+  let round = 0;
+  let completionReason = "max_rounds_reached";
 
-      const source_type = classifySource(result.url);
-      const opened = await openUrl(result.url, flags).catch(() => "");
-      const sourceText = opened || result.snippet || "";
-      const excerpt = extractExcerpt(sourceText, keywords);
-      if (!excerpt || excerpt.length < 120) continue;
+  while (
+    round < maxRounds &&
+    evidence.length < maxSources &&
+    pendingQueries.length > 0
+  ) {
+    round += 1;
+    const roundQueries = pendingQueries.filter((query) => !triedQueries.has(query));
+    if (roundQueries.length === 0) {
+      completionReason = "no_new_queries";
+      break;
+    }
+    await appendEvent(outDir, "research_round_started", {
+      task_id: task.id,
+      round,
+      queries: roundQueries
+    });
 
-      const partial = {
-        task_id: task.id,
-        title: result.title || result.url,
-        url: result.url,
-        provider: result.provider,
+    for (const query of roundQueries) {
+      triedQueries.add(query);
+      await gatherEvidenceForQuery({
         query,
-        excerpt,
-        source_type,
-        source_quality: sourceQuality(source_type),
-        relevance: task.objective
-      };
-      const claims = await extractClaims({ context, task, source: partial });
-      const scored = scoreEvidence({ sourceType: source_type, excerpt, context, task, claims });
-
-      evidence.push({
-        ...partial,
-        claims,
-        keyword_hits: scored.keyword_hits,
-        score: scored.score
+        task,
+        context,
+        flags,
+        keywords,
+        seenUrls,
+        evidence,
+        round,
+        maxSources
       });
-
       if (evidence.length >= maxSources) break;
     }
-    if (evidence.length >= maxSources) break;
+
+    await appendEvent(outDir, "research_round_completed", {
+      task_id: task.id,
+      round,
+      evidence_count: evidence.length
+    });
+
+    if (evidence.length >= maxSources) {
+      completionReason = "max_sources_reached";
+      break;
+    }
+    if (round >= maxRounds) {
+      completionReason = "max_rounds_reached";
+      break;
+    }
+
+    const judgment = await judgeResearchProgress({
+      task,
+      evidence,
+      alreadyQueried: [...triedQueries]
+    });
+    await appendEvent(outDir, "research_round_judged", {
+      task_id: task.id,
+      round,
+      complete: judgment.complete,
+      reason: judgment.reason,
+      next_queries: judgment.next_queries
+    });
+
+    if (judgment.complete) {
+      completionReason = "judge_complete";
+      break;
+    }
+    pendingQueries = judgment.next_queries.filter(
+      (query) => !triedQueries.has(query)
+    );
+    if (pendingQueries.length === 0) {
+      completionReason = "no_new_queries";
+      break;
+    }
   }
 
   const report = `## ${task.id}: ${task.title}
 
 Objective: ${task.objective}
 
+Rounds: ${round}. Completion: ${completionReason}.
+
 Findings:
-${evidence
-  .map((item, index) => {
-    const claim = item.claims[0]?.claim || item.excerpt.slice(0, 260);
-    return `- [${index + 1}] ${item.title} (${item.source_type}, score ${item.score}): ${claim}`;
-  })
-  .join("\n") || "- No evidence collected."}
+${
+    evidence
+      .map((item, index) => {
+        const claim = item.claims[0]?.claim || item.excerpt.slice(0, 260);
+        return `- [${index + 1}] ${item.title} (${item.source_type}, round ${item.round}, score ${item.score}): ${claim}`;
+      })
+      .join("\n") || "- No evidence collected."
+  }
 `;
 
   await appendEvent(outDir, "research_agent_finished", {
     task_id: task.id,
-    evidence_count: evidence.length
+    rounds: round,
+    evidence_count: evidence.length,
+    completion_reason: completionReason
   });
 
-  return { task, evidence, report };
+  return { task, evidence, report, rounds: round, completionReason };
 }
 
 async function runResearchAgents({ plan, context, flags, outDir }) {
@@ -1340,12 +1480,122 @@ async function planResearchPhase({ context, content, outDir, flags }) {
   return boundedPlan;
 }
 
+async function buildAdaptiveResearchPlan({ context, knowledgeMap, evidenceItems }) {
+  const result = await callLlmJson({
+    label: "adaptive_research_planner",
+    system: [
+      "You are the gap-filling research planner for Architecture Deep Research.",
+      "Initial research did not produce evidence-backed architecture candidates.",
+      "Read the Strategic Context Matrix, the insufficient_evidence_candidates list, and the existing evidence.",
+      "Produce 2-4 new research tasks that target the specific gaps:",
+      "- Find authoritative sources (official docs, mature OSS, papers/benchmarks) that promote or reject the insufficient candidates.",
+      "- Find architecture families not yet considered that fit the domain shape.",
+      "- Avoid repeating queries already tried unless you reframe them substantially.",
+      "Each task needs {id,title,objective,search_queries:[string],source_targets:[string],success_criteria:[string]}.",
+      "Output JSON with {tasks:[...]}."
+    ].join("\n"),
+    user: JSON.stringify({
+      context,
+      knowledge_map: knowledgeMap,
+      existing_evidence: evidenceItems.map((item) => ({
+        citation_id: item.citation_id,
+        title: item.title,
+        url: item.url,
+        source_type: item.source_type,
+        query: item.query
+      }))
+    })
+  });
+
+  return {
+    version: VERSION,
+    architecture: "adaptive_gap_filling",
+    max_parallel_research_agents: MAX_PARALLEL_RESEARCH_AGENTS,
+    tasks: toArray(result.tasks)
+      .slice(0, 4)
+      .map((task, index) => ({
+        id: task.id || `A${index + 1}`,
+        title: String(task.title || `Adaptive task ${index + 1}`),
+        objective: String(task.objective || ""),
+        search_queries: toArray(task.search_queries).map(String).slice(0, 4),
+        source_targets: toArray(task.source_targets).map(String).slice(0, 5),
+        success_criteria: toArray(task.success_criteria).map(String).slice(0, 5)
+      }))
+      .filter((task) => task.search_queries.length > 0)
+  };
+}
+
 async function executeResearchPhase({ plan, context, outDir, flags }) {
-  const researchResults = await runResearchAgents({ plan, context, flags, outDir });
-  const evidenceItems = assignCitations(
+  let researchResults = await runResearchAgents({ plan, context, flags, outDir });
+  let evidenceItems = assignCitations(
     researchResults.flatMap((result) => result.evidence)
   );
-  const knowledgeMap = buildKnowledgeMap(evidenceItems);
+  let knowledgeMap = buildKnowledgeMap(evidenceItems);
+
+  const maxAdaptiveCycles = Math.max(
+    0,
+    Number(flags["max-adaptive-cycles"] || 1)
+  );
+  let adaptiveCycle = 0;
+
+  while (
+    knowledgeMap.promoted_candidates.length === 0 &&
+    adaptiveCycle < maxAdaptiveCycles
+  ) {
+    adaptiveCycle += 1;
+    await appendEvent(outDir, "adaptive_research_cycle_started", {
+      cycle: adaptiveCycle,
+      reason: "no_promoted_candidates",
+      evidence_count: evidenceItems.length,
+      insufficient_candidate_count: knowledgeMap.insufficient_evidence_candidates.length
+    });
+
+    let gapPlan;
+    try {
+      gapPlan = await buildAdaptiveResearchPlan({
+        context,
+        knowledgeMap,
+        evidenceItems
+      });
+    } catch (error) {
+      await appendEvent(outDir, "adaptive_research_cycle_skipped", {
+        cycle: adaptiveCycle,
+        reason: `planner_failed: ${String(error?.message || error)}`
+      });
+      break;
+    }
+
+    if (!gapPlan.tasks || gapPlan.tasks.length === 0) {
+      await appendEvent(outDir, "adaptive_research_cycle_skipped", {
+        cycle: adaptiveCycle,
+        reason: "no_gap_tasks"
+      });
+      break;
+    }
+
+    await writeJson(
+      path.join(outDir, `research-plan.adaptive-${adaptiveCycle}.json`),
+      gapPlan
+    );
+
+    const moreResults = await runResearchAgents({
+      plan: gapPlan,
+      context,
+      flags,
+      outDir
+    });
+    researchResults = [...researchResults, ...moreResults];
+    evidenceItems = assignCitations(
+      researchResults.flatMap((result) => result.evidence)
+    );
+    knowledgeMap = buildKnowledgeMap(evidenceItems);
+
+    await appendEvent(outDir, "adaptive_research_cycle_completed", {
+      cycle: adaptiveCycle,
+      evidence_count: evidenceItems.length,
+      promoted_candidate_count: knowledgeMap.promoted_candidates.length
+    });
+  }
 
   await writeJson(path.join(outDir, "evidence.json"), evidenceItems);
   await writeJson(path.join(outDir, "knowledge-map.json"), knowledgeMap);
@@ -1355,14 +1605,116 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
   );
   await appendEvent(outDir, "evidence_collected", {
     evidence_count: evidenceItems.length,
-    promoted_candidate_count: knowledgeMap.promoted_candidates.length
+    promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+    adaptive_cycles: adaptiveCycle
   });
 
-  return { researchResults, evidenceItems, knowledgeMap };
+  return { researchResults, evidenceItems, knowledgeMap, adaptiveCycle };
 }
 
 async function synthesizeDecisionPhase({ context, knowledgeMap, evidenceItems }) {
   return synthesizeArchitectureSpec({ context, knowledgeMap, evidenceItems });
+}
+
+async function critiqueDecisionPhase({
+  context,
+  spec,
+  knowledgeMap,
+  evidenceItems,
+  outDir
+}) {
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "architecture_critique_agent",
+      system: [
+        "You are the Architecture Deep Research critique agent.",
+        "Critique the synthesized architecture spec against the evidence pool and knowledge map.",
+        "Find: uncited claims; contradictions between cited claims; rejected alternatives missing rationale;",
+        "evidence weaknesses (single source, low quality, no official_docs or mature_oss or paper_or_benchmark backing);",
+        "selected_topology not actually backed by promoted_candidates.",
+        "Be specific and cite evidence by citation_id.",
+        "Output JSON with {issues:[{severity:'high'|'medium'|'low',category:string,description:string,evidence_citations:[number]}],summary:string,recommend_human_review:boolean}."
+      ].join("\n"),
+      user: JSON.stringify({
+        context,
+        spec,
+        knowledge_map: knowledgeMap,
+        evidence: evidenceItems.map((item) => ({
+          citation_id: item.citation_id,
+          title: item.title,
+          url: item.url,
+          source_type: item.source_type,
+          score: item.score,
+          claims: item.claims
+        }))
+      })
+    });
+  } catch (error) {
+    raw = {
+      issues: [],
+      summary: `critique_failed: ${String(error?.message || error)}`,
+      recommend_human_review: false
+    };
+  }
+
+  const issues = toArray(raw.issues).map((issue) => ({
+    severity: ["high", "medium", "low"].includes(String(issue.severity))
+      ? String(issue.severity)
+      : "low",
+    category: String(issue.category || "unspecified"),
+    description: String(issue.description || ""),
+    evidence_citations: toArray(issue.evidence_citations)
+      .map(Number)
+      .filter((value) => Number.isFinite(value))
+  }));
+
+  const highSeverityCount = issues.filter((issue) => issue.severity === "high").length;
+  const critique = {
+    version: VERSION,
+    selected_topology: spec.decision?.selected_topology,
+    issues,
+    summary: String(raw.summary || ""),
+    high_severity_count: highSeverityCount,
+    recommend_human_review: Boolean(raw.recommend_human_review)
+  };
+
+  await writeJson(path.join(outDir, "critique.json"), critique);
+  await appendEvent(outDir, "critique_completed", {
+    issue_count: issues.length,
+    high_severity_count: highSeverityCount,
+    recommend_human_review: critique.recommend_human_review
+  });
+
+  return critique;
+}
+
+function applyCritique({ spec, critique, flags }) {
+  if (!critique) return { spec, downgraded: false };
+  if (!flags["enforce-critique"]) return { spec, downgraded: false };
+  if (
+    critique.high_severity_count === 0 ||
+    !critique.recommend_human_review ||
+    spec.decision?.selected_topology === "requires_human_architecture_review"
+  ) {
+    return { spec, downgraded: false };
+  }
+
+  const downgradedSpec = {
+    ...spec,
+    decision: {
+      ...spec.decision,
+      original_selected_topology: spec.decision.selected_topology,
+      selected_topology: "requires_human_architecture_review",
+      summary: [
+        spec.decision.summary || "",
+        `Downgraded by critique (${critique.high_severity_count} high-severity issues): ${critique.summary}`
+      ]
+        .filter(Boolean)
+        .join(" ")
+    }
+  };
+  return { spec: downgradedSpec, downgraded: true };
 }
 
 async function writeRunArtifacts({
@@ -1372,10 +1724,22 @@ async function writeRunArtifacts({
   evidenceItems,
   researchResults,
   knowledgeMap,
-  outDir
+  outDir,
+  critique
 }) {
   const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems);
-  const handoff = buildExecutionHandoff(spec);
+  const baseHandoff = buildExecutionHandoff(spec);
+  const handoff = critique
+    ? {
+        ...baseHandoff,
+        artifacts: { ...baseHandoff.artifacts, critique: "critique.json" },
+        critique_summary: {
+          issue_count: critique.issues.length,
+          high_severity_count: critique.high_severity_count,
+          recommend_human_review: critique.recommend_human_review
+        }
+      }
+    : baseHandoff;
   const report = synthesizeResearchReport({
     context,
     plan,
@@ -1397,20 +1761,24 @@ async function writeRunArtifacts({
     status: "completed",
     completed_at: nowIso(),
     selected_topology: spec.decision.selected_topology,
+    original_selected_topology: spec.decision.original_selected_topology || null,
     evidence_count: evidenceItems.length,
     promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+    critique_high_severity_count: critique ? critique.high_severity_count : 0,
     handoff_boundary: "adr_stops_at_execution_handoff"
   });
   await appendEvent(outDir, "run_completed", {
     selected_topology: spec.decision.selected_topology,
-    evidence_count: evidenceItems.length
+    evidence_count: evidenceItems.length,
+    critique_high_severity_count: critique ? critique.high_severity_count : 0
   });
 
   return {
     selectedTopology: spec.decision.selected_topology,
     evidenceCount: evidenceItems.length,
     promotedCandidateCount: knowledgeMap.promoted_candidates.length,
-    handoffBoundary: "adr_stops_at_execution_handoff"
+    handoffBoundary: "adr_stops_at_execution_handoff",
+    critiqueHighSeverityCount: critique ? critique.high_severity_count : 0
   };
 }
 
@@ -1437,25 +1805,53 @@ async function deepResearch({ inputPath, flags }) {
     flags
   });
 
-  const spec = await synthesizeDecisionPhase({
+  const rawSpec = await synthesizeDecisionPhase({
     context: prepared.context,
     knowledgeMap,
     evidenceItems
   });
 
+  const critique = flags["skip-critique"]
+    ? null
+    : await critiqueDecisionPhase({
+        context: prepared.context,
+        spec: rawSpec,
+        knowledgeMap,
+        evidenceItems,
+        outDir: prepared.outDir
+      });
+
+  const { spec: finalSpec, downgraded } = applyCritique({
+    spec: rawSpec,
+    critique,
+    flags
+  });
+  if (downgraded) {
+    await appendEvent(prepared.outDir, "decision_downgraded_by_critique", {
+      original_selected_topology: finalSpec.decision.original_selected_topology,
+      high_severity_count: critique.high_severity_count
+    });
+  }
+
   const result = await writeRunArtifacts({
     context: prepared.context,
     plan,
-    spec,
+    spec: finalSpec,
     evidenceItems,
     researchResults,
     knowledgeMap,
-    outDir: prepared.outDir
+    outDir: prepared.outDir,
+    critique
   });
 
   console.log(`Deep research artifacts written to ${prepared.outDir}`);
   console.log(`Selected topology: ${result.selectedTopology}`);
   console.log(`Evidence items: ${result.evidenceCount}`);
+  if (critique && critique.issues.length > 0) {
+    console.log(
+      `Critique: ${critique.issues.length} issues (${critique.high_severity_count} high-severity)`
+    );
+  }
   console.log("Boundary: ADR stops at Execution Handoff");
 }
 
@@ -1507,13 +1903,16 @@ export {
   VERSION,
   activeLlmProvider,
   activeSearchProviders,
+  applyCritique,
   assessClarification,
+  buildAdaptiveResearchPlan,
   buildEvaluationPack,
   buildExecutionHandoff,
   buildKnowledgeMap,
   buildResearchPlan,
   buildStrategicContext,
   classifySource,
+  critiqueDecisionPhase,
   deepResearch,
   executeResearchPhase,
   getLlmJsonProvider,

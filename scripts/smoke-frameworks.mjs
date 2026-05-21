@@ -29,6 +29,7 @@ const expectedNodes = [
   "plan_research",
   "execute_research",
   "synthesize_decision",
+  "critique_decision",
   "write_artifacts"
 ];
 for (const node of expectedNodes) {

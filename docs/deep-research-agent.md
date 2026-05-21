@@ -43,10 +43,11 @@ Planning Agent
         v
 Research Orchestrator
         |
-        +--> Source acquisition agent: official docs
-        +--> Source acquisition agent: mature OSS
-        +--> Source acquisition agent: engineering writeups
-        +--> Source acquisition agent: papers / benchmarks
+        +--> Source acquisition agent (per-task iterative loop)
+        |       search -> open -> extract claims
+        |              ^                |
+        |              |  completeness  |
+        |              +-- judge <------+
         |
         v
 Claim Extraction Agent
@@ -54,8 +55,16 @@ Claim Extraction Agent
         v
 Evidence-Only Knowledge Map
         |
+        +-- no promoted candidates? --> Adaptive gap-filling planner
+        |                                       |
+        |                                       v
+        |                              run additional research cycle
+        |
         v
 Architecture Synthesis Agent
+        |
+        v
+Critique Agent (flags uncited claims, contradictions, weak evidence)
         |
         v
 Adversarial Evaluation Pack Agent
@@ -64,7 +73,13 @@ Adversarial Evaluation Pack Agent
 Execution Handoff
 ```
 
-The research loop is intentionally shallow: planner, orchestrator, research agents, claim extraction, synthesis. That shape keeps the agent powerful without burying evidence in nested conversations.
+The research loop is shallow but iterative:
+
+- **Per-task inner loop.** Each research agent runs up to `--max-rounds` rounds (default 2). After each round a completeness judge LLM decides whether the task objective is answered or proposes 1–3 follow-up queries.
+- **Adaptive outer cycle.** If the knowledge map has no `promoted_candidates` after the initial plan, an adaptive gap-filling planner generates 2–4 new tasks and the research phase runs again (up to `--max-adaptive-cycles`, default 1).
+- **Critique pass.** A critique agent reads the synthesized spec, the knowledge map, and the evidence pool, and writes `critique.json` flagging uncited claims, contradictions, weak evidence, or selected topologies not actually backed by promoted candidates. With `--enforce-critique`, high-severity issues automatically downgrade the decision to `requires_human_architecture_review`.
+
+These keep the orchestrator/researcher topology shallow (no nested sub-agents) while making the loop actually adaptive to evidence quality.
 
 ## Knowledge Acquisition Rule
 
@@ -113,6 +128,16 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
   --max-sources 4
 ```
 
+### Tuning flags
+
+- `--max-rounds <n>` (default 2): max search-judge rounds per research task.
+- `--max-sources <n>` (default 5): max evidence items per task.
+- `--max-cycles <n>` (default 2): bound on planned task count.
+- `--max-adaptive-cycles <n>` (default 1): max gap-filling re-research cycles when the knowledge map has no promoted candidates.
+- `--skip-critique`: do not run the critique agent.
+- `--enforce-critique`: when set, high-severity critique with `recommend_human_review` auto-downgrades the selected topology to `requires_human_architecture_review` (original choice preserved in `state.json`).
+- `--strict-clarification`: stop before research if the PRD is too thin.
+
 Outputs:
 
 ```text
@@ -121,9 +146,11 @@ state.json
 clarification.json
 strategic-context.json
 research-plan.json
+research-plan.adaptive-<n>.json   (one per gap-filling cycle, if any)
 evidence.json
 knowledge-map.json
 intermediate-reports.md
+critique.json
 research-report.md
 ADR.md
 architecture.spec.json

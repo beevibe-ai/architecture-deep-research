@@ -6,6 +6,8 @@ import {
   StateGraph
 } from "@langchain/langgraph";
 import {
+  applyCritique,
+  critiqueDecisionPhase,
   deepResearch,
   executeResearchPhase,
   getLlmJsonProvider,
@@ -40,6 +42,8 @@ const AdrLangGraphState = Annotation.Root({
   knowledgeMap: Annotation(),
   researchResults: Annotation(),
   spec: Annotation(),
+  critique: Annotation(),
+  decisionDowngraded: Annotation(),
 
   // Terminal status.
   status: Annotation(),
@@ -121,6 +125,31 @@ async function synthesizeDecisionNode(state) {
   return { spec, status: "decision_synthesized" };
 }
 
+async function critiqueDecisionNode(state) {
+  const flags = buildFlags(state);
+  if (flags["skip-critique"]) {
+    return { critique: null, status: "critique_skipped" };
+  }
+  const critique = await critiqueDecisionPhase({
+    context: state.context,
+    spec: state.spec,
+    knowledgeMap: state.knowledgeMap,
+    evidenceItems: state.evidenceItems,
+    outDir: state.resolvedOutDir
+  });
+  const { spec: finalSpec, downgraded } = applyCritique({
+    spec: state.spec,
+    critique,
+    flags
+  });
+  return {
+    critique,
+    spec: finalSpec,
+    decisionDowngraded: downgraded,
+    status: downgraded ? "decision_downgraded_by_critique" : "critique_completed"
+  };
+}
+
 async function writeArtifactsNode(state) {
   const result = await writeRunArtifacts({
     context: state.context,
@@ -129,7 +158,8 @@ async function writeArtifactsNode(state) {
     evidenceItems: state.evidenceItems,
     researchResults: state.researchResults,
     knowledgeMap: state.knowledgeMap,
-    outDir: state.resolvedOutDir
+    outDir: state.resolvedOutDir,
+    critique: state.critique || null
   });
   return {
     status: "completed",
@@ -150,6 +180,7 @@ export function createAdrLangGraph({ checkpointer } = {}) {
     .addNode("plan_research", planResearchNode)
     .addNode("execute_research", executeResearchNode)
     .addNode("synthesize_decision", synthesizeDecisionNode)
+    .addNode("critique_decision", critiqueDecisionNode)
     .addNode("write_artifacts", writeArtifactsNode)
     .addEdge(START, "prepare_run")
     .addConditionalEdges("prepare_run", routeAfterPrepare, {
@@ -158,7 +189,8 @@ export function createAdrLangGraph({ checkpointer } = {}) {
     })
     .addEdge("plan_research", "execute_research")
     .addEdge("execute_research", "synthesize_decision")
-    .addEdge("synthesize_decision", "write_artifacts")
+    .addEdge("synthesize_decision", "critique_decision")
+    .addEdge("critique_decision", "write_artifacts")
     .addEdge("write_artifacts", END)
     .compile({
       checkpointer: checkpointer || new MemorySaver()
