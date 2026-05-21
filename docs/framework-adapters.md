@@ -34,8 +34,7 @@ Run:
 npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
-  --out /tmp/adr-langgraph-output \
-  --offline
+  --out /tmp/adr-langgraph-output
 ```
 
 Programmatic use:
@@ -48,7 +47,7 @@ await runLangGraphDeepResearch({
   domain: "global logistics contract analysis",
   decision: "retrieval topology",
   outDir: "/tmp/adr-langgraph-output",
-  flags: { offline: true },
+  flags: { "max-cycles": "2", "max-sources": "4" },
   threadId: "adr-demo"
 });
 ```
@@ -96,17 +95,37 @@ The ADK agent instruction explicitly preserves the product boundary:
 Stop at Execution Handoff; never implement the downstream product.
 ```
 
+## Beevibe
+
+The Beevibe adapter lives in:
+
+```text
+adapters/beevibe.mjs
+```
+
+It turns completed ADR artifacts into a mesh handoff that an Architect specialist can pass to IC coding agents.
+
+```js
+import { createBeevibeMeshHandoff } from "./adapters/beevibe.mjs";
+
+const handoff = await createBeevibeMeshHandoff({
+  outDir: ".adr-runs/logistics-contract-mesh"
+});
+```
+
+See [beevibe-integration.md](./beevibe-integration.md).
+
 ## Smoke Test
 
 ```bash
 npm run smoke:frameworks
 ```
 
-This test verifies that:
+This test verifies adapter shape only. It does not run fake research without live credentials.
 
-- the LangGraph graph can run the ADR kernel and load `execution-handoff.json`;
+- the LangGraph adapter exports the deep research runner;
 - the Google ADK adapter can construct an agent with the ADR function tool;
-- the handoff boundary remains `adr_stops_at_execution_handoff`.
+- framework packages load without coupling the kernel to one orchestrator.
 
 ## Dependency Notes
 

@@ -1,7 +1,21 @@
+#!/usr/bin/env node
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 
 const ignoredDirs = new Set([".adr-runs", ".git", "node_modules"]);
+
+const schemaByFilename = {
+  "architecture.spec.json": "docs/schemas/architecture-spec.schema.json",
+  "clarification.json": "docs/schemas/clarification.schema.json",
+  "domain-evaluation-pack.json": "docs/schemas/domain-evaluation-pack.schema.json",
+  "evidence.json": "docs/schemas/evidence.schema.json",
+  "execution-handoff.json": "docs/schemas/execution-handoff.schema.json",
+  "knowledge-map.json": "docs/schemas/knowledge-map.schema.json",
+  "research-plan.json": "docs/schemas/research-plan.schema.json",
+  "strategic-context.json": "docs/schemas/strategic-context.schema.json",
+  "supersedes.json": "docs/schemas/supersedes.schema.json"
+};
 
 async function collectJsonFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -24,9 +38,36 @@ async function collectJsonFiles(dir) {
   return files;
 }
 
+async function loadSchemas() {
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const validators = new Map();
+
+  for (const [filename, schemaPath] of Object.entries(schemaByFilename)) {
+    const schema = JSON.parse(await readFile(schemaPath, "utf8"));
+    validators.set(filename, ajv.compile(schema));
+  }
+
+  return validators;
+}
+
+const validators = await loadSchemas();
 const files = await collectJsonFiles(".");
 
 for (const file of files.sort()) {
-  JSON.parse(await readFile(file, "utf8"));
-  console.log(`valid json: ${file}`);
+  const parsed = JSON.parse(await readFile(file, "utf8"));
+  const validator = validators.get(path.basename(file));
+  if (validator && !validator(parsed)) {
+    const errors = ajvErrors(validator.errors);
+    throw new Error(`schema invalid: ${file}\n${errors}`);
+  }
+  console.log(validator ? `valid schema: ${file}` : `valid json: ${file}`);
+}
+
+function ajvErrors(errors = []) {
+  return errors
+    .map((error) => {
+      const location = error.instancePath || "/";
+      return `- ${location} ${error.message}`;
+    })
+    .join("\n");
 }

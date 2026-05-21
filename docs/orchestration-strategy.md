@@ -1,6 +1,6 @@
 # Orchestration Strategy
 
-Architecture Deep Research must support long-running investigation, isolated specialist work, human review, and deterministic artifacts. That makes the orchestration layer important, but it should not become the product's domain model.
+Architecture Deep Research must support long-running investigation, isolated specialist work, human review, and validated artifacts. That makes the orchestration layer important, but it should not become the product's domain model.
 
 The core decision is:
 
@@ -16,7 +16,7 @@ LangGraph and Google ADK are both strong orchestration systems, but ADR needs to
 - Google Cloud and Gemini Enterprise environments.
 - Future agent runtimes that do not exist yet.
 
-If ADR bakes one orchestration framework into the core, the strategic architecture layer becomes coupled to framework release cycles and provider-specific assumptions. The safer architecture is a small deterministic core with thin orchestration adapters.
+If ADR bakes one orchestration framework into the core, the strategic architecture layer becomes coupled to framework release cycles and provider-specific assumptions. The safer architecture is a small evidence-owning core with thin orchestration adapters.
 
 ## Proposed Topology
 
@@ -50,7 +50,7 @@ If ADR bakes one orchestration framework into the core, the strategic architectu
 
 ## Core ADR Kernel
 
-The ADR kernel should be dependency-light and deterministic. Its job is to define what a valid research run means, independent of who orchestrates the sub-agents.
+The ADR kernel should be dependency-light and evidence-owning. Its job is to define what a valid live research run means, independent of who orchestrates the sub-agents.
 
 Core responsibilities:
 
@@ -62,8 +62,8 @@ Core responsibilities:
 
 Non-responsibilities:
 
-- Owning web search providers.
-- Owning model providers.
+- Pretending to perform research without live web search.
+- Pretending to synthesize architecture without a model provider.
 - Owning cloud deployment.
 - Owning all agent runtime semantics.
 
@@ -122,14 +122,14 @@ Google ADK is a strong enterprise adapter, especially for teams already using Go
 Use it when:
 
 - The customer wants Google-managed agent runtime infrastructure.
-- The workflow benefits from ADK graph-based workflows, dynamic workflows, or deterministic workflow agents.
+- The workflow benefits from ADK graph-based workflows, dynamic workflows, or governed workflow agents.
 - The organization needs managed sessions, memory, tracing, evaluation, sandbox execution, IAM, gateways, or enterprise governance.
 - Specialist agents should be exposed as tools inside a larger hierarchical agent system.
 
 Useful ADK concepts:
 
 - Graph-based workflows for structured execution paths.
-- Workflow agents for deterministic sequential, parallel, and loop patterns.
+- Workflow agents for sequential, parallel, and loop patterns.
 - Multi-agent systems and agent-as-tool composition.
 - Agent Platform Runtime, Sessions, Memory Bank, evaluation, and observability in Google Cloud.
 
@@ -157,7 +157,7 @@ Custom orchestration should still follow the adapter contract so the runtime can
 | Human review | Excellent via `review_policy` | Excellent via interrupts/checkpoints | Good via platform/workflow controls | Manual |
 | Enterprise managed runtime | Self-hosted | Via deployment target | Excellent | Manual |
 | Model/provider neutrality | Excellent | Good | Good, but Google-first | Excellent |
-| Artifact determinism | Excellent if kernel-owned | Good if kernel-owned | Good if kernel-owned | Excellent |
+| Artifact validation | Excellent if kernel-owned | Good if kernel-owned | Good if kernel-owned | Excellent |
 
 ## Decision
 
@@ -166,7 +166,7 @@ ADR should use a **framework-neutral core with orchestration adapters**.
 Initial priority:
 
 1. Beevibe-native adapter, because it validates ADR as a full Beevibe product.
-2. Minimal custom orchestration for the first CLI and artifact-generation loop.
+2. Minimal custom orchestration for the first live CLI and artifact-generation loop.
 3. LangGraph adapter for open-source cyclic research workflows.
 4. Google ADK adapter for Google Cloud and enterprise deployments.
 

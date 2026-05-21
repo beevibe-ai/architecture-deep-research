@@ -1,27 +1,45 @@
 # Benchmarks
 
-ADR benchmarks measure the system at the architecture-decision layer.
+ADR benchmarks are live architecture-decision experiments. They require real web search and real LLM synthesis.
 
-They do not ask whether generated application code passes tests. They ask whether ADR:
+They do not benchmark generated application code. They score whether the ADR agent:
 
-- chooses the expected architecture family;
+- chooses an acceptable architecture family;
 - rejects tempting but unsafe alternatives;
 - preserves required domain invariants;
 - generates useful evaluation test types;
 - stops at Execution Handoff;
 - asks for clarification when context is insufficient.
 
+## Runtime Requirements
+
+Set one search provider:
+
+```bash
+export BRAVE_SEARCH_API_KEY=...
+# or SERPER_API_KEY / TAVILY_API_KEY / SEARXNG_URL
+```
+
+Set one OpenAI-compatible LLM provider:
+
+```bash
+export ADR_OPENAI_API_KEY=...
+export ADR_MODEL=gpt-4.1-mini
+```
+
 ## Run
 
 ```bash
-npm run benchmark
+npm run benchmark:live
 ```
 
-Strict mode:
+Fast pass:
 
 ```bash
-npm run benchmark:ci
+npm run benchmark:live:fast
 ```
+
+The benchmark fails fast if credentials are missing. This is intentional: a fake offline run would not test Architecture Deep Research.
 
 ## Case Format
 
@@ -32,29 +50,20 @@ product-context.md
 case.json
 ```
 
-`case.json` defines:
+`case.json` defines the expected architecture family, forbidden topology IDs, required invariant substrings, expected evaluation test types, and clarification expectation.
 
-- `domain`
-- `decision`
-- `expected.selected_topology`
-- `expected.forbidden_topologies`
-- `expected.required_invariant_substrings`
-- `expected.evaluation_test_types`
-- `expected.needs_clarification`
+## Output
 
-## Metrics
+Runs are written to:
 
-The offline benchmark uses weighted scoring:
+```text
+.adr-runs/benchmarks/live/latest/
+```
 
-- selected topology: 35%
-- forbidden topology recall: 15%
-- required invariant recall: 20%
-- evaluation test coverage: 15%
-- handoff boundary: 10%
-- clarification correctness: 5%
+Each case gets a full ADR output directory under:
 
-The result is written to `.adr-runs/benchmarks/offline/latest/summary.json`.
+```text
+.adr-runs/benchmarks/live/latest/cases/<case-id>/
+```
 
-## Experiment Outputs
-
-Benchmark outputs are intentionally ignored by Git. They include full ADR artifacts for each case so failures can be inspected locally without polluting the repo history.
+Outputs are ignored by Git.

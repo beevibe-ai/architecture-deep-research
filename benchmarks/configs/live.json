@@ -1,0 +1,19 @@
+{
+  "name": "live-agentic",
+  "description": "Live Architecture Deep Research benchmark. Requires live web search and an OpenAI-compatible LLM provider.",
+  "case_dir": "benchmarks/cases",
+  "output_dir": ".adr-runs/benchmarks/live",
+  "runner_flags": {
+    "max-cycles": "2",
+    "max-sources": "4"
+  },
+  "weights": {
+    "selected_topology": 0.25,
+    "forbidden_topologies": 0.15,
+    "required_invariants": 0.2,
+    "evaluation_tests": 0.15,
+    "handoff_boundary": 0.15,
+    "clarification": 0.1
+  },
+  "passing_score": 0.8
+}

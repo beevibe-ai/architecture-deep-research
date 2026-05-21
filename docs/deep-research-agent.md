@@ -1,75 +1,87 @@
 # Deep Research Agent
 
-Architecture Deep Research uses a shallow, production-oriented research agent loop inspired by the same design lessons Onyx published for its Deep Research system.
+Architecture Deep Research is a live agentic research loop for strategic system design decisions.
 
-The point is not to build a giant multi-agent maze. The point is to keep each step simple, preserve evidence, and end with enforceable architecture state.
+The product constraint is strict:
 
-## Design Influences
+- No offline research mode.
+- No deterministic mock research.
+- No static pattern library that forces the answer.
+- Architecture candidates must be acquired from live evidence and synthesized with citations.
 
-Onyx describes a practical deep research stack with:
+## Runtime Requirements
 
-- A clarification stage.
-- A planning agent that creates a high-level plan.
-- An orchestrator that delegates to research agents.
-- Research agents with search/open-url/internal-search tools.
-- Intermediate reports with citations.
-- A final report agent.
-- Shallow depth: orchestrator plus research agents, not deeply nested agent chains.
-- Reminders and citation instructions placed close to the relevant tool context.
+Every real ADR run needs both:
 
-ADR adopts the same shape, but specializes the final synthesis for architecture decisions.
+- A live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`.
+- An OpenAI-compatible LLM provider: `ADR_OPENAI_API_KEY` or `OPENAI_API_KEY`, with optional `ADR_OPENAI_BASE_URL`.
 
-## ADR Deep Research Flow
+```bash
+export BRAVE_SEARCH_API_KEY=...
+export ADR_OPENAI_API_KEY=...
+export ADR_MODEL=gpt-4.1-mini
+```
+
+## Flow
 
 ```text
 Raw PRD / product context
         |
         v
-Strategic Context Model
+Strategic Context Matrix
         |
         v
 Planning Agent
         |
         v
-Orchestrator
+Research Orchestrator
         |
-        +--> Research Agent: DDD/domain fit
-        +--> Research Agent: architecture precedent
-        +--> Research Agent: failure modes
-        +--> Research Agent: evaluation/enforcement
-        |
-        v
-Intermediate Reports + Evidence
+        +--> Source acquisition agent: official docs
+        +--> Source acquisition agent: mature OSS
+        +--> Source acquisition agent: engineering writeups
+        +--> Source acquisition agent: papers / benchmarks
         |
         v
-Architecture Synthesis
+Claim Extraction Agent
+        |
+        v
+Evidence-Only Knowledge Map
+        |
+        v
+Architecture Synthesis Agent
+        |
+        v
+Adversarial Evaluation Pack Agent
         |
         v
 Execution Handoff
 ```
 
-## Current CLI
+The research loop is intentionally shallow: planner, orchestrator, research agents, claim extraction, synthesis. That shape keeps the agent powerful without burying evidence in nested conversations.
+
+## Knowledge Acquisition Rule
+
+ADR may extract domain hints from the PRD. It may not start from a forced architecture answer.
+
+The `knowledge-map.json` file is the promotion boundary:
+
+- `promoted_candidates`: architecture families with enough cited live evidence to be considered.
+- `insufficient_evidence_candidates`: architecture families mentioned by sources but not strong enough to drive the decision.
+
+If evidence is weak, the synthesis agent should choose `requires_human_architecture_review` rather than pretending certainty.
+
+## CLI
 
 ```bash
 npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
-  --out /tmp/adr-deep-output \
-  --max-cycles 2
+  --out .adr-runs/logistics-contract-mesh \
+  --max-cycles 2 \
+  --max-sources 4
 ```
 
-Offline deterministic mode:
-
-```bash
-npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out /tmp/adr-deep-output \
-  --offline \
-  --max-cycles 2
-```
-
-## Runtime Outputs
+Outputs:
 
 ```text
 events.jsonl
@@ -78,6 +90,7 @@ clarification.json
 strategic-context.json
 research-plan.json
 evidence.json
+knowledge-map.json
 intermediate-reports.md
 research-report.md
 ADR.md
@@ -88,79 +101,28 @@ execution-handoff.json
 sources.md
 ```
 
-## Durable State
+## Superseding Decisions
 
-Every deep research run writes:
-
-- `events.jsonl`: append-only event log.
-- `state.json`: terminal run state.
-- `clarification.json`: missing-context assessment and targeted questions.
-- `research-plan.json`: planner output.
-- `evidence.json`: source-preserving evidence items.
-- `intermediate-reports.md`: one report per research task.
-
-This gives Beevibe, LangGraph, ADK, or custom adapters a stable surface for pause/resume, inspection, retries, and human review.
-
-## Search And Retrieval
-
-The CLI supports several source modes:
-
-- `--offline`: deterministic seed-source mode for tests and demos.
-- `--corpus-dir <dir>`: local internal search over markdown, text, JSON, and YAML files.
-- `--seed-url <url>`: one or more seed URLs to open and cite.
-- `BRAVE_SEARCH_API_KEY`: Brave Search.
-- `SERPER_API_KEY`: Serper.
-- `TAVILY_API_KEY`: Tavily.
-- `SEARXNG_URL`: self-hosted SearXNG.
-
-If no search provider is configured, ADR falls back to curated architecture seed URLs for RAG, GraphRAG, LangGraph, LlamaIndex, and Onyx-style deep research.
-
-## Clarification
-
-The first stage writes `clarification.json`. If the source brief is too thin, lacks domain entities, has no representative query shape, or omits important operational constraints, the file records targeted questions.
-
-By default the CLI proceeds best-effort. To stop before research when clarification is needed:
+When implementation evidence or new research contradicts the current decision, generate a superseding ADR instead of silently changing topology:
 
 ```bash
-npm run adr -- deep-research ./product-context.md \
-  --domain "example domain" \
+npm run adr -- supersede .adr-runs/logistics-contract-mesh \
+  --with ./new-product-context.md \
+  --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
-  --out /tmp/adr-deep-output \
-  --strict-clarification
+  --out .adr-runs/logistics-contract-mesh-v2 \
+  --reason "New evidence shows the selected topology violates the latency envelope."
 ```
-
-## Optional LLM Planning
-
-The kernel can run without an LLM. By default it uses deterministic planning and synthesis so the artifact contract is testable.
-
-For LLM-backed planning, set:
-
-```bash
-ADR_LLM_PROVIDER=openai-compatible
-ADR_OPENAI_API_KEY=...
-ADR_MODEL=...
-```
-
-Optional:
-
-```bash
-ADR_OPENAI_BASE_URL=http://localhost:1234/v1
-```
-
-The LLM is only an adapter for planning. Artifact validation, the Strategic Context Model, and the Execution Handoff boundary remain kernel-owned.
 
 ## Production Rules
 
-- Keep agent depth shallow: orchestrator plus research agents.
-- Never run more than three research agents in parallel.
-- Preserve raw evidence excerpts before synthesis.
-- Keep citations tied to source URLs.
-- Use search/open-url as separate tools so the agent can inspect sources.
-- Treat implementation as downstream execution, never part of the ADR loop.
-- Feed evaluation/drift reports back only as evidence for a validating or superseding ADR.
+- Research must use live search and source opening.
+- Each evidence item keeps URL, source type, quality score, keyword hits, and extracted claims.
+- Candidate architecture families are promoted only from cited claims.
+- ADR stops at Execution Handoff.
+- Implementation agents consume the handoff; they do not reinterpret the architecture without a superseding ADR.
 
 ## References
 
 - Onyx deep research lessons: https://onyx.app/blog/building-the-best-deep-research
-- Onyx chat context-management README: https://github.com/onyx-dot-app/onyx/blob/main/backend/onyx/chat/README.md
 - Onyx repository: https://github.com/onyx-dot-app/onyx

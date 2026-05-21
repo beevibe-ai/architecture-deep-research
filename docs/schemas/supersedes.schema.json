@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/supersedes.schema.json",
+  "title": "Beevibe Architecture Deep Research Supersession Record",
+  "type": "object",
+  "required": [
+    "version",
+    "previous_topology",
+    "new_topology",
+    "reason",
+    "previous_artifact_dir",
+    "created_at"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "previous_decision_id": { "type": "string" },
+    "previous_topology": { "type": "string" },
+    "new_decision_id": { "type": "string" },
+    "new_topology": { "type": "string" },
+    "reason": { "type": "string" },
+    "previous_artifact_dir": { "type": "string" },
+    "created_at": { "type": "string" }
+  },
+  "additionalProperties": true
+}

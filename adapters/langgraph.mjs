@@ -7,7 +7,7 @@ import {
   START,
   StateGraph
 } from "@langchain/langgraph";
-import { deepResearch } from "../scripts/adr.mjs";
+import { deepResearch } from "../src/kernel.mjs";
 
 const AdrLangGraphState = Annotation.Root({
   inputPath: Annotation(),

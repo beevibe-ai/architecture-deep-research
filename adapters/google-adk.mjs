@@ -1,5 +1,5 @@
 import { Agent, FunctionTool } from "@google/adk";
-import { deepResearch } from "../scripts/adr.mjs";
+import { deepResearch } from "../src/kernel.mjs";
 
 export async function runArchitectureDeepResearchTool(input) {
   const {
@@ -54,7 +54,7 @@ export function createArchitectureDeepResearchTool() {
         flags: {
           type: "object",
           description:
-            "Optional ADR runtime flags such as offline, max-cycles, max-sources, seed-url, or corpus-dir."
+            "Optional ADR runtime flags such as max-cycles, max-sources, or fetch-timeout-ms. ADR runs always require live search and LLM synthesis."
         }
       },
       required: ["inputPath", "domain", "decision", "outDir"]

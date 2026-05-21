@@ -13,8 +13,7 @@
     "query_shapes",
     "risk_invariants",
     "operational_envelope",
-    "compliance_constraints",
-    "candidate_architecture_families"
+    "compliance_constraints"
   ],
   "properties": {
     "version": { "type": "string" },
@@ -73,6 +72,16 @@
     "candidate_architecture_families": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "acquisition_contract": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string" },
+        "no_static_pattern_oracle": { "type": "boolean" },
+        "no_offline_research_mode": { "type": "boolean" },
+        "candidate_architecture_families_source": { "type": "string" }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

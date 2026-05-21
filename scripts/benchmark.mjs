@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { deepResearch } from "./adr.mjs";
+import { activeSearchProviders, deepResearch } from "../src/kernel.mjs";
 
-const DEFAULT_CONFIG = "benchmarks/configs/offline.json";
+const DEFAULT_CONFIG = "benchmarks/configs/live.json";
 
 function parseArgs(argv) {
   const flags = {};
@@ -33,10 +33,17 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function recall(expected, actual) {
   if (!expected || expected.length === 0) return 1;
-  const actualSet = new Set(actual || []);
-  const hits = expected.filter((item) => actualSet.has(item)).length;
+  const actualSet = new Set((actual || []).map(slugify));
+  const hits = expected.filter((item) => actualSet.has(slugify(item))).length;
   return hits / expected.length;
 }
 
@@ -85,7 +92,9 @@ function scoreCase({ caseConfig, spec, evaluationPack, handoff, clarification })
 
   const metrics = {
     selected_topology:
-      spec.decision?.selected_topology === expected.selected_topology ? 1 : 0,
+      slugify(spec.decision?.selected_topology) === slugify(expected.selected_topology)
+        ? 1
+        : 0,
     forbidden_topologies: recall(expected.forbidden_topologies, actualForbidden),
     required_invariants: substringRecall(
       expected.required_invariant_substrings,
@@ -150,6 +159,17 @@ async function main() {
   const configPath = path.resolve(flags.config || DEFAULT_CONFIG);
   const strict = Boolean(flags.strict);
   const config = await readJson(configPath);
+  const searchProviders = activeSearchProviders();
+  if (searchProviders.length === 0) {
+    throw new Error(
+      "Live benchmark requires BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, or SEARXNG_URL."
+    );
+  }
+  if (!process.env.ADR_OPENAI_API_KEY && !process.env.OPENAI_API_KEY && !process.env.ADR_OPENAI_BASE_URL && !process.env.OPENAI_BASE_URL) {
+    throw new Error(
+      "Live benchmark requires ADR_OPENAI_API_KEY or OPENAI_API_KEY, or an OpenAI-compatible ADR_OPENAI_BASE_URL."
+    );
+  }
   const caseDir = path.resolve(config.case_dir);
   const runRoot = path.resolve(config.output_dir, "latest");
 

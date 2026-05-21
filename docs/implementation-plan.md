@@ -10,7 +10,7 @@ Implement a dependency-light core that can:
 
 - Read a product brief or PRD.
 - Normalize it into a Strategic Context Model.
-- Compare candidate architecture families.
+- Acquire candidate architecture families from live evidence.
 - Emit ADR artifacts.
 - Emit an execution handoff for downstream agents.
 
@@ -38,13 +38,13 @@ It should capture:
 - Risk invariants.
 - Operational envelope.
 - Compliance constraints.
-- Candidate architecture families.
+- Acquisition contract for candidate architecture families.
 
-The first implementation uses deterministic heuristics and explicit user-supplied metadata. Later implementations can replace extraction with a reviewed LLM pipeline while keeping the same schema.
+The Strategic Context Model may use lightweight extraction to describe the PRD, but architecture-family knowledge is not static. Candidate families are acquired by live research, claim extraction, and evidence promotion.
 
 ## Milestone C: Precedent Mining Protocol
 
-The first version should not scrape the web automatically. It should emit a research plan and source targets that a Beevibe Architect, LangGraph adapter, or ADK adapter can execute.
+The research engine must use live source acquisition. It emits a plan, executes source searches, opens sources, extracts claims, and promotes only evidence-backed candidates.
 
 Precedence vectors:
 
@@ -56,7 +56,7 @@ Precedence vectors:
 
 ## Milestone D: Constraint And Evaluation Generation
 
-Generate architecture constraints and evaluation packs from the Strategic Context Model.
+Generate architecture constraints and evaluation packs from the Strategic Context Model plus the evidence-only knowledge map.
 
 The generator must:
 
@@ -80,13 +80,13 @@ Implementation tools consume the package, then return drift/evaluation evidence 
 
 ## Initial Slice
 
-The first implemented slice is a local CLI:
+The implemented slice is a live agentic CLI:
 
 ```bash
-npm run adr -- research examples/logistics-contract-mesh/product-context.md \
+npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
   --domain "global logistics contract analysis" \
   --decision "retrieval topology" \
   --out /tmp/adr-output
 ```
 
-This is not the final deep research engine. It is the stable artifact kernel that orchestration adapters can call.
+The CLI requires live search and an OpenAI-compatible LLM provider. It is the stable artifact kernel that orchestration adapters can call.

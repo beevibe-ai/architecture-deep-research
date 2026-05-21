@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/knowledge-map.schema.json",
+  "title": "Beevibe Architecture Deep Research Knowledge Map",
+  "type": "object",
+  "required": [
+    "version",
+    "acquisition_mode",
+    "promotion_rule",
+    "promoted_candidates",
+    "insufficient_evidence_candidates"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "acquisition_mode": { "type": "string" },
+    "promotion_rule": { "type": "string" },
+    "promoted_candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "insufficient_evidence_candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate" }
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": [
+        "name",
+        "label",
+        "promotion_status",
+        "evidence_count",
+        "source_types",
+        "citations",
+        "support",
+        "warnings",
+        "rejections",
+        "score"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "label": { "type": "string" },
+        "promotion_status": { "type": "string" },
+        "evidence_count": { "type": "integer", "minimum": 0 },
+        "source_types": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "citations": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "support": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/claim" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/claim" }
+        },
+        "rejections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/claim" }
+        },
+        "score": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "claim": {
+      "type": "object",
+      "required": ["citation_id", "claim", "confidence", "source_type", "url"],
+      "properties": {
+        "citation_id": { "type": "integer", "minimum": 1 },
+        "claim": { "type": "string" },
+        "risk_or_fit": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source_type": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

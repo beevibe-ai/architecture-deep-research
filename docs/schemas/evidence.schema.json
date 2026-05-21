@@ -23,7 +23,32 @@
       "url": { "type": "string" },
       "query": { "type": "string" },
       "excerpt": { "type": "string" },
+      "provider": { "type": "string" },
+      "source_type": { "type": "string" },
       "source_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+      "keyword_hits": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "claims": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["claim", "architecture_family", "polarity", "confidence"],
+          "properties": {
+            "claim": { "type": "string" },
+            "architecture_family": { "type": "string" },
+            "polarity": { "type": "string" },
+            "domain_conditions": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "risk_or_fit": { "type": "string" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": true
+        }
+      },
       "score": { "type": "number", "minimum": 0 },
       "relevance": { "type": "string" }
     },

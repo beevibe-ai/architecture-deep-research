@@ -1,42 +1,13 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { runLangGraphDeepResearch } from "../adapters/langgraph.mjs";
+import { createBeevibeArchitectAgentConfig } from "../adapters/beevibe.mjs";
 import {
   createArchitectureDeepResearchAgent,
   createArchitectureDeepResearchTool
 } from "../adapters/google-adk.mjs";
 
-const tmp = await mkdtemp(path.join(os.tmpdir(), "adr-frameworks-"));
-const inputPath = path.join(tmp, "product-context.md");
-const langGraphOut = path.join(tmp, "langgraph-out");
-
-await writeFile(
-  inputPath,
-  `# Product Context
-
-Build a legal knowledge system with source-backed answers, audit lineage, multi-hop entity relationships, and deterministic retrieval routing.
-`
-);
-
-const langGraphResult = await runLangGraphDeepResearch({
-  inputPath,
-  domain: "legal knowledge system",
-  decision: "retrieval topology",
-  outDir: langGraphOut,
-  flags: {
-    offline: true,
-    "max-cycles": "1",
-    "max-sources": "1"
-  },
-  threadId: "smoke-frameworks"
-});
-
-if (langGraphResult.handoffBoundary !== "adr_stops_at_execution_handoff") {
-  throw new Error("LangGraph adapter did not return the ADR handoff boundary.");
+if (typeof runLangGraphDeepResearch !== "function") {
+  throw new Error("LangGraph adapter did not export runLangGraphDeepResearch.");
 }
-
-JSON.parse(await readFile(path.join(langGraphOut, "execution-handoff.json"), "utf8"));
 
 const adkAgent = createArchitectureDeepResearchAgent();
 if (!adkAgent.name || !Array.isArray(adkAgent.tools) || adkAgent.tools.length === 0) {
@@ -46,6 +17,11 @@ if (!adkAgent.name || !Array.isArray(adkAgent.tools) || adkAgent.tools.length ==
 const adkTool = createArchitectureDeepResearchTool();
 if (adkTool.name !== "run_architecture_deep_research") {
   throw new Error("Google ADK adapter did not create the expected tool.");
+}
+
+const beevibeAgent = createBeevibeArchitectAgentConfig();
+if (beevibeAgent.hierarchy_level !== "team" || beevibeAgent.review_policy !== "require_human") {
+  throw new Error("Beevibe adapter did not create the expected Architect agent config.");
 }
 
 console.log("framework smoke ok");

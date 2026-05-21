@@ -1,0 +1,19 @@
+{
+  "name": "live-agentic-fast",
+  "description": "Fast live experiment for a small sanity pass. Requires live web search and an OpenAI-compatible LLM provider.",
+  "case_dir": "benchmarks/cases",
+  "output_dir": ".adr-runs/benchmarks/live-fast",
+  "runner_flags": {
+    "max-cycles": "1",
+    "max-sources": "2"
+  },
+  "weights": {
+    "selected_topology": 0.2,
+    "forbidden_topologies": 0.15,
+    "required_invariants": 0.2,
+    "evaluation_tests": 0.15,
+    "handoff_boundary": 0.2,
+    "clarification": 0.1
+  },
+  "passing_score": 0.75
+}
