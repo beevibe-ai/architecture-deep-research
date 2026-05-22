@@ -20,20 +20,26 @@ function ArrayNode({ data, initiallyOpen, depth }) {
   if (data.length === 0) return <span className="text-ink-500">[]</span>;
   return (
     <div className="font-mono text-xs">
-      <button onClick={() => setOpen((v) => !v)} className="text-ink-400 hover:text-ink-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={open ? `Collapse array of ${data.length} items` : `Expand array of ${data.length} items`}
+        className="break-all text-ink-300 hover:text-ink-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500"
+      >
         {open ? "[" : `[ ${data.length} … ]`}
       </button>
       {open && (
         <div className="ml-4 border-l border-ink-800 pl-3">
           {data.map((item, idx) => (
-            <div key={idx} className="py-0.5">
+            <div key={idx} className="break-all py-0.5">
               <span className="text-ink-500">{idx}:</span>{" "}
               <JsonInspector data={item} initiallyOpen={false} depth={depth + 1} />
             </div>
           ))}
         </div>
       )}
-      {open && <span className="text-ink-400">]</span>}
+      {open && <span className="text-ink-300">]</span>}
     </div>
   );
 }
@@ -44,21 +50,27 @@ function ObjectNode({ data, initiallyOpen, depth }) {
   if (entries.length === 0) return <span className="text-ink-500">{`{}`}</span>;
   return (
     <div className="font-mono text-xs">
-      <button onClick={() => setOpen((v) => !v)} className="text-ink-400 hover:text-ink-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={open ? `Collapse object with ${entries.length} keys` : `Expand object with ${entries.length} keys`}
+        className="break-all text-ink-300 hover:text-ink-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500"
+      >
         {open ? "{" : `{ ${entries.length} keys … }`}
       </button>
       {open && (
         <div className="ml-4 border-l border-ink-800 pl-3">
           {entries.map(([key, value]) => (
-            <div key={key} className="py-0.5">
-              <span className="text-ink-400">"{key}"</span>
+            <div key={key} className="break-all py-0.5">
+              <span className="text-ink-300">"{key}"</span>
               <span className="text-ink-500">: </span>
               <JsonInspector data={value} initiallyOpen={false} depth={depth + 1} />
             </div>
           ))}
         </div>
       )}
-      {open && <span className="text-ink-400">{`}`}</span>}
+      {open && <span className="text-ink-300">{`}`}</span>}
     </div>
   );
 }
@@ -67,8 +79,11 @@ function CollapsedString({ value }) {
   const [open, setOpen] = useState(false);
   return (
     <button
+      type="button"
       onClick={() => setOpen((v) => !v)}
-      className="text-left text-success-500 hover:text-success-600"
+      aria-expanded={open}
+      aria-label={open ? "Collapse string" : `Expand string (${value.length} chars)`}
+      className="break-all text-left text-success-500 hover:text-success-600 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500"
     >
       {open ? `"${value}"` : `"${value.slice(0, 220)}…" (${value.length} chars)`}
     </button>

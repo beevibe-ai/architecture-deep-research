@@ -17,15 +17,21 @@ export default function App() {
               Observability + product
             </span>
           </div>
-          <nav className="flex items-center gap-4 text-sm">
+          <nav aria-label="Primary" className="flex items-center gap-4 text-sm">
             <Link
               to="/"
-              className={pathname === "/" ? "text-ink-100" : "text-ink-400 hover:text-ink-200"}
+              aria-current={pathname === "/" ? "page" : undefined}
+              className={
+                pathname === "/"
+                  ? "text-ink-100 underline decoration-accent-500 underline-offset-4"
+                  : "text-ink-300 hover:text-ink-100"
+              }
             >
               Runs
             </Link>
             <Link
               to="/new"
+              aria-current={pathname === "/new" ? "page" : undefined}
               className={
                 pathname === "/new"
                   ? "rounded-md bg-accent-500 px-3 py-1.5 text-ink-950 font-medium"

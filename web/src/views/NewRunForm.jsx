@@ -107,15 +107,46 @@ export default function NewRunForm() {
         </p>
       </header>
 
-      <form onSubmit={onSubmit} className="card space-y-4 p-5">
-        <Field label="Product context path" value={form.inputPath} onChange={(v) => update("inputPath", v)} />
-        <Field label="Domain" value={form.domain} onChange={(v) => update("domain", v)} />
-        <Field label="Decision focus" value={form.decision} onChange={(v) => update("decision", v)} />
-        <Field label="Output directory" value={form.outDir} onChange={(v) => update("outDir", v)} />
+      <form onSubmit={onSubmit} noValidate className="card space-y-4 p-5">
+        <Field
+          id="field-input-path"
+          label="Product context path"
+          value={form.inputPath}
+          onChange={(v) => update("inputPath", v)}
+          required
+          autoFocus
+        />
+        <Field
+          id="field-domain"
+          label="Domain"
+          value={form.domain}
+          onChange={(v) => update("domain", v)}
+          required
+        />
+        <Field
+          id="field-decision"
+          label="Decision focus"
+          value={form.decision}
+          onChange={(v) => update("decision", v)}
+          required
+        />
+        <Field
+          id="field-out-dir"
+          label="Output directory"
+          value={form.outDir}
+          onChange={(v) => update("outDir", v)}
+          required
+        />
 
         <div>
-          <label className="block text-xs font-medium uppercase tracking-wide text-ink-400">Runtime</label>
+          <label
+            htmlFor="field-runtime"
+            className="block text-xs font-medium uppercase tracking-wide text-ink-300"
+          >
+            Runtime
+          </label>
           <select
+            id="field-runtime"
             value={form.runtime}
             onChange={(e) => update("runtime", e.target.value)}
             className="mt-1 w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm"
@@ -130,6 +161,7 @@ export default function NewRunForm() {
 
         {selectedRuntime?.needs_model && (
           <Field
+            id="field-model"
             label="Model (provider:model, passed to initChatModel)"
             value={form.model}
             onChange={(v) => update("model", v)}
@@ -137,23 +169,39 @@ export default function NewRunForm() {
           />
         )}
 
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="--max-cycles" value={form.maxCycles} onChange={(v) => update("maxCycles", v)} />
-          <Field label="--max-sources" value={form.maxSources} onChange={(v) => update("maxSources", v)} />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            id="field-max-cycles"
+            label="--max-cycles"
+            value={form.maxCycles}
+            onChange={(v) => update("maxCycles", v)}
+            inputMode="numeric"
+          />
+          <Field
+            id="field-max-sources"
+            label="--max-sources"
+            value={form.maxSources}
+            onChange={(v) => update("maxSources", v)}
+            inputMode="numeric"
+          />
         </div>
 
-        <fieldset className="grid grid-cols-3 gap-3 rounded-lg border border-ink-800 p-3">
+        <fieldset className="grid grid-cols-1 gap-3 rounded-lg border border-ink-800 p-3 sm:grid-cols-3">
+          <legend className="px-1 text-xs uppercase tracking-wide text-ink-300">Skip phases</legend>
           <Checkbox
+            id="field-skip-critique"
             label="--skip-critique"
             checked={form.skipCritique}
             onChange={(v) => update("skipCritique", v)}
           />
           <Checkbox
+            id="field-skip-citation-audit"
             label="--skip-citation-audit"
             checked={form.skipCitationAudit}
             onChange={(v) => update("skipCitationAudit", v)}
           />
           <Checkbox
+            id="field-skip-comparison-matrix"
             label="--skip-comparison-matrix"
             checked={form.skipComparisonMatrix}
             onChange={(v) => update("skipComparisonMatrix", v)}
@@ -167,7 +215,8 @@ export default function NewRunForm() {
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 disabled:opacity-60"
+            aria-busy={submitting}
+            className="rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? "Starting…" : "Start run"}
           </button>
@@ -187,7 +236,10 @@ export default function NewRunForm() {
           </div>
         )}
         {error && (
-          <div className="rounded-md border border-danger-600/30 bg-danger-500/10 p-3 text-xs text-danger-500">
+          <div
+            role="alert"
+            className="rounded-md border border-danger-600/30 bg-danger-500/10 p-3 text-xs text-danger-500"
+          >
             {String(error.message || error)}
           </div>
         )}
@@ -196,25 +248,43 @@ export default function NewRunForm() {
   );
 }
 
-function Field({ label, value, onChange, placeholder }) {
+function Field({ id, label, value, onChange, placeholder, required, autoFocus, inputMode }) {
   return (
     <div>
-      <label className="block text-xs font-medium uppercase tracking-wide text-ink-400">{label}</label>
+      <label
+        htmlFor={id}
+        className="block text-xs font-medium uppercase tracking-wide text-ink-300"
+      >
+        {label}
+        {required && (
+          <span aria-hidden="true" className="ml-1 text-danger-500">
+            *
+          </span>
+        )}
+      </label>
       <input
+        id={id}
         type="text"
         value={value}
         placeholder={placeholder}
+        required={required}
+        aria-required={required ? "true" : undefined}
+        autoFocus={autoFocus}
+        inputMode={inputMode}
+        autoComplete="off"
+        spellCheck={false}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm font-mono"
+        className="mt-1 w-full rounded-md border border-ink-700 bg-ink-900 px-3 py-2 text-sm font-mono focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500"
       />
     </div>
   );
 }
 
-function Checkbox({ label, checked, onChange }) {
+function Checkbox({ id, label, checked, onChange }) {
   return (
-    <label className="flex items-center gap-2 text-xs text-ink-300">
+    <label htmlFor={id} className="flex items-center gap-2 text-xs text-ink-200">
       <input
+        id={id}
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}

@@ -40,14 +40,17 @@ export default function RunsIndex() {
       {runs.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-ink-800">
           <table className="w-full text-sm">
-            <thead className="bg-ink-900/60 text-xs uppercase tracking-wide text-ink-500">
+            <caption className="sr-only">
+              Architecture Deep Research runs, newest first; click a row to open it.
+            </caption>
+            <thead className="bg-ink-900/60 text-xs uppercase tracking-wide text-ink-400">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium">Run</th>
-                <th className="px-4 py-2.5 text-left font-medium">Status</th>
-                <th className="px-4 py-2.5 text-left font-medium">Topology</th>
-                <th className="px-4 py-2.5 text-right font-medium">Evidence</th>
-                <th className="px-4 py-2.5 text-right font-medium">Promoted</th>
-                <th className="px-4 py-2.5 text-left font-medium">Updated</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">Run</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">Status</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">Topology</th>
+                <th scope="col" className="px-4 py-2.5 text-right font-medium">Evidence</th>
+                <th scope="col" className="px-4 py-2.5 text-right font-medium">Promoted</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">Updated</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-800 bg-ink-950/40">

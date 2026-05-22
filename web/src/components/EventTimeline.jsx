@@ -35,20 +35,23 @@ export default function EventTimeline({ events, onSelect, selected }) {
         const tone = TYPE_TONE[event.type] || "bg-ink-800 text-ink-300";
         const isSelected = selected === event;
         return (
-          <li
-            key={`${idx}|${event.ts || ""}|${event.type || ""}`}
-            className={`flex cursor-pointer items-baseline gap-3 px-3 py-2 hover:bg-ink-900/40 ${isSelected ? "bg-ink-900/60" : ""}`}
-            onClick={() => onSelect?.(event)}
-          >
-            <span className="w-24 shrink-0 font-mono text-[10px] text-ink-500">
-              {formatTs(event.ts)}
-            </span>
-            <span
-              className={`whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone}`}
+          <li key={`${idx}|${event.ts || ""}|${event.type || ""}`}>
+            <button
+              type="button"
+              onClick={() => onSelect?.(event)}
+              aria-pressed={isSelected}
+              className={`flex w-full items-baseline gap-3 px-3 py-2 text-left hover:bg-ink-900/40 focus:outline-none focus-visible:bg-ink-900/60 focus-visible:ring-1 focus-visible:ring-accent-500 ${isSelected ? "bg-ink-900/60" : ""}`}
             >
-              {event.type || "event"}
-            </span>
-            <span className="truncate text-xs text-ink-300">{summarizeEvent(event)}</span>
+              <span className="w-24 shrink-0 font-mono text-[10px] text-ink-400">
+                {formatTs(event.ts)}
+              </span>
+              <span
+                className={`whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone}`}
+              >
+                {event.type || "event"}
+              </span>
+              <span className="truncate text-xs text-ink-200">{summarizeEvent(event)}</span>
+            </button>
           </li>
         );
       })}

@@ -117,7 +117,10 @@ export default function RunDetail() {
       </header>
 
       {eventStreamError && (
-        <div className="rounded-md border border-warn-600/40 bg-warn-500/10 px-3 py-2 text-xs text-warn-500">
+        <div
+          role="alert"
+          className="rounded-md border border-warn-600/40 bg-warn-500/10 px-3 py-2 text-xs text-warn-500"
+        >
           Event stream disconnected. The page will keep polling artifacts.
         </div>
       )}
@@ -132,19 +135,28 @@ export default function RunDetail() {
 }
 
 function ModeToggle({ mode, onChange }) {
-  const base = "rounded-md px-3 py-1.5 text-sm";
+  const base =
+    "rounded-md px-3 py-1.5 text-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500";
   return (
-    <div className="inline-flex overflow-hidden rounded-lg border border-ink-700">
+    <div
+      role="tablist"
+      aria-label="View mode"
+      className="inline-flex overflow-hidden rounded-lg border border-ink-700"
+    >
       <button
         type="button"
-        className={`${base} ${mode === "operator" ? "bg-accent-500 text-ink-950 font-medium" : "bg-ink-900 text-ink-300 hover:bg-ink-800"}`}
+        role="tab"
+        aria-selected={mode === "operator"}
+        className={`${base} ${mode === "operator" ? "bg-accent-500 text-ink-950 font-medium" : "bg-ink-900 text-ink-200 hover:bg-ink-800"}`}
         onClick={() => onChange("operator")}
       >
         Operator
       </button>
       <button
         type="button"
-        className={`${base} ${mode === "developer" ? "bg-accent-500 text-ink-950 font-medium" : "bg-ink-900 text-ink-300 hover:bg-ink-800"}`}
+        role="tab"
+        aria-selected={mode === "developer"}
+        className={`${base} ${mode === "developer" ? "bg-accent-500 text-ink-950 font-medium" : "bg-ink-900 text-ink-200 hover:bg-ink-800"}`}
         onClick={() => onChange("developer")}
       >
         Developer

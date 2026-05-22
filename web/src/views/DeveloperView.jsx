@@ -65,17 +65,25 @@ export default function DeveloperView({ summary, artifacts, events }) {
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label htmlFor="event-search" className="sr-only">
+              Search events
+            </label>
             <input
-              type="text"
+              id="event-search"
+              type="search"
               placeholder="Search events…"
               value={eventFilter}
               onChange={(e) => setEventFilter(e.target.value)}
-              className="flex-1 rounded-md border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs"
+              className="flex-1 rounded-md border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500"
             />
+            <label htmlFor="event-type-filter" className="sr-only">
+              Filter by event type
+            </label>
             <select
+              id="event-type-filter"
               value={eventTypeFilter}
               onChange={(e) => setEventTypeFilter(e.target.value)}
-              className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-xs"
+              className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-xs focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500"
             >
               <option value="">all types ({events.length})</option>
               {eventTypes.map((t) => (
@@ -99,8 +107,10 @@ export default function DeveloperView({ summary, artifacts, events }) {
             <div className="flex items-baseline justify-between">
               <h2 className="card-title">Event detail</h2>
               <button
+                type="button"
                 onClick={() => setSelectedEvent(null)}
-                className="text-xs text-ink-500 hover:text-ink-200"
+                aria-label="Close event detail"
+                className="text-xs text-ink-300 hover:text-ink-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500"
               >
                 close
               </button>
