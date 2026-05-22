@@ -25,7 +25,6 @@ import {
   inspectGithubRepo,
   isGithubRepoUrl,
   isPaperUrl,
-  loadSourceManifest,
   setLlmJsonProvider
 } from "../src/kernel.mjs";
 
@@ -144,14 +143,6 @@ if (!isPaperUrl("https://aclanthology.org/2024.acl-long.123")) {
 }
 if (isPaperUrl("https://example.com/random-blog-post")) {
   throw new Error("isPaperUrl matched a non-paper URL.");
-}
-
-if (typeof loadSourceManifest !== "function") {
-  throw new Error("Kernel did not export loadSourceManifest.");
-}
-const manifest = await loadSourceManifest();
-if (!Array.isArray(manifest) || manifest.length === 0) {
-  throw new Error("Source manifest failed to load or is empty.");
 }
 
 if (typeof buildComparisonMatrix !== "function") {

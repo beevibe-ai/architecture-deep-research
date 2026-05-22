@@ -8,7 +8,6 @@ In the vibe coding era, code generation is cheap; the bottleneck is **whether th
 
 - **Code-aware research.** GitHub URLs are inspected as repositories (README, ARCHITECTURE.md, top-level layout, stars, last push, license, recent failure-mode issues) — not stripped to 1600-char text excerpts.
 - **Paper-aware research.** arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv URLs are digested into structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` — distinguishing "what the abstract claims" from "what the paper actually measured".
-- **Curated source manifest.** A vetted starting library of canonical sources per architecture family seeds the search pool, so vendor blog posts and SEO listicles can't crowd out official docs, mature OSS, and peer-reviewed papers.
 - **Comparison matrix, not just a report.** The primary research artifact is `comparison-matrix.json`: candidates × axes derived from the Strategic Context Matrix, every cell carrying a `strong`/`mixed`/`weak`/`no_evidence` verdict and citation_ids. Empty cells are tracked.
 - **Adversarial per-candidate research.** When the matrix has empty cells, an adversarial planner generates "find the strongest case AGAINST candidate X" tasks. Production incidents, latency stories, ecosystem decline. The matrix is re-built after each adversarial cycle.
 - **Evidence-only promotion gate.** A candidate only reaches the synthesizer when the knowledge map has ≥2 cited evidence items including ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark`. `requires_human_architecture_review` is a first-class output when evidence is weak.
@@ -50,7 +49,7 @@ Raw PRD / product context
 Strategic Context Matrix
         |
         v
-Planning Agent  (curated source manifest seeds the search pool)
+Planning Agent
         |
         v
 Research Orchestrator
@@ -109,7 +108,6 @@ The flagship moves are research-quality moves:
 
 - **Code-aware evidence.** When a research agent surfaces a `github.com/<owner>/<repo>` URL, `inspectGithubRepo` reads it as a repository, not a blog post: README + ARCHITECTURE/docs entries, top-level directory layout, stars, forks, last push, license, topics, and recent closed issues filtered for failure-mode keywords. The evidence item carries the `repo_digest` for downstream auditability. With `GITHUB_TOKEN` set, the rate limit jumps from 60/hr to 5000/hr.
 - **Paper-aware evidence.** When a URL points to arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv, `digestPaper` extracts structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` rather than slicing 1600 chars of HTML. Distinguishes "what the abstract claims" from "what the paper actually measured".
-- **Curated source manifest.** `sources/manifest.json` lists vetted starting URLs (official docs, mature OSS, canonical papers, engineering postmortems) per architecture family. The planner seeds these into the search pool before falling back to web results, so vendor blog posts can't crowd out canonical sources.
 - **Comparison matrix as the primary input to synthesis.** Before the synthesizer picks a topology, `compareTopologiesPhase` builds `comparison-matrix.json`: rows = candidates (from the knowledge map), columns = axes (derived from `query_shapes`, `risk_invariants`, `operational_envelope`, `compliance_constraints`). Each cell carries a verdict (`strong`/`mixed`/`weak`/`no_evidence`) and citation_ids. Empty cells are tracked.
 - **Adversarial per-candidate research.** When the matrix has empty cells or weak coverage, a per-candidate adversarial planner generates "find the strongest case AGAINST X" tasks. Production incidents, latency stories, lineage limitations, ecosystem decline. The matrix is re-built after each adversarial cycle. Bounded by `--max-adversarial-cycles` (default 1).
 - **Per-task inner loop.** Each research agent runs up to `--max-rounds` rounds (default 2) with a completeness judge proposing follow-up queries when evidence is thin.

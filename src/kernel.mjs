@@ -504,61 +504,6 @@ async function buildResearchPlan(context, content) {
   };
 }
 
-let cachedSourceManifest = null;
-
-async function loadSourceManifest() {
-  if (cachedSourceManifest !== null) return cachedSourceManifest;
-  try {
-    const manifestPath = new URL("../sources/manifest.json", import.meta.url);
-    const raw = await readFile(manifestPath, "utf8");
-    const parsed = JSON.parse(raw);
-    cachedSourceManifest = toArray(parsed.entries);
-  } catch {
-    cachedSourceManifest = [];
-  }
-  return cachedSourceManifest;
-}
-
-function scoreManifestEntryForQuery(entry, queryTokens, taskKeywords) {
-  const hayLower = `${entry.url} ${entry.note || ""} ${(entry.families || []).join(" ")} ${entry.type || ""}`.toLowerCase();
-  let score = 0;
-  for (const token of queryTokens) {
-    if (token.length < 4) continue;
-    if (hayLower.includes(token)) score += 1;
-  }
-  for (const keyword of taskKeywords) {
-    const k = String(keyword).toLowerCase();
-    if (k.length < 4) continue;
-    if (hayLower.includes(k)) score += 0.5;
-  }
-  return score;
-}
-
-async function manifestSeedResults({ query, task, keywords }) {
-  const entries = await loadSourceManifest();
-  if (entries.length === 0) return [];
-  const queryTokens = String(query)
-    .toLowerCase()
-    .split(/[^a-z0-9_]+/i)
-    .filter((token) => token.length >= 4);
-  const scored = entries
-    .map((entry) => ({
-      entry,
-      score: scoreManifestEntryForQuery(entry, queryTokens, keywords)
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-  return scored.map(({ entry }) => ({
-    title: entry.note || entry.url,
-    url: entry.url,
-    snippet: entry.note || "",
-    provider: "manifest",
-    manifest_type: entry.type,
-    manifest_families: entry.families || []
-  }));
-}
-
 async function searchWithProvider(query) {
   if (process.env.BRAVE_SEARCH_API_KEY) {
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
@@ -1217,10 +1162,8 @@ async function gatherEvidenceForQuery({
   round,
   maxSources
 }) {
-  const seeds = await manifestSeedResults({ query, task, keywords });
   const liveResults = await searchWithProvider(query);
-  const combinedResults = [...seeds, ...liveResults];
-  for (const result of combinedResults) {
+  for (const result of liveResults) {
     if (!result.url || seenUrls.has(result.url)) continue;
     seenUrls.add(result.url);
 
@@ -3047,7 +2990,6 @@ export {
   inspectGithubRepo,
   isGithubRepoUrl,
   isPaperUrl,
-  loadSourceManifest,
   planResearchPhase,
   prepareRun,
   research,
