@@ -1023,7 +1023,13 @@ async function githubApi(pathSuffix, flags) {
   });
   if (!response.ok) {
     if (response.status === 404) return null;
-    if (response.status === 403 || response.status === 429) return null;
+    if (response.status === 403 || response.status === 429) {
+      const hint = process.env.GITHUB_TOKEN
+        ? "authenticated 5000/hr limit hit; retry later"
+        : "set GITHUB_TOKEN to raise from 60/hr to 5000/hr";
+      console.warn(`[github] ${response.status} ${pathSuffix} — ${hint}`);
+      return null;
+    }
     throw new Error(`GitHub API ${pathSuffix} failed: ${response.status}`);
   }
   return response.json();
@@ -2667,24 +2673,36 @@ async function scanUncitedClaimsPhase({
     });
   } catch (error) {
     raw = {
-      claims: [],
+      claims: [
+        {
+          artifact: "claim_audit",
+          claim_text: `Claim audit LLM call failed: ${String(error?.message || error)}. No claims could be audited; manual review required.`,
+          citation_ids: [],
+          needs_citation: true,
+          severity: "high",
+          reason: "tooling_failure"
+        }
+      ],
       summary: `claim_audit_failed: ${String(error?.message || error)}`
     };
   }
 
   const validCitationIds = new Set(evidenceItems.map((item) => Number(item.citation_id)));
-  const claims = toArray(raw.claims).map((claim) => ({
-    artifact: String(claim.artifact || "unknown"),
-    claim_text: String(claim.claim_text || ""),
-    citation_ids: toArray(claim.citation_ids)
-      .map(Number)
-      .filter((id) => Number.isFinite(id) && validCitationIds.has(id)),
-    needs_citation: Boolean(claim.needs_citation),
-    severity: ["high", "medium", "low"].includes(String(claim.severity))
-      ? String(claim.severity)
-      : "low",
-    reason: String(claim.reason || "")
-  })).filter((claim) => claim.claim_text);
+  const claims = toArray(raw.claims)
+    .filter((claim) => claim && typeof claim === "object" && !Array.isArray(claim))
+    .map((claim) => ({
+      artifact: String(claim.artifact || "unknown"),
+      claim_text: String(claim.claim_text || ""),
+      citation_ids: toArray(claim.citation_ids)
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id)),
+      needs_citation: Boolean(claim.needs_citation),
+      severity: ["high", "medium", "low"].includes(String(claim.severity))
+        ? String(claim.severity)
+        : "low",
+      reason: String(claim.reason || "")
+    }))
+    .filter((claim) => claim.claim_text);
 
   const highSeverityCount = claims.filter(
     (claim) => claim.needs_citation && claim.severity === "high"
@@ -3151,9 +3169,16 @@ async function critiqueDecisionPhase({
     });
   } catch (error) {
     raw = {
-      issues: [],
+      issues: [
+        {
+          severity: "high",
+          category: "tooling_failure",
+          description: `Critique LLM call failed: ${String(error?.message || error)}. Cannot verify spec; manual review required.`,
+          evidence_citations: []
+        }
+      ],
       summary: `critique_failed: ${String(error?.message || error)}`,
-      recommend_human_review: false
+      recommend_human_review: true
     };
   }
 
