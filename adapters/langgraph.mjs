@@ -8,6 +8,7 @@ import {
   interrupt
 } from "@langchain/langgraph";
 import {
+  applyCitationAudit,
   applyCritique,
   compareTopologiesPhase,
   critiqueDecisionPhase,
@@ -228,7 +229,17 @@ async function verifyCitationsNode(state) {
     evidenceItems: state.evidenceItems,
     outDir: state.resolvedOutDir
   });
-  return { citationAudit, status: "citation_audit_completed" };
+  const { spec: finalSpec, downgraded } = applyCitationAudit({
+    spec: state.spec,
+    citationAudit,
+    flags
+  });
+  return {
+    citationAudit,
+    spec: finalSpec,
+    decisionDowngraded: state.decisionDowngraded || downgraded,
+    status: downgraded ? "decision_downgraded_by_citation_audit" : "citation_audit_completed"
+  };
 }
 
 async function writeArtifactsNode(state) {
