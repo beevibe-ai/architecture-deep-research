@@ -99,7 +99,7 @@ No state lives in the UI server other than file descriptors for live event tails
 - **Comparison matrix.** Rows = axes derived from the Strategic Context Matrix; columns = candidates. Each cell colored by verdict (`strong` / `mixed` / `weak` / `no_evidence`) with the LLM's one-line summary and the citation_ids it cited. Adversarial queries (if any) listed below.
 - **Plan card.** Tasks with id, title, objective, search queries.
 - **Evidence panel.** Grouped header showing promoted vs insufficient candidates, then each evidence item with source-type pill, repo or paper digest one-liner when applicable, and top claims tinted by polarity (supports/rejects/neutral).
-- **Quality panel.** Run health at a glance — evidence count, matrix coverage, critique severity, citation audit verdicts.
+- **Quality panel.** Run health at a glance — evidence count, matrix coverage, critique severity, citation audit verdicts, and uncited material-claim gaps.
 
 ## Developer mode breakdown
 

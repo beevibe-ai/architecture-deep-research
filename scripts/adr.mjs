@@ -35,12 +35,17 @@ Required runtime:
   - one live search provider: BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, or SEARXNG_URL
   - one OpenAI-compatible LLM provider: ADR_OPENAI_API_KEY or OPENAI_API_KEY
 
-Example:
-  adr deep-research examples/logistics-contract-mesh/product-context.md \\
-    --domain "global logistics contract analysis" \\
-    --decision "retrieval topology" \\
-    --out .adr-runs/logistics-contract-mesh \\
-    --max-cycles 2`;
+	Example:
+	  adr deep-research examples/logistics-contract-mesh/product-context.md \\
+	    --domain "global logistics contract analysis" \\
+	    --decision "retrieval topology" \\
+	    --out .adr-runs/logistics-contract-mesh \\
+	    --max-cycles 2
+
+	Quality flags:
+	  --no-enforce-critique          do not auto-downgrade high-severity critique
+	  --no-enforce-citation-audit   do not auto-downgrade unsupported selected citations
+	  --skip-claim-audit            do not scan generated artifacts for uncited material claims`;
 }
 
 async function main() {

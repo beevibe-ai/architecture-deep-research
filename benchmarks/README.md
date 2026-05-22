@@ -41,6 +41,14 @@ npm run benchmark:live:fast
 
 The benchmark fails fast if credentials are missing. This is intentional: a fake offline run would not test Architecture Deep Research.
 
+Frozen local regression pass:
+
+```bash
+npm run benchmark:replay
+```
+
+This is not a production research run. It replays synthetic kernel failure modes so CI can verify evidence promotion, hard-gated synthesis, citation-audit downgrade, and schema-valid artifact writing without network access.
+
 ## Case Format
 
 Each case directory contains:

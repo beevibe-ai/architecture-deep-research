@@ -13,6 +13,7 @@ export default function OperatorView({ summary, artifacts }) {
   const evidence = artifacts["evidence.json"];
   const critique = artifacts["critique.json"];
   const audit = artifacts["citation-audit.json"];
+  const claimAudit = artifacts["claim-audit.json"];
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -27,7 +28,13 @@ export default function OperatorView({ summary, artifacts }) {
         )}
       </div>
       <div className="space-y-5">
-        <QualityPanel summary={summary} critique={critique} audit={audit} matrix={matrix} />
+        <QualityPanel
+          summary={summary}
+          critique={critique}
+          audit={audit}
+          claimAudit={claimAudit}
+          matrix={matrix}
+        />
         {context && <ContextCard context={context} />}
       </div>
     </div>

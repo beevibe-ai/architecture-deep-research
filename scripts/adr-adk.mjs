@@ -35,10 +35,15 @@ Required env:
   GEMINI_API_KEY or GOOGLE_GENAI_API_KEY (or GOOGLE_API_KEY)
   one live search provider: BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, or SEARXNG_URL
 
-Optional env:
-  ADR_ADK_MODEL (default: gemini-2.5-flash)
+	Optional env:
+	  ADR_ADK_MODEL (default: gemini-2.5-flash)
 
-Example:
+	Quality flags:
+	  --no-enforce-critique          do not auto-downgrade high-severity critique
+	  --no-enforce-citation-audit   do not auto-downgrade unsupported selected citations
+	  --skip-claim-audit            do not scan generated artifacts for uncited material claims
+
+	Example:
   npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \\
     --domain "global logistics contract analysis" \\
     --decision "retrieval topology" \\

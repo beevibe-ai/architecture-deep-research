@@ -29,7 +29,7 @@ START
   -> synthesize_decision          (architecture spec)
   -> critique_decision            (find uncited claims, contradictions, weak evidence)
   -> verify_citations             (post-hoc per-citation verification)
-  -> write_artifacts              (ADR.md, spec, eval pack, guardrails, handoff, ...)
+  -> write_artifacts              (ADR.md, spec, eval pack, claim audit, guardrails, handoff, ...)
   -> END
 ```
 
@@ -245,6 +245,7 @@ This test verifies adapter shape only. It does not run fake research without liv
 - the LangChain JSON provider factory loads and returns a callable;
 - the Google ADK tool-wrapper adapter can construct an agent with the ADR function tool;
 - the Google ADK Gemini-as-provider adapter exports `createAdkJsonProvider`, `createAdkDeepResearchAgent`, and `createAdkDeepResearchTool`, and the kernel's `setLlmJsonProvider` / `getLlmJsonProvider` / `activeLlmProvider` hooks correctly install and report a custom provider label;
+- the frozen kernel replay checks verify promotion normalization, hard-gated synthesis, citation-audit downgrade, and schema-valid artifact emission;
 - framework packages load without coupling the kernel to one orchestrator.
 
 ## Dependency Notes

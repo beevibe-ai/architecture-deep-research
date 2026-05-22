@@ -25,6 +25,11 @@
       "excerpt": { "type": "string" },
       "provider": { "type": "string" },
       "source_type": { "type": "string" },
+      "retrieved_at": { "type": "string" },
+      "fetch_status": { "type": "string" },
+      "content_hash": { "type": "string" },
+      "raw_text_path": { "type": ["string", "null"] },
+      "raw_text_bytes": { "type": "integer", "minimum": 0 },
       "source_quality": { "type": "number", "minimum": 0, "maximum": 1 },
       "keyword_hits": {
         "type": "array",

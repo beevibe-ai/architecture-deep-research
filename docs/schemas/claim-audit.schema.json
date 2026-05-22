@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/claim-audit.schema.json",
+  "title": "Beevibe Architecture Deep Research Claim Audit",
+  "type": "object",
+  "required": [
+    "version",
+    "selected_topology",
+    "total_claims_checked",
+    "uncited_material_claim_count",
+    "high_severity_count",
+    "claims",
+    "summary"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "selected_topology": { "type": ["string", "null"] },
+    "total_claims_checked": { "type": "integer", "minimum": 0 },
+    "uncited_material_claim_count": { "type": "integer", "minimum": 0 },
+    "high_severity_count": { "type": "integer", "minimum": 0 },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "artifact",
+          "claim_text",
+          "citation_ids",
+          "needs_citation",
+          "severity",
+          "reason"
+        ],
+        "properties": {
+          "artifact": { "type": "string" },
+          "claim_text": { "type": "string" },
+          "citation_ids": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 }
+          },
+          "needs_citation": { "type": "boolean" },
+          "severity": { "enum": ["high", "medium", "low"] },
+          "reason": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "summary": { "type": "string" }
+  },
+  "additionalProperties": true
+}

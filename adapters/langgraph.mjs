@@ -242,7 +242,8 @@ async function writeArtifactsNode(state) {
     outDir: state.resolvedOutDir,
     critique: state.critique || null,
     citationAudit: state.citationAudit || null,
-    comparisonMatrix: state.comparisonMatrix || null
+    comparisonMatrix: state.comparisonMatrix || null,
+    flags: buildFlags(state)
   });
   return {
     status: "completed",

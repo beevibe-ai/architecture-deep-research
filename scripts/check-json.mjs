@@ -7,6 +7,7 @@ const ignoredDirs = new Set([".adr-runs", ".smoke-runs", ".git", "node_modules",
 
 const schemaByFilename = {
   "architecture.spec.json": "docs/schemas/architecture-spec.schema.json",
+  "claim-audit.json": "docs/schemas/claim-audit.schema.json",
   "citation-audit.json": "docs/schemas/citation-audit.schema.json",
   "clarification.json": "docs/schemas/clarification.schema.json",
   "comparison-matrix.json": "docs/schemas/comparison-matrix.schema.json",

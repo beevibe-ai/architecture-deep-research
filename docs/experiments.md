@@ -34,7 +34,15 @@ Package tests are separate:
 npm test
 ```
 
-`npm test` validates schemas and adapter wiring. It does not pretend to perform deep research without credentials.
+`npm test` runs the frozen kernel replay checks, validates schemas, and verifies adapter/UI wiring. It does not pretend to perform production deep research without credentials.
+
+Frozen local regression pass:
+
+```bash
+npm run benchmark:replay
+```
+
+This checks evidence-gate behavior, schema-valid artifact writing, citation-audit downgrade behavior, and LLM enum/value normalization without network access.
 
 ## Output
 

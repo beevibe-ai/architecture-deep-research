@@ -1,4 +1,4 @@
-export default function QualityPanel({ summary, critique, audit, matrix }) {
+export default function QualityPanel({ summary, critique, audit, claimAudit, matrix }) {
   const cells = matrix?.cells || [];
   const emptyCount = matrix?.empty_cells?.length || 0;
   const strongCount = cells.filter((c) => c.verdict === "strong").length;
@@ -41,6 +41,21 @@ export default function QualityPanel({ summary, critique, audit, matrix }) {
               label="Citations unsupported"
               value={audit.unsupported_count}
               tone={audit.unsupported_count > 0 ? "danger" : "success"}
+            />
+          </>
+        )}
+        {claimAudit && (
+          <>
+            <Row label="Claims checked" value={claimAudit.total_claims_checked || 0} />
+            <Row
+              label="Uncited material claims"
+              value={claimAudit.uncited_material_claim_count || 0}
+              tone={claimAudit.uncited_material_claim_count > 0 ? "warn" : "success"}
+            />
+            <Row
+              label="High-severity claim gaps"
+              value={claimAudit.high_severity_count || 0}
+              tone={claimAudit.high_severity_count > 0 ? "danger" : "success"}
             />
           </>
         )}

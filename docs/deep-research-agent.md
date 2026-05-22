@@ -7,7 +7,7 @@ Architecture Deep Research is a live agentic research loop for strategic system 
 In the vibe coding era, code generation is cheap; the bottleneck is **whether the right architecture was chosen at all**. General deep-research agents (OpenAI, Anthropic, Gemini, Perplexity, LangChain `open_deep_research`) average over consensus blog posts and produce a long-form report. ADR refuses to do that. Our flagship is producing the **fair, OSS- and paper-grounded architecture comparison that no human writes and no general deep-research agent does**:
 
 - **Code-aware research.** GitHub URLs are inspected as repositories (README, ARCHITECTURE.md, top-level layout, stars, last push, license, recent failure-mode issues) — not stripped to 1600-char text excerpts.
-- **Paper-aware research.** arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv URLs are digested into structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` — distinguishing "what the abstract claims" from "what the paper actually measured".
+- **Paper-aware research.** arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv URLs are digested into structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` — using full HTML/PDF text when available, and marking abstract-only digests so measured results cannot be overclaimed.
 - **Comparison matrix, not just a report.** The primary research artifact is `comparison-matrix.json`: candidates × axes derived from the Strategic Context Matrix, every cell carrying a `strong`/`mixed`/`weak`/`no_evidence` verdict and citation_ids. Empty cells are tracked.
 - **Adversarial per-candidate research.** When the matrix has empty cells, an adversarial planner generates "find the strongest case AGAINST candidate X" tasks. Production incidents, latency stories, ecosystem decline. The matrix is re-built after each adversarial cycle.
 - **Evidence-only promotion gate.** A candidate only reaches the synthesizer when the knowledge map has ≥2 cited evidence items including ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark`. `requires_human_architecture_review` is a first-class output when evidence is weak.
@@ -112,7 +112,7 @@ The flagship moves are research-quality moves:
 - **Adversarial per-candidate research.** When the matrix has empty cells or weak coverage, a per-candidate adversarial planner generates "find the strongest case AGAINST X" tasks. Production incidents, latency stories, lineage limitations, ecosystem decline. The matrix is re-built after each adversarial cycle. Bounded by `--max-adversarial-cycles` (default 1).
 - **Per-task inner loop.** Each research agent runs up to `--max-rounds` rounds (default 2) with a completeness judge proposing follow-up queries when evidence is thin.
 - **Adaptive outer cycle.** If the knowledge map has no `promoted_candidates`, an adaptive gap-filling planner generates 2–4 new tasks. Bounded by `--max-adaptive-cycles` (default 1).
-- **Critique pass + citation verifier.** Critique agent flags uncited claims, contradictions, weak evidence, and unbacked selections. Citation verifier walks every `evidence_citations` reference and emits a per-citation supported/unsupported verdict.
+- **Critique pass + citation / claim verifiers.** Critique flags uncited claims, contradictions, weak evidence, and unbacked selections. Citation verifier walks every `evidence_citations` reference and unsupported selected-topology citations downgrade to human review by default. Claim audit scans generated ADR/report/eval artifacts for uncited material claims.
 
 These keep the orchestrator/researcher topology shallow (no nested sub-agents) while turning the loop into one that actually distinguishes good architectures from merely popular ones.
 
@@ -172,14 +172,17 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
 - `--max-adversarial-cycles <n>` (default 1): max adversarial per-candidate cycles when the comparison matrix has empty cells.
 - `--skip-comparison-matrix`: skip the comparison-matrix phase (and the adversarial per-candidate research that depends on it).
 - `--skip-critique`: do not run the critique agent.
-- `--enforce-critique`: when set, high-severity critique with `recommend_human_review` auto-downgrades the selected topology to `requires_human_architecture_review` (original choice preserved in `state.json`).
+- `--no-enforce-critique`: opt out of the default downgrade when high-severity critique recommends human review.
 - `--skip-citation-audit`: do not run the post-hoc citation verifier.
+- `--no-enforce-citation-audit`: opt out of the default downgrade when selected-topology citations are unsupported.
+- `--skip-claim-audit`: do not scan generated ADR/report/eval artifacts for uncited material claims.
 - `--plan-approval` (LangGraph runtime only): pause after planning so the operator can edit `research-plan.json` and resume programmatically.
 - `--strict-clarification`: stop before research if the PRD is too thin.
 
 ### Optional env
 
 - `GITHUB_TOKEN`: lifts the unauthenticated 60/hr GitHub API ceiling to 5000/hr. Required in practice for any run that surfaces multiple GitHub URLs.
+- `ADR_MCP_SERVER_URL`: optional read-only remote MCP corpus searched through OpenAI hosted MCP. Use `ADR_SEARCH_PROVIDER=mcp` or `ADR_PRIVATE_MCP_ONLY=1` to force private-corpus search.
 
 Outputs:
 
@@ -197,6 +200,7 @@ comparison-matrix.json
 intermediate-reports.md
 critique.json
 citation-audit.json
+claim-audit.json
 research-report.md
 ADR.md
 architecture.spec.json
@@ -204,6 +208,8 @@ domain-evaluation-pack.json
 agent-guardrails.md
 execution-handoff.json
 sources.md
+cost.json
+source-snapshots/
 ```
 
 ## Superseding Decisions
@@ -222,7 +228,7 @@ npm run adr -- supersede .adr-runs/logistics-contract-mesh \
 ## Production Rules
 
 - Research must use live search and source opening.
-- Each evidence item keeps URL, source type, quality score, keyword hits, and extracted claims.
+- Each evidence item keeps URL, source type, quality score, keyword hits, extracted claims, retrieval timestamp, content hash, fetch status, and a raw-text snapshot path when available.
 - Candidate architecture families are promoted only from cited claims.
 - ADR stops at Execution Handoff.
 - Implementation agents consume the handoff; they do not reinterpret the architecture without a superseding ADR.

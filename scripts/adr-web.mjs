@@ -68,6 +68,7 @@ const KNOWN_ARTIFACTS = [
   "intermediate-reports.md",
   "critique.json",
   "citation-audit.json",
+  "claim-audit.json",
   "ADR.md",
   "architecture.spec.json",
   "domain-evaluation-pack.json",

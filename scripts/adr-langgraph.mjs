@@ -46,8 +46,11 @@ Tuning flags (forwarded to the kernel):
   --max-cycles <n>          bound on planned task count (default 2)
   --max-adaptive-cycles <n> gap-filling cycles after empty knowledge map (default 1)
   --skip-critique           do not run the critique agent
-  --enforce-critique        auto-downgrade high-severity critique to requires_human_architecture_review
+  --no-enforce-critique     do not auto-downgrade high-severity critique to human review
   --skip-citation-audit     do not run the post-hoc citation verifier
+  --no-enforce-citation-audit
+                            do not auto-downgrade unsupported selected citations
+  --skip-claim-audit        do not scan generated artifacts for uncited material claims
   --plan-approval           pause after planning so the operator can edit research-plan.json
                             (programmatic resume via resumeLangGraphDeepResearch)
   --strict-clarification    stop before research if the PRD is too thin

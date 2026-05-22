@@ -15,6 +15,7 @@ const ARTIFACT_ORDER = [
   "domain-evaluation-pack.json",
   "critique.json",
   "citation-audit.json",
+  "claim-audit.json",
   "execution-handoff.json"
 ];
 

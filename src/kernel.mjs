@@ -1,9 +1,16 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { appendFile, mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import Ajv2020 from "ajv/dist/2020.js";
 
 const VERSION = "0.2.0";
 const MAX_PARALLEL_RESEARCH_AGENTS = 3;
+const execFileAsync = promisify(execFile);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const ENTITY_HINTS = [
   "Vendor",
@@ -136,6 +143,61 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function finiteNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function clampNumber(value, { min = 0, max = 1, fallback = 0 } = {}) {
+  const numeric = finiteNumber(value, fallback);
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function normalizePolarity(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  const normalized = slugify(raw);
+  if (
+    ["supports", "support", "supported", "positive", "positive_with_caution", "fit"].includes(
+      normalized
+    ) ||
+    /\b(support|supports|supported|positive|benefit|fit|pro)\b/i.test(raw)
+  ) {
+    return "supports";
+  }
+  if (
+    ["rejects", "reject", "rejected", "negative", "contraindicated"].includes(normalized) ||
+    /\b(reject|rejects|rejected|negative|risk|limitation|against|con|unsafe)\b/i.test(raw)
+  ) {
+    return "rejects";
+  }
+  return "neutral";
+}
+
+function normalizeDecisionStatus(value) {
+  const normalized = slugify(value);
+  if (["approved", "superseded", "rejected"].includes(normalized)) return normalized;
+  return "proposed";
+}
+
+function normalizeCandidateDecision(value, { candidateName, selectedTopology } = {}) {
+  const candidateSlug = slugify(candidateName);
+  const selectedSlug = slugify(selectedTopology);
+  if (selectedSlug && selectedSlug !== "requires_human_architecture_review" && candidateSlug === selectedSlug) {
+    return "selected";
+  }
+
+  const raw = String(value || "").toLowerCase();
+  const normalized = slugify(raw);
+  if (["selected", "rejected", "deferred"].includes(normalized)) return normalized;
+  if (/\b(reject|rejected|unsafe|forbidden|not selected|not primary|avoid)\b/i.test(raw)) {
+    return "rejected";
+  }
+  if (/\b(defer|deferred|consider|secondary|complementary|needs|requires validation)\b/i.test(raw)) {
+    return "deferred";
+  }
+  return "deferred";
 }
 
 function unique(values) {
@@ -346,6 +408,12 @@ function activeSearchProviders() {
   if (process.env.SERPER_API_KEY) providers.push("serper");
   if (process.env.TAVILY_API_KEY) providers.push("tavily");
   if (process.env.SEARXNG_URL) providers.push("searxng");
+  if (
+    process.env.ADR_MCP_SERVER_URL &&
+    (process.env.OPENAI_API_KEY || process.env.ADR_OPENAI_API_KEY)
+  ) {
+    providers.push("openai-remote-mcp");
+  }
   if (process.env.OPENAI_API_KEY || process.env.ADR_OPENAI_API_KEY) {
     providers.push("openai-web-search");
   }
@@ -392,7 +460,7 @@ function assertAgenticRuntime(flags = {}) {
   const searchProviders = activeSearchProviders();
   if (searchProviders.length === 0) {
     throw new Error(
-      "No live search provider configured. Set BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, or SEARXNG_URL before running Architecture Deep Research."
+      "No live search provider configured. Set BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, SEARXNG_URL, ADR_MCP_SERVER_URL with OPENAI_API_KEY/ADR_OPENAI_API_KEY, or OPENAI_API_KEY/ADR_OPENAI_API_KEY for OpenAI web_search before running Architecture Deep Research."
     );
   }
 
@@ -411,6 +479,135 @@ async function appendEvent(outDir, type, payload = {}) {
     path.join(outDir, "events.jsonl"),
     `${JSON.stringify({ ts: nowIso(), type, ...payload })}\n`
   );
+}
+
+const schemaByFilename = {
+  "architecture.spec.json": "../docs/schemas/architecture-spec.schema.json",
+  "claim-audit.json": "../docs/schemas/claim-audit.schema.json",
+  "citation-audit.json": "../docs/schemas/citation-audit.schema.json",
+  "clarification.json": "../docs/schemas/clarification.schema.json",
+  "comparison-matrix.json": "../docs/schemas/comparison-matrix.schema.json",
+  "critique.json": "../docs/schemas/critique.schema.json",
+  "domain-evaluation-pack.json": "../docs/schemas/domain-evaluation-pack.schema.json",
+  "evidence.json": "../docs/schemas/evidence.schema.json",
+  "execution-handoff.json": "../docs/schemas/execution-handoff.schema.json",
+  "knowledge-map.json": "../docs/schemas/knowledge-map.schema.json",
+  "research-plan.json": "../docs/schemas/research-plan.schema.json",
+  "strategic-context.json": "../docs/schemas/strategic-context.schema.json",
+  "supersedes.json": "../docs/schemas/supersedes.schema.json"
+};
+
+let schemaValidatorState = null;
+
+async function getSchemaValidators() {
+  if (schemaValidatorState) return schemaValidatorState;
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const validators = new Map();
+  for (const [filename, relativePath] of Object.entries(schemaByFilename)) {
+    const schemaPath = path.resolve(__dirname, relativePath);
+    const schema = JSON.parse(await readFile(schemaPath, "utf8"));
+    validators.set(filename, ajv.compile(schema));
+  }
+  schemaValidatorState = { ajv, validators };
+  return schemaValidatorState;
+}
+
+async function assertSchemaValid(filename, value) {
+  const { validators } = await getSchemaValidators();
+  const validator = validators.get(filename);
+  if (!validator) return;
+  if (validator(value)) return;
+  const errors = (validator.errors || [])
+    .map((error) => `${error.instancePath || "/"} ${error.message}`)
+    .slice(0, 20)
+    .join("; ");
+  throw new Error(`schema invalid for ${filename}: ${errors}`);
+}
+
+// Per-million-token prices in USD. Approximate; update as providers change pricing.
+// Models not in this table get usd estimates of null.
+const LLM_PRICE_TABLE = {
+  "gpt-4.1": { input: 2, output: 8, cached_input: 0.5 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cached_input: 0.1 },
+  "gpt-4.1-nano": { input: 0.1, output: 0.4, cached_input: 0.025 },
+  "gpt-4o": { input: 2.5, output: 10, cached_input: 1.25 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6, cached_input: 0.075 },
+  "gpt-5": { input: 1.25, output: 10, cached_input: 0.125 },
+  "gpt-5-mini": { input: 0.25, output: 2, cached_input: 0.025 }
+};
+
+let llmCostState = { byPhase: new Map() };
+
+function resetLlmCost() {
+  llmCostState = { byPhase: new Map() };
+}
+
+function recordLlmCost({ label, model, usage }) {
+  if (!usage) return;
+  const key = `${label}::${model}`;
+  const existing =
+    llmCostState.byPhase.get(key) ||
+    { label, model, calls: 0, input_tokens: 0, output_tokens: 0, cached_input_tokens: 0 };
+  existing.calls += 1;
+  existing.input_tokens += Number(usage.prompt_tokens || usage.input_tokens || 0);
+  existing.output_tokens += Number(usage.completion_tokens || usage.output_tokens || 0);
+  const cached =
+    usage.prompt_tokens_details?.cached_tokens ||
+    usage.cached_tokens ||
+    0;
+  existing.cached_input_tokens += Number(cached);
+  llmCostState.byPhase.set(key, existing);
+}
+
+function estimatePhaseUsd({ model, input_tokens, output_tokens, cached_input_tokens }) {
+  const baseModel = String(model || "").replace(/-\d{4}-\d{2}-\d{2}$/, "");
+  const price = LLM_PRICE_TABLE[baseModel] || LLM_PRICE_TABLE[model];
+  if (!price) return null;
+  const nonCachedInput = Math.max(0, input_tokens - cached_input_tokens);
+  const usd =
+    (nonCachedInput / 1e6) * price.input +
+    (cached_input_tokens / 1e6) * (price.cached_input ?? price.input) +
+    (output_tokens / 1e6) * price.output;
+  return Number(usd.toFixed(6));
+}
+
+function summarizeLlmCost() {
+  const phases = [...llmCostState.byPhase.values()].map((p) => ({
+    ...p,
+    estimated_usd: estimatePhaseUsd(p)
+  }));
+  const totals = phases.reduce(
+    (acc, p) => {
+      acc.calls += p.calls;
+      acc.input_tokens += p.input_tokens;
+      acc.output_tokens += p.output_tokens;
+      acc.cached_input_tokens += p.cached_input_tokens;
+      if (p.estimated_usd !== null) acc.estimated_usd += p.estimated_usd;
+      else acc.has_unpriced_models = true;
+      return acc;
+    },
+    {
+      calls: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_input_tokens: 0,
+      estimated_usd: 0,
+      has_unpriced_models: false
+    }
+  );
+  return {
+    version: VERSION,
+    note: "Estimates use the LLM_PRICE_TABLE in kernel.mjs. Providers change prices; treat these as ballpark.",
+    totals: {
+      calls: totals.calls,
+      input_tokens: totals.input_tokens,
+      output_tokens: totals.output_tokens,
+      cached_input_tokens: totals.cached_input_tokens,
+      estimated_usd: Number(totals.estimated_usd.toFixed(6)),
+      has_unpriced_models: totals.has_unpriced_models
+    },
+    by_phase: phases.sort((a, b) => (b.estimated_usd || 0) - (a.estimated_usd || 0))
+  };
 }
 
 async function callLlmJson({ system, user, label = "llm_json" }) {
@@ -456,6 +653,7 @@ async function callLlmJson({ system, user, label = "llm_json" }) {
   }
 
   const payload = await response.json();
+  recordLlmCost({ label, model, usage: payload.usage });
   const content = payload.choices?.[0]?.message?.content || "";
   try {
     return JSON.parse(content);
@@ -504,7 +702,97 @@ async function buildResearchPlan(context, content) {
   };
 }
 
+function shouldPreferMcpSearch() {
+  return (
+    process.env.ADR_SEARCH_PROVIDER === "mcp" ||
+    process.env.ADR_PRIVATE_MCP_ONLY === "1"
+  );
+}
+
+async function searchWithOpenAiMcp(query) {
+  const openaiKey = process.env.ADR_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  const serverUrl = process.env.ADR_MCP_SERVER_URL;
+  if (!openaiKey || !serverUrl) return null;
+
+  const baseUrl =
+    process.env.ADR_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  const model = process.env.ADR_SEARCH_MODEL || process.env.ADR_MODEL || "gpt-4.1-mini";
+  const serverLabel = process.env.ADR_MCP_SERVER_LABEL || "adr_private_corpus";
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/responses`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${openaiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      input: `Search the private architecture corpus for evidence relevant to: ${query}`,
+      tools: [
+        {
+          type: "mcp",
+          server_label: serverLabel,
+          server_url: serverUrl,
+          require_approval: "never"
+        }
+      ],
+      tool_choice: "required"
+    }),
+    signal: AbortSignal.timeout(45_000)
+  });
+  if (!response.ok) {
+    throw new Error(
+      `OpenAI remote MCP search failed: ${response.status} ${await response.text().catch(() => "")}`
+    );
+  }
+
+  const body = await response.json();
+  const seen = new Set();
+  const results = [];
+  let fallbackText = "";
+  for (const out of body.output || []) {
+    if (out.type !== "message") continue;
+    for (const block of out.content || []) {
+      const text = block.text || "";
+      fallbackText += `${text}\n`;
+      for (const ann of block.annotations || []) {
+        if (ann.type !== "url_citation" || !ann.url) continue;
+        const canonical = ann.url;
+        if (seen.has(canonical)) continue;
+        seen.add(canonical);
+        const start = Number.isInteger(ann.start_index) ? ann.start_index : 0;
+        const end = Number.isInteger(ann.end_index) ? ann.end_index : text.length;
+        results.push({
+          title: ann.title || canonical,
+          url: canonical,
+          snippet: text.slice(start, end).trim(),
+          provider: "openai-remote-mcp"
+        });
+        if (results.length >= 8) break;
+      }
+      if (results.length >= 8) break;
+    }
+    if (results.length >= 8) break;
+  }
+  if (results.length > 0) return results;
+  const snippet = normalizeWhitespace(fallbackText).slice(0, 1600);
+  return snippet
+    ? [
+        {
+          title: `Private corpus result for ${query}`,
+          url: `mcp://${serverLabel}/${contentHash(query).slice(0, 12)}`,
+          snippet,
+          provider: "openai-remote-mcp"
+        }
+      ]
+    : [];
+}
+
 async function searchWithProvider(query) {
+  if (shouldPreferMcpSearch()) {
+    const mcpResults = await searchWithOpenAiMcp(query);
+    if (mcpResults) return mcpResults;
+  }
+
   if (process.env.BRAVE_SEARCH_API_KEY) {
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
     url.searchParams.set("q", query);
@@ -579,6 +867,9 @@ async function searchWithProvider(query) {
       provider: "searxng"
     }));
   }
+
+  const mcpResults = await searchWithOpenAiMcp(query);
+  if (mcpResults) return mcpResults;
 
   const openaiKey = process.env.ADR_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
   if (openaiKey) {
@@ -738,9 +1029,17 @@ async function githubApi(pathSuffix, flags) {
   return response.json();
 }
 
+function encodeGithubContentPath(filePath) {
+  return String(filePath || "")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
 async function fetchGithubFile({ owner, repo, filename, flags }) {
+  if (!filename) return null;
   const data = await githubApi(
-    `/repos/${owner}/${repo}/contents/${encodeURIComponent(filename)}`,
+    `/repos/${owner}/${repo}/contents/${encodeGithubContentPath(filename)}`,
     flags
   ).catch(() => null);
   if (!data || !data.content) return null;
@@ -749,6 +1048,14 @@ async function fetchGithubFile({ owner, repo, filename, flags }) {
   } catch {
     return null;
   }
+}
+
+async function listGithubDirectory({ owner, repo, dir, flags }) {
+  const data = await githubApi(
+    `/repos/${owner}/${repo}/contents/${encodeGithubContentPath(dir)}`,
+    flags
+  ).catch(() => null);
+  return Array.isArray(data) ? data : [];
 }
 
 async function inspectGithubRepo(url, flags) {
@@ -781,13 +1088,38 @@ async function inspectGithubRepo(url, flags) {
       /^design(\.|$)/i.test(entry.name) ||
       /^docs$/i.test(entry.name)
   )?.name;
+  const docsDir = topLevel.find((entry) => /^docs$/i.test(entry.name) && entry.type === "dir");
+  const docsEntries = docsDir
+    ? (await listGithubDirectory({ owner, repo, dir: docsDir.name, flags })).slice(0, 80)
+    : [];
+  const architectureDocPaths = unique([
+    archFile && !/^docs$/i.test(archFile) ? archFile : null,
+    ...docsEntries
+      .filter((entry) => entry.type === "file")
+      .filter((entry) =>
+        /(?:architecture|architectural|design|adr|decision|retrieval|rag|graph|index|system|overview).*\.md$/i.test(
+          entry.name
+        )
+      )
+      .map((entry) => `${docsDir?.name || "docs"}/${entry.name}`)
+  ]).slice(0, 5);
 
-  const [readme, architecture] = await Promise.all([
+  const [readme, architectureDocs] = await Promise.all([
     fetchGithubFile({ owner, repo, filename: readmeFile, flags }),
-    archFile && !/^docs$/i.test(archFile)
-      ? fetchGithubFile({ owner, repo, filename: archFile, flags })
-      : Promise.resolve(null)
+    Promise.all(
+      architectureDocPaths.map(async (filename) => ({
+        filename,
+        content: await fetchGithubFile({ owner, repo, filename, flags })
+      }))
+    )
   ]);
+  const architectureSources = architectureDocs
+    .filter((entry) => entry.content)
+    .map((entry) => entry.filename);
+  const architecture = architectureDocs
+    .filter((entry) => entry.content)
+    .map((entry) => `== ${entry.filename} ==\n${entry.content}`)
+    .join("\n\n");
 
   const failureModeIssues =
     issuesRaw.status === "fulfilled" && Array.isArray(issuesRaw.value)
@@ -825,6 +1157,7 @@ async function inspectGithubRepo(url, flags) {
     license: meta.license?.spdx_id || null,
     topics: toArray(meta.topics).slice(0, 12),
     top_level_files: topLevel,
+    architecture_sources: architectureSources,
     readme_excerpt: readme
       ? normalizeWhitespace(readme).slice(0, 4000)
       : null,
@@ -843,7 +1176,7 @@ function isPaperUrl(url) {
 
 function arxivIdFromUrl(url) {
   const match = url.match(/arxiv\.org\/(?:abs|pdf)\/([\w.\-]+)(?:v\d+)?/i);
-  return match ? match[1].replace(/\.pdf$/, "") : null;
+  return match ? match[1].replace(/\.pdf$/, "").replace(/v\d+$/i, "") : null;
 }
 
 async function fetchArxivAbstract(url, flags) {
@@ -886,29 +1219,101 @@ async function fetchPaperPageText(url, flags) {
   return text ? text.slice(0, 12_000) : "";
 }
 
+function arxivHtmlUrl(id) {
+  return id ? `https://ar5iv.labs.arxiv.org/html/${encodeURIComponent(id)}` : null;
+}
+
+function paperPdfUrl(url) {
+  const arxivId = arxivIdFromUrl(url);
+  if (arxivId) return `https://arxiv.org/pdf/${encodeURIComponent(arxivId)}`;
+  if (/\.pdf(?:$|[?#])/i.test(url)) return url;
+  return null;
+}
+
+async function fetchPdfText(url, flags) {
+  const pdfUrl = paperPdfUrl(url);
+  if (!pdfUrl) return "";
+  let tempPath = null;
+  try {
+    const response = await fetch(pdfUrl, {
+      headers: {
+        "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)"
+      },
+      signal: AbortSignal.timeout(Number(flags["fetch-timeout-ms"] || 20_000))
+    });
+    if (!response.ok) return "";
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length === 0) return "";
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "adr-paper-"));
+    tempPath = path.join(tempDir, "paper.pdf");
+    await writeFile(tempPath, bytes);
+    const { stdout } = await execFileAsync("pdftotext", ["-layout", tempPath, "-"], {
+      timeout: Number(flags["pdf-timeout-ms"] || 20_000),
+      maxBuffer: 8 * 1024 * 1024
+    });
+    return normalizeWhitespace(stdout).slice(0, 40_000);
+  } catch {
+    return "";
+  } finally {
+    if (tempPath) await unlink(tempPath).catch(() => {});
+  }
+}
+
+function filterMeasuredResultsForScope(results, sourceText, digestScope) {
+  const normalizedSource = normalizeWhitespace(sourceText).toLowerCase();
+  return toArray(results)
+    .map(String)
+    .filter((result) => {
+      if (digestScope !== "abstract_only") return true;
+      const numbers = result.match(/\d+(?:\.\d+)?%?/g) || [];
+      if (numbers.length === 0) return false;
+      return numbers.some((number) => normalizedSource.includes(number.toLowerCase()));
+    })
+    .slice(0, 8);
+}
+
 async function digestPaper(url, { context, task, flags }) {
   let arxivMeta = null;
   let pageText = "";
+  let digestScope = "page_text";
 
   if (/arxiv\.org/i.test(url)) {
     arxivMeta = await fetchArxivAbstract(url, flags);
+    const htmlUrl = arxivHtmlUrl(arxivMeta?.id);
+    if (htmlUrl) {
+      pageText = await openUrl(htmlUrl, flags).catch(() => "");
+      if (pageText) digestScope = "full_text_html";
+    }
+    if (!pageText) {
+      pageText = await fetchPdfText(url, flags);
+      if (pageText) digestScope = "full_text_pdf";
+    }
   }
   if (!arxivMeta) {
     pageText = await fetchPaperPageText(url, flags);
+    if (pageText) digestScope = "page_text";
+    if (!pageText) {
+      pageText = await fetchPdfText(url, flags);
+      if (pageText) digestScope = "full_text_pdf";
+    }
     if (!pageText) return null;
   }
+  if (arxivMeta && !pageText) digestScope = "abstract_only";
 
+  const sourceTextForDigest = pageText || arxivMeta?.abstract || "";
   const sourcePayload = arxivMeta
     ? {
         kind: "arxiv",
+        digest_scope: digestScope,
         id: arxivMeta.id,
         title: arxivMeta.title,
         abstract: arxivMeta.abstract,
+        text: pageText ? pageText.slice(0, 24_000) : "",
         authors: arxivMeta.authors,
         published: arxivMeta.published,
         primary_category: arxivMeta.primary_category
       }
-    : { kind: "web_paper", url, text: pageText };
+    : { kind: "web_paper", digest_scope: digestScope, url, text: pageText.slice(0, 24_000) };
 
   let digest;
   try {
@@ -918,6 +1323,7 @@ async function digestPaper(url, { context, task, flags }) {
         "You extract a structured digest of a research paper from the supplied abstract or page text.",
         "Be conservative: only fill fields the source supports. Empty arrays / empty strings when missing.",
         "Distinguish 'headline_results' (what the abstract claims) from 'measured_results' (specific numbers actually reported).",
+        "If digest_scope is 'abstract_only', measured_results may include only explicit measurements present in the abstract.",
         "conflicts_of_interest: list industry affiliations or funding that bias the claims, plus 'none_apparent' if none seen.",
         "Output JSON with {title,problem,methodology,datasets,baselines,headline_results,measured_results,ablations,limitations,conflicts_of_interest,relevant_to_decision}."
       ].join("\n"),
@@ -935,6 +1341,7 @@ async function digestPaper(url, { context, task, flags }) {
   return {
     url,
     venue: arxivMeta ? "arxiv" : "web_paper",
+    digest_scope: digestScope,
     title: String(digest.title || arxivMeta?.title || "").trim(),
     authors: toArray(arxivMeta?.authors).slice(0, 12),
     published: arxivMeta?.published || null,
@@ -944,7 +1351,11 @@ async function digestPaper(url, { context, task, flags }) {
     datasets: toArray(digest.datasets).map(String).slice(0, 12),
     baselines: toArray(digest.baselines).map(String).slice(0, 12),
     headline_results: toArray(digest.headline_results).map(String).slice(0, 8),
-    measured_results: toArray(digest.measured_results).map(String).slice(0, 8),
+    measured_results: filterMeasuredResultsForScope(
+      digest.measured_results,
+      sourceTextForDigest,
+      digestScope
+    ),
     ablations: toArray(digest.ablations).map(String).slice(0, 8),
     limitations: toArray(digest.limitations).map(String).slice(0, 8),
     conflicts_of_interest: toArray(digest.conflicts_of_interest).map(String).slice(0, 6),
@@ -956,6 +1367,7 @@ async function digestPaper(url, { context, task, flags }) {
 function formatPaperDigestAsText(digest) {
   const lines = [
     `Paper: ${digest.title}`,
+    digest.digest_scope ? `Digest scope: ${digest.digest_scope}` : null,
     digest.authors.length > 0 ? `Authors: ${digest.authors.join(", ")}` : null,
     digest.published ? `Published: ${digest.published}` : null,
     digest.primary_category ? `Category: ${digest.primary_category}` : null,
@@ -991,6 +1403,9 @@ function formatRepoDigestAsText(digest) {
     digest.topics.length > 0 ? `Topics: ${digest.topics.join(", ")}` : null,
     digest.top_level_files.length > 0
       ? `Top-level entries: ${digest.top_level_files.map((entry) => entry.name).join(", ")}`
+      : null,
+    toArray(digest.architecture_sources).length > 0
+      ? `Architecture docs inspected: ${digest.architecture_sources.join(", ")}`
       : null
   ].filter(Boolean);
   if (digest.readme_excerpt) {
@@ -1017,8 +1432,47 @@ function extractExcerpt(text, keywords) {
   return clean.slice(index, index + 1600);
 }
 
+async function persistSourceSnapshot({ outDir, url, title, sourceType, fetchStatus, sourceText }) {
+  const clean = normalizeWhitespace(sourceText || "");
+  if (!outDir || !clean) {
+    return {
+      retrieved_at: nowIso(),
+      fetch_status: fetchStatus || "empty",
+      content_hash: contentHash(clean),
+      raw_text_path: null,
+      raw_text_bytes: 0
+    };
+  }
+  const hash = contentHash(clean);
+  const id = `${hash.slice(0, 16)}-${slugify(title || url).slice(0, 48) || "source"}`;
+  const relativePath = path.join("source-snapshots", `${id}.txt`);
+  const absolutePath = path.join(outDir, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(
+    absolutePath,
+    [
+      `URL: ${url}`,
+      `Title: ${title || ""}`,
+      `Source type: ${sourceType || "unknown"}`,
+      `Fetch status: ${fetchStatus || "unknown"}`,
+      `Retrieved at: ${nowIso()}`,
+      `Content SHA-256: ${hash}`,
+      "",
+      clean
+    ].join("\n")
+  );
+  return {
+    retrieved_at: nowIso(),
+    fetch_status: fetchStatus || "unknown",
+    content_hash: hash,
+    raw_text_path: relativePath,
+    raw_text_bytes: Buffer.byteLength(clean, "utf8")
+  };
+}
+
 function classifySource(url) {
   if (!url) return "unknown";
+  if (/^mcp:\/\//i.test(url)) return "private_corpus";
   if (/docs\.|microsoft\.github\.io|langchain|llamaindex|neo4j\.com|cloud\.google|openai\.com\/docs/i.test(url)) {
     return "official_docs";
   }
@@ -1035,6 +1489,7 @@ function sourceQuality(sourceType) {
     official_docs: 0.95,
     mature_oss: 0.85,
     paper_or_benchmark: 0.85,
+    private_corpus: 0.8,
     engineering_writeup: 0.78,
     general_web: 0.45,
     unknown: 0.25
@@ -1066,7 +1521,8 @@ function scoreEvidence({ sourceType, excerpt, context, task, claims }) {
   const claimConfidence =
     claims.length === 0
       ? 0
-      : claims.reduce((sum, claim) => sum + Number(claim.confidence || 0), 0) / claims.length;
+      : claims.reduce((sum, claim) => sum + clampNumber(claim.confidence, { fallback: 0 }), 0) /
+        claims.length;
   const score =
     sourceQuality(sourceType) * 0.45 +
     Math.min(keywordHits.length / 12, 1) * 0.25 +
@@ -1078,12 +1534,31 @@ function scoreEvidence({ sourceType, excerpt, context, task, claims }) {
   };
 }
 
-async function extractClaims({ context, task, source }) {  const result = await callLlmJson({
+async function extractClaims({ context, task, source }) {
+  const result = await callLlmJson({
     label: "source_claim_extractor",
     system: [
       "You extract architecture-decision evidence from sources.",
       "Return only claims that are directly supported by the supplied excerpt.",
       "Do not add static architecture knowledge.",
+      "",
+      "CRITICAL: architecture_family must name a MACRO-level architectural family,",
+      "not a sub-component, algorithm, index type, library, or runtime step.",
+      "Roll up low-level concepts under their parent macro family. Examples:",
+      "- 'Leiden Community Detection', 'Hierarchical Clustering', 'MapReduce Summarization'",
+      "  → architecture_family: 'GraphRAG'",
+      "- 'Top-K Vector Search', 'HNSW Index', 'BM25 Reranker'",
+      "  → architecture_family: 'Vector RAG' (or 'Hybrid RAG' if combined with graph)",
+      "- 'ReAct Tool Use', 'Orchestrator-Worker', 'CitationAgent'",
+      "  → architecture_family: 'Agentic Retrieval'",
+      "",
+      `Every architecture_family must be a valid candidate for the decision focus: "${context.decision}".`,
+      "If a claim describes a sub-component or runtime step without a clear macro family,",
+      "or if the claim is about something outside the decision focus, set architecture_family: 'unspecified'.",
+      "Prefer canonical macro names. Do not invent new family names when a canonical one fits.",
+      "",
+      "polarity MUST be exactly one of: supports, rejects, neutral.",
+      "confidence MUST be a number from 0 to 1.",
       "Output JSON with {claims:[{claim, architecture_family, polarity, domain_conditions, risk_or_fit, confidence}]}."
     ].join("\n"),
     user: JSON.stringify({
@@ -1103,10 +1578,10 @@ async function extractClaims({ context, task, source }) {  const result = await 
     .map((claim) => ({
       claim: String(claim.claim || "").trim(),
       architecture_family: String(claim.architecture_family || "unspecified").trim(),
-      polarity: String(claim.polarity || "neutral").trim(),
+      polarity: normalizePolarity(claim.polarity),
       domain_conditions: toArray(claim.domain_conditions).map(String).slice(0, 6),
       risk_or_fit: String(claim.risk_or_fit || "").trim(),
-      confidence: Math.max(0, Math.min(1, Number(claim.confidence || 0.5)))
+      confidence: clampNumber(claim.confidence, { min: 0, max: 1, fallback: 0.5 })
     }))
     .filter((claim) => claim.claim);
 }
@@ -1160,7 +1635,8 @@ async function gatherEvidenceForQuery({
   seenUrls,
   evidence,
   round,
-  maxSources
+  maxSources,
+  outDir
 }) {
   const liveResults = await searchWithProvider(query);
   for (const result of liveResults) {
@@ -1172,21 +1648,37 @@ async function gatherEvidenceForQuery({
     let repoDigest = null;
     let paperDigest = null;
     let sourceText = "";
+    let fetchStatus = "search_snippet_only";
     if (isGithubRepoUrl(result.url)) {
       repoDigest = await inspectGithubRepo(result.url, flags).catch(() => null);
-      if (repoDigest) sourceText = formatRepoDigestAsText(repoDigest);
+      if (repoDigest) {
+        sourceText = formatRepoDigestAsText(repoDigest);
+        fetchStatus = "github_api_ok";
+      }
     } else if (isPaperUrl(result.url)) {
       paperDigest = await digestPaper(result.url, { context, task, flags }).catch(
         () => null
       );
-      if (paperDigest) sourceText = formatPaperDigestAsText(paperDigest);
+      if (paperDigest) {
+        sourceText = formatPaperDigestAsText(paperDigest);
+        fetchStatus = `paper_digest_${paperDigest.digest_scope || "unknown"}`;
+      }
     }
     if (!sourceText) {
       const opened = await openUrl(result.url, flags).catch(() => "");
       sourceText = opened || result.snippet || "";
+      fetchStatus = opened ? "http_fetch_ok" : "search_snippet_only";
     }
     const excerpt = extractExcerpt(sourceText, keywords);
     if (!excerpt || excerpt.length < 120) continue;
+    const sourceSnapshot = await persistSourceSnapshot({
+      outDir,
+      url: result.url,
+      title: result.title || result.url,
+      sourceType: source_type,
+      fetchStatus,
+      sourceText
+    });
 
     const partial = {
       task_id: task.id,
@@ -1197,7 +1689,8 @@ async function gatherEvidenceForQuery({
       excerpt,
       source_type,
       source_quality: sourceQuality(source_type),
-      relevance: task.objective
+      relevance: task.objective,
+      ...sourceSnapshot
     };
     const claims = await extractClaims({ context, task, source: partial });
     const scored = scoreEvidence({ sourceType: source_type, excerpt, context, task, claims });
@@ -1264,7 +1757,8 @@ async function runResearchAgent({ task, context, flags, outDir }) {
         seenUrls,
         evidence,
         round,
-        maxSources
+        maxSources,
+        outDir
       });
       if (evidence.length >= maxSources) break;
     }
@@ -1357,7 +1851,7 @@ async function runResearchAgents({ plan, context, flags, outDir }) {
 
 function assignCitations(evidenceItems) {
   return evidenceItems
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => finiteNumber(b.score, 0) - finiteNumber(a.score, 0))
     .map((item, index) => ({
       citation_id: index + 1,
       ...item
@@ -1371,6 +1865,9 @@ function buildKnowledgeMap(evidenceItems) {
     for (const claim of item.claims || []) {
       const name = slugify(claim.architecture_family || "unspecified");
       if (!name || name === "unspecified") continue;
+      const polarity = normalizePolarity(claim.polarity);
+      const confidence = clampNumber(claim.confidence, { min: 0, max: 1, fallback: 0.5 });
+      const evidenceScore = finiteNumber(item.score, 0);
       const existing =
         families.get(name) || {
           name,
@@ -1387,18 +1884,18 @@ function buildKnowledgeMap(evidenceItems) {
         citation_id: item.citation_id,
         claim: claim.claim,
         risk_or_fit: claim.risk_or_fit,
-        confidence: claim.confidence,
+        confidence,
         source_type: item.source_type,
         url: item.url
       };
 
-      if (claim.polarity === "supports") existing.support.push(record);
-      else if (claim.polarity === "rejects") existing.rejections.push(record);
+      if (polarity === "supports") existing.support.push(record);
+      else if (polarity === "rejects") existing.rejections.push(record);
       else existing.warnings.push(record);
 
       existing.source_types.add(item.source_type);
       existing.citations.add(item.citation_id);
-      existing.score_total += item.score * claim.confidence;
+      existing.score_total += evidenceScore * confidence;
       families.set(name, existing);
     }
   }
@@ -1406,12 +1903,13 @@ function buildKnowledgeMap(evidenceItems) {
   const patterns = [...families.values()].map((item) => {
     const sourceTypes = [...item.source_types];
     const evidenceCount = item.support.length + item.warnings.length + item.rejections.length;
-    const qualityGate =
-      evidenceCount >= 2 &&
-      item.support.length > 0 &&
-      (sourceTypes.includes("official_docs") ||
-        sourceTypes.includes("mature_oss") ||
-        sourceTypes.includes("paper_or_benchmark"));
+      const qualityGate =
+        evidenceCount >= 2 &&
+        item.support.length > 0 &&
+        (sourceTypes.includes("official_docs") ||
+          sourceTypes.includes("mature_oss") ||
+          sourceTypes.includes("paper_or_benchmark") ||
+          sourceTypes.includes("private_corpus"));
 
     return {
       name: item.name,
@@ -1423,17 +1921,31 @@ function buildKnowledgeMap(evidenceItems) {
       support: item.support,
       warnings: item.warnings,
       rejections: item.rejections,
-      score: Number(item.score_total.toFixed(3))
+      score: Number(finiteNumber(item.score_total, 0).toFixed(3))
     };
   });
+
+  const MAX_PROMOTED_CANDIDATES = 5;
+  const allPromoted = patterns
+    .filter((item) => item.promotion_status === "evidence_backed_candidate")
+    .sort((a, b) => b.score - a.score);
+  const promoted = allPromoted.slice(0, MAX_PROMOTED_CANDIDATES);
+  const demoted = allPromoted.slice(MAX_PROMOTED_CANDIDATES).map((item) => ({
+    ...item,
+    promotion_status: "demoted_below_top_n",
+    demotion_reason: `Below top-${MAX_PROMOTED_CANDIDATES} by evidence score; only the strongest macro families advance to synthesis.`
+  }));
 
   return {
     version: VERSION,
     acquisition_mode: "evidence_only_live_research",
     promotion_rule:
-      "Architecture families are promoted only from extracted claims with cited live-source evidence. Static seed hypotheses are not allowed.",
-    promoted_candidates: patterns.filter((item) => item.promotion_status === "evidence_backed_candidate"),
-    insufficient_evidence_candidates: patterns.filter((item) => item.promotion_status !== "evidence_backed_candidate")
+      "Architecture families are promoted only from extracted claims with cited live-source evidence. Static seed hypotheses are not allowed. At most the top-5 evidence-scored macro families advance to synthesis.",
+    promoted_candidates: promoted,
+    insufficient_evidence_candidates: [
+      ...patterns.filter((item) => item.promotion_status !== "evidence_backed_candidate"),
+      ...demoted
+    ]
   };
 }
 
@@ -1539,7 +2051,7 @@ function candidatesFromKnowledgeMap(knowledgeMap) {
     label: item.label,
     promotion_status: "evidence_backed_candidate",
     evidence_count: item.evidence_count,
-    score: item.score,
+    score: finiteNumber(item.score, 0),
     citations: item.citations
   }));
   const insufficient = toArray(knowledgeMap?.insufficient_evidence_candidates).map(
@@ -1548,7 +2060,7 @@ function candidatesFromKnowledgeMap(knowledgeMap) {
       label: item.label,
       promotion_status: "insufficient_evidence",
       evidence_count: item.evidence_count,
-      score: item.score,
+      score: finiteNumber(item.score, 0),
       citations: item.citations
     })
   );
@@ -1604,22 +2116,25 @@ async function fillComparisonMatrixCells({
     })
   });
 
+  const validCitationIds = new Set(evidenceItems.map((item) => Number(item.citation_id)));
   const cellMap = new Map();
   for (const raw of toArray(result.cells)) {
     const candidate = String(raw.candidate || "").trim();
     const axis = String(raw.axis || "").trim();
     if (!candidate || !axis) continue;
-    const verdict = ["strong", "mixed", "weak", "no_evidence"].includes(String(raw.verdict))
+    let verdict = ["strong", "mixed", "weak", "no_evidence"].includes(String(raw.verdict))
       ? String(raw.verdict)
       : "no_evidence";
+    const evidenceCitations = toArray(raw.evidence_citations)
+      .map(Number)
+      .filter((id) => Number.isFinite(id) && validCitationIds.has(id));
+    if (evidenceCitations.length === 0) verdict = "no_evidence";
     cellMap.set(`${candidate}|${axis}`, {
       candidate,
       axis,
       verdict,
       summary: String(raw.summary || ""),
-      evidence_citations: toArray(raw.evidence_citations)
-        .map(Number)
-        .filter((id) => Number.isFinite(id))
+      evidence_citations: evidenceCitations
     });
   }
 
@@ -1744,6 +2259,10 @@ async function synthesizeArchitectureSpec({
   evidenceItems,
   comparisonMatrix
 }) {
+  const promotedNames = toArray(knowledgeMap?.promoted_candidates).map((c) => c.name);
+  const promotedSet = new Set(promotedNames);
+  const HUMAN_REVIEW = "requires_human_architecture_review";
+
   const result = await callLlmJson({
     label: "architecture_synthesis_agent",
     system: [
@@ -1753,6 +2272,12 @@ async function synthesizeArchitectureSpec({
       "If many cells are no_evidence or weak, prefer requires_human_architecture_review.",
       "Do not use a static pattern library.",
       "Do not implement the product.",
+      "",
+      `selected_topology MUST be one of the promoted_candidates names below, or the literal string "${HUMAN_REVIEW}". Do not invent a new name. Do not pick from insufficient_evidence_candidates.`,
+      promotedNames.length > 0
+        ? `Allowed selected_topology values: ${promotedNames.map((n) => `"${n}"`).join(", ")} or "${HUMAN_REVIEW}".`
+        : `No candidate cleared the promotion gate. selected_topology MUST be "${HUMAN_REVIEW}".`,
+      "",
       "Output JSON with {decision, domain_model, candidate_topologies, guardrails, evidence_summary}.",
       "decision needs {id,title,status,selected_topology,summary,evidence_citations}.",
       "candidate_topologies items need {name,label,fit,risks,decision,evidence_citations,confidence}.",
@@ -1773,29 +2298,61 @@ async function synthesizeArchitectureSpec({
     })
   });
 
-  const selected = result.decision?.selected_topology || "requires_human_architecture_review";
-  const candidates = toArray(result.candidate_topologies).map((candidate) => ({
-    name: String(candidate.name || ""),
-    label: String(candidate.label || candidate.name || ""),
-    fit: String(candidate.fit || ""),
-    risks: toArray(candidate.risks).map(String),
-    decision: String(candidate.decision || "considered"),
-    evidence_citations: toArray(candidate.evidence_citations)
-      .map(Number)
-      .filter((id) => Number.isFinite(id)),
-    confidence: Math.max(0, Math.min(1, Number(candidate.confidence || 0)))
-  }));
+  // Hard stop: synthesizer cannot promote a candidate that didn't clear the gate.
+  // The LLM may still hallucinate a name; override it here.
+  const requested = String(result.decision?.selected_topology || "").trim();
+  const requestedSlug = slugify(requested);
+  let selected;
+  let overrideReason = null;
+  if (promotedSet.size === 0) {
+    selected = HUMAN_REVIEW;
+    if (requested && requestedSlug !== HUMAN_REVIEW) {
+      overrideReason = `Synthesizer returned "${requested}" but no candidate cleared the promotion gate.`;
+    }
+  } else if (requestedSlug === HUMAN_REVIEW) {
+    selected = HUMAN_REVIEW;
+  } else if (promotedSet.has(requestedSlug)) {
+    selected = requestedSlug;
+  } else {
+    selected = HUMAN_REVIEW;
+    overrideReason = `Synthesizer returned "${requested}" which is not in the promoted_candidates set [${[...promotedSet].join(", ")}]; forced to ${HUMAN_REVIEW}.`;
+  }
+  const validCitationIds = new Set(evidenceItems.map((item) => Number(item.citation_id)));
+  const candidates = toArray(result.candidate_topologies).map((candidate) => {
+    const candidateName = String(candidate.name || "").trim();
+    const rawDecision = String(candidate.decision || "");
+    const normalizedDecision = normalizeCandidateDecision(rawDecision, {
+      candidateName,
+      selectedTopology: selected
+    });
+    return {
+      name: candidateName,
+      label: String(candidate.label || candidate.name || ""),
+      fit: String(candidate.fit || ""),
+      risks: toArray(candidate.risks).map(String),
+      decision: normalizedDecision,
+      ...(rawDecision && rawDecision !== normalizedDecision ? { decision_rationale: rawDecision } : {}),
+      evidence_citations: toArray(candidate.evidence_citations)
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id)),
+      confidence: clampNumber(candidate.confidence, { min: 0, max: 1, fallback: 0 })
+    };
+  });
   return {
     version: VERSION,
     decision: {
       id: result.decision?.id || "ADR-001",
       title: result.decision?.title || titleCase(context.decision),
-      status: result.decision?.status || "proposed",
+      status: normalizeDecisionStatus(result.decision?.status),
       selected_topology: selected,
-      summary:
-        result.decision?.summary ||
-        "Architecture decision synthesized from live evidence acquisition.",
+      summary: overrideReason
+        ? `${HUMAN_REVIEW}: ${overrideReason}`
+        : result.decision?.summary ||
+          "Architecture decision synthesized from live evidence acquisition.",
       evidence_citations: toArray(result.decision?.evidence_citations)
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id)),
+      ...(overrideReason ? { override_reason: overrideReason } : {})
     },
     domain_model: {
       bounded_contexts: toArray(result.domain_model?.bounded_contexts).length
@@ -1857,14 +2414,36 @@ async function buildEvaluationPack(context, spec, evidenceItems) {
     target_topologies: toArray(result.target_topologies).length
       ? toArray(result.target_topologies)
       : [spec.decision.selected_topology],
-    metrics: result.metrics || {
-      deterministic_lineage_rate: { target: 0.98 },
-      boundary_spill_tolerance: { target: 0 },
-      unsupported_answer_rate: { target: 0 },
-      p95_latency_ms: { target: 2500 }
-    },
+    metrics: normalizeEvaluationMetrics(result.metrics),
     test_cases: normalizeEvaluationCases(result.test_cases, context, spec).slice(0, 12)
   };
+}
+
+function normalizeEvaluationMetrics(metrics) {
+  const defaults = {
+    deterministic_lineage_rate: { target: 0.98 },
+    boundary_spill_tolerance: { target: 0 },
+    unsupported_answer_rate: { target: 0 },
+    p95_latency_ms: { target: 2500 }
+  };
+  const merged = { ...defaults, ...(metrics || {}) };
+  for (const [key, value] of Object.entries(merged)) {
+    if (!value || typeof value !== "object") {
+      merged[key] = { target: finiteNumber(value, defaults[key]?.target || 0) };
+      continue;
+    }
+    const defaultTarget = defaults[key]?.target || 0;
+    const target = finiteNumber(value.target, defaultTarget);
+    merged[key] = { ...value, target };
+  }
+  for (const key of [
+    "deterministic_lineage_rate",
+    "boundary_spill_tolerance",
+    "unsupported_answer_rate"
+  ]) {
+    merged[key].target = clampNumber(merged[key].target, { min: 0, max: 1, fallback: defaults[key].target });
+  }
+  return merged;
 }
 
 function normalizeEvaluationCases(testCases, context, spec) {
@@ -2044,11 +2623,95 @@ function buildExecutionHandoff(spec) {
   };
 }
 
+async function scanUncitedClaimsPhase({
+  context,
+  spec,
+  evaluationPack,
+  adrMarkdown,
+  researchReport,
+  evidenceItems,
+  outDir
+}) {
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "uncited_claim_scanner",
+      system: [
+        "You audit generated Architecture Deep Research artifacts for material architecture claims.",
+        "Find claims in ADR.md, research-report.md, architecture.spec.json, and domain-evaluation-pack.json that need citations or stronger evidence.",
+        "Do not flag headings, generic process text, or restatements of the user's product context.",
+        "A claim is material when it recommends, rejects, compares, scores, or asserts a topology's capability, risk, latency, cost, reliability, compliance, or evidence quality.",
+        "If a material claim is already supported by the cited evidence pool, include the citation_ids.",
+        "If it is not supported or has no clear citation, set needs_citation:true.",
+        "Output JSON with {claims:[{artifact,claim_text,citation_ids:[number],needs_citation:boolean,severity:'high'|'medium'|'low',reason:string}],summary:string}."
+      ].join("\n"),
+      user: JSON.stringify({
+        domain: context.domain,
+        decision: context.decision,
+        selected_topology: spec.decision?.selected_topology,
+        artifacts: {
+          adr_markdown: adrMarkdown.slice(0, 18_000),
+          research_report: researchReport.slice(0, 18_000),
+          architecture_spec: spec,
+          domain_evaluation_pack: evaluationPack
+        },
+        evidence: evidenceItems.map((item) => ({
+          citation_id: item.citation_id,
+          title: item.title,
+          url: item.url,
+          source_type: item.source_type,
+          claims: item.claims,
+          excerpt: (item.excerpt || "").slice(0, 800)
+        }))
+      })
+    });
+  } catch (error) {
+    raw = {
+      claims: [],
+      summary: `claim_audit_failed: ${String(error?.message || error)}`
+    };
+  }
+
+  const validCitationIds = new Set(evidenceItems.map((item) => Number(item.citation_id)));
+  const claims = toArray(raw.claims).map((claim) => ({
+    artifact: String(claim.artifact || "unknown"),
+    claim_text: String(claim.claim_text || ""),
+    citation_ids: toArray(claim.citation_ids)
+      .map(Number)
+      .filter((id) => Number.isFinite(id) && validCitationIds.has(id)),
+    needs_citation: Boolean(claim.needs_citation),
+    severity: ["high", "medium", "low"].includes(String(claim.severity))
+      ? String(claim.severity)
+      : "low",
+    reason: String(claim.reason || "")
+  })).filter((claim) => claim.claim_text);
+
+  const highSeverityCount = claims.filter(
+    (claim) => claim.needs_citation && claim.severity === "high"
+  ).length;
+  const audit = {
+    version: VERSION,
+    selected_topology: spec.decision?.selected_topology,
+    total_claims_checked: claims.length,
+    uncited_material_claim_count: claims.filter((claim) => claim.needs_citation).length,
+    high_severity_count: highSeverityCount,
+    claims,
+    summary: String(raw.summary || "")
+  };
+  await writeJson(path.join(outDir, "claim-audit.json"), audit);
+  await appendEvent(outDir, "claim_audit_completed", {
+    total_claims_checked: audit.total_claims_checked,
+    uncited_material_claim_count: audit.uncited_material_claim_count,
+    high_severity_count: audit.high_severity_count
+  });
+  return audit;
+}
+
 function buildDeepSources(context, evidenceItems) {
   const cited = evidenceItems
     .map(
       (item) =>
-        `- [${item.citation_id}] ${item.title} (${item.url}) - ${item.source_type}; score ${item.score}`
+        `- [${item.citation_id}] ${item.title} (${item.url}) - ${item.source_type}; score ${item.score}; retrieved ${item.retrieved_at || "unknown"}; hash ${item.content_hash || "unknown"}${item.raw_text_path ? `; snapshot ${item.raw_text_path}` : ""}`
     )
     .join("\n");
 
@@ -2114,6 +2777,7 @@ ADR stops at Execution Handoff. The report supports architecture selection; it d
 }
 
 async function writeJson(filePath, value) {
+  await assertSchemaValid(path.basename(filePath), value);
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -2132,6 +2796,7 @@ async function prepareRun({ inputPath, flags }) {
 
   await mkdir(outDir, { recursive: true });
   await writeFile(path.join(outDir, "events.jsonl"), "");
+  resetLlmCost();
   await appendEvent(outDir, "run_started", {
     command: "deep-research",
     runtime,
@@ -2465,7 +3130,7 @@ async function critiqueDecisionPhase({
         "You are the Architecture Deep Research critique agent.",
         "Critique the synthesized architecture spec against the evidence pool and knowledge map.",
         "Find: uncited claims; contradictions between cited claims; rejected alternatives missing rationale;",
-        "evidence weaknesses (single source, low quality, no official_docs or mature_oss or paper_or_benchmark backing);",
+        "evidence weaknesses (single source, low quality, no official_docs, mature_oss, paper_or_benchmark, or private_corpus backing);",
         "selected_topology not actually backed by promoted_candidates.",
         "Be specific and cite evidence by citation_id.",
         "Output JSON with {issues:[{severity:'high'|'medium'|'low',category:string,description:string,evidence_citations:[number]}],summary:string,recommend_human_review:boolean}."
@@ -2630,7 +3295,7 @@ async function verifyCitationsPhase({
         citation_id: citationId,
         claim_context: claimContext,
         verified: Boolean(item.verified),
-        confidence: Math.max(0, Math.min(1, Number(item.confidence || 0))),
+        confidence: clampNumber(item.confidence, { min: 0, max: 1, fallback: 0 }),
         reason: String(item.reason || ""),
         evidence_present: evidenceById.has(citationId)
       });
@@ -2677,7 +3342,7 @@ async function verifyCitationsPhase({
 
 function applyCritique({ spec, critique, flags }) {
   if (!critique) return { spec, downgraded: false };
-  if (!flags["enforce-critique"]) return { spec, downgraded: false };
+  if (flags["no-enforce-critique"]) return { spec, downgraded: false };
   if (
     critique.high_severity_count === 0 ||
     !critique.recommend_human_review ||
@@ -2703,6 +3368,42 @@ function applyCritique({ spec, critique, flags }) {
   return { spec: downgradedSpec, downgraded: true };
 }
 
+function applyCitationAudit({ spec, citationAudit, flags }) {
+  if (!citationAudit) return { spec, downgraded: false };
+  if (flags["no-enforce-citation-audit"]) return { spec, downgraded: false };
+  if (spec.decision?.selected_topology === "requires_human_architecture_review") {
+    return { spec, downgraded: false };
+  }
+
+  const selected = slugify(spec.decision?.selected_topology);
+  const unsupportedSelected = toArray(citationAudit.items).filter((item) => {
+    if (item.verified) return false;
+    const context = String(item.claim_context || "");
+    return (
+      context === "selected_topology_summary" ||
+      context.startsWith(`candidate:${selected}:`)
+    );
+  });
+  if (unsupportedSelected.length === 0) return { spec, downgraded: false };
+
+  const downgradedSpec = {
+    ...spec,
+    decision: {
+      ...spec.decision,
+      original_selected_topology:
+        spec.decision.original_selected_topology || spec.decision.selected_topology,
+      selected_topology: "requires_human_architecture_review",
+      summary: [
+        spec.decision.summary || "",
+        `Downgraded by citation audit (${unsupportedSelected.length} unsupported selected-topology citations).`
+      ]
+        .filter(Boolean)
+        .join(" ")
+    }
+  };
+  return { spec: downgradedSpec, downgraded: true, unsupportedSelected };
+}
+
 async function writeRunArtifacts({
   context,
   plan,
@@ -2713,7 +3414,8 @@ async function writeRunArtifacts({
   outDir,
   critique,
   citationAudit,
-  comparisonMatrix
+  comparisonMatrix,
+  flags = {}
 }) {
   const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems);
   const baseHandoff = buildExecutionHandoff(spec);
@@ -2765,14 +3467,39 @@ async function writeRunArtifacts({
     researchResults,
     knowledgeMap
   });
+  const adrMarkdown = buildADR(context, spec, knowledgeMap);
+  const claimAudit = flags["skip-claim-audit"]
+    ? null
+    : await scanUncitedClaimsPhase({
+        context,
+        spec,
+        evaluationPack,
+        adrMarkdown,
+        researchReport: report,
+        evidenceItems,
+        outDir
+      });
+  if (claimAudit) {
+    handoff = {
+      ...handoff,
+      artifacts: { ...handoff.artifacts, claim_audit: "claim-audit.json" },
+      claim_audit_summary: {
+        total_claims_checked: claimAudit.total_claims_checked,
+        uncited_material_claim_count: claimAudit.uncited_material_claim_count,
+        high_severity_count: claimAudit.high_severity_count
+      }
+    };
+  }
 
-  await writeFile(path.join(outDir, "ADR.md"), buildADR(context, spec, knowledgeMap));
+  await writeFile(path.join(outDir, "ADR.md"), adrMarkdown);
   await writeJson(path.join(outDir, "architecture.spec.json"), spec);
   await writeJson(path.join(outDir, "domain-evaluation-pack.json"), evaluationPack);
   await writeFile(path.join(outDir, "agent-guardrails.md"), buildGuardrails(spec));
   await writeJson(path.join(outDir, "execution-handoff.json"), handoff);
   await writeFile(path.join(outDir, "research-report.md"), report);
   await writeFile(path.join(outDir, "sources.md"), buildDeepSources(context, evidenceItems));
+  const costSummary = summarizeLlmCost();
+  await writeJson(path.join(outDir, "cost.json"), costSummary);
   await writeJson(path.join(outDir, "state.json"), {
     version: VERSION,
     status: "completed",
@@ -2783,7 +3510,12 @@ async function writeRunArtifacts({
     promoted_candidate_count: knowledgeMap.promoted_candidates.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
     citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
+    claim_audit_high_severity_count: claimAudit ? claimAudit.high_severity_count : 0,
+    claim_audit_uncited_material_claim_count: claimAudit
+      ? claimAudit.uncited_material_claim_count
+      : 0,
     comparison_matrix_empty_cells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0,
+    estimated_usd: costSummary.totals.estimated_usd,
     handoff_boundary: "adr_stops_at_execution_handoff"
   });
   await appendEvent(outDir, "run_completed", {
@@ -2791,7 +3523,13 @@ async function writeRunArtifacts({
     evidence_count: evidenceItems.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
     citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
-    comparison_matrix_empty_cells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0
+    claim_audit_high_severity_count: claimAudit ? claimAudit.high_severity_count : 0,
+    claim_audit_uncited_material_claim_count: claimAudit
+      ? claimAudit.uncited_material_claim_count
+      : 0,
+    comparison_matrix_empty_cells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0,
+    estimated_usd: costSummary.totals.estimated_usd,
+    total_llm_calls: costSummary.totals.calls
   });
 
   return {
@@ -2801,7 +3539,13 @@ async function writeRunArtifacts({
     handoffBoundary: "adr_stops_at_execution_handoff",
     critiqueHighSeverityCount: critique ? critique.high_severity_count : 0,
     citationAuditUnsupportedCount: citationAudit ? citationAudit.unsupported_count : 0,
-    comparisonMatrixEmptyCells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0
+    claimAuditHighSeverityCount: claimAudit ? claimAudit.high_severity_count : 0,
+    claimAuditUncitedMaterialClaimCount: claimAudit
+      ? claimAudit.uncited_material_claim_count
+      : 0,
+    comparisonMatrixEmptyCells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0,
+    estimatedUsd: costSummary.totals.estimated_usd,
+    totalLlmCalls: costSummary.totals.calls
   };
 }
 
@@ -2880,24 +3624,37 @@ async function deepResearch({ inputPath, flags }) {
     critique,
     flags
   });
+  const { spec: auditedSpec, downgraded: citationDowngraded, unsupportedSelected } =
+    applyCitationAudit({
+      spec: finalSpec,
+      citationAudit,
+      flags
+    });
   if (downgraded) {
     await appendEvent(prepared.outDir, "decision_downgraded_by_critique", {
       original_selected_topology: finalSpec.decision.original_selected_topology,
       high_severity_count: critique.high_severity_count
     });
   }
+  if (citationDowngraded) {
+    await appendEvent(prepared.outDir, "decision_downgraded_by_citation_audit", {
+      original_selected_topology: auditedSpec.decision.original_selected_topology,
+      unsupported_selected_citation_count: unsupportedSelected.length
+    });
+  }
 
   const result = await writeRunArtifacts({
     context: prepared.context,
     plan,
-    spec: finalSpec,
+    spec: auditedSpec,
     evidenceItems,
     researchResults,
     knowledgeMap,
     outDir: prepared.outDir,
     critique,
     citationAudit,
-    comparisonMatrix
+    comparisonMatrix,
+    flags
   });
 
   console.log(`Deep research artifacts written to ${prepared.outDir}`);
@@ -2917,6 +3674,10 @@ async function deepResearch({ inputPath, flags }) {
     console.log(
       `Citation audit: ${citationAudit.verified_count}/${citationAudit.total_citations} verified, ${citationAudit.unsupported_count} unsupported`
     );
+  }
+  if (result.totalLlmCalls > 0) {
+    const usd = result.estimatedUsd != null ? `$${result.estimatedUsd.toFixed(4)}` : "n/a";
+    console.log(`LLM cost: ${result.totalLlmCalls} calls, ~${usd} (see cost.json)`);
   }
   console.log("Boundary: ADR stops at Execution Handoff");
 }
@@ -2967,6 +3728,7 @@ This ADR supersedes ${supersedes.previous_decision_id || "the previous ADR"} fro
 
 export {
   VERSION,
+  applyCitationAudit,
   activeLlmProvider,
   activeSearchProviders,
   applyCritique,
@@ -2993,8 +3755,10 @@ export {
   planResearchPhase,
   prepareRun,
   research,
+  resetLlmCost,
   runResearchAgents,
   setLlmJsonProvider,
+  summarizeLlmCost,
   supersedeAdr,
   synthesizeDecisionPhase,
   verifyCitationsPhase,

@@ -78,6 +78,7 @@ ADR always uses live web search to gather evidence — there is no offline mode.
 | Tavily | `TAVILY_API_KEY` | 1k requests/month | https://tavily.com |
 | Serper (Google) | `SERPER_API_KEY` | 2.5k queries on signup | https://serper.dev |
 | Self-hosted SearXNG | `SEARXNG_URL` | unlimited (your hardware) | https://docs.searxng.org |
+| Read-only remote MCP corpus via OpenAI | `ADR_MCP_SERVER_URL` + `OPENAI_API_KEY` | provider-dependent | your MCP server |
 
 ```bash
 export BRAVE_SEARCH_API_KEY=...   # or one of the other three
@@ -85,11 +86,13 @@ export BRAVE_SEARCH_API_KEY=...   # or one of the other three
 
 **Fallback: OpenAI `web_search`.** If none of the four above is set but `OPENAI_API_KEY` (or `ADR_OPENAI_API_KEY`) is set, ADR uses OpenAI's hosted `web_search` tool via the Responses API. One key then powers both LLM synthesis (Step 3 Option A) and search — useful when you don't want to manage a second provider. Dedicated search keys above always take priority.
 
+**Private corpus / MCP hook.** Set `ADR_MCP_SERVER_URL` to search a read-only remote MCP corpus through OpenAI's hosted MCP tool. Use `ADR_SEARCH_PROVIDER=mcp` or `ADR_PRIVATE_MCP_ONLY=1` to force private-corpus search instead of public web search. Keep MCP tools read-only; ADR uses `require_approval: "never"` only for search/fetch style evidence access.
+
 If none of these is set, every runtime fails fast in `assertAgenticRuntime` with `No live search provider configured.`
 
 ### 3. Set an LLM provider (required, pick one to match your runtime)
 
-The three runtimes share the same kernel and the same web search; they only differ in which LLM provider runs the JSON synthesis steps (planner, claim extractor, completeness judge, matrix filler, synthesizer, critique, citation verifier).
+The three runtimes share the same kernel and the same web search; they only differ in which LLM provider runs the JSON synthesis steps (planner, claim extractor, completeness judge, matrix filler, synthesizer, critique, citation verifier, claim auditor).
 
 **Option A — OpenAI-compatible (default; CLI: `npm run adr`)**
 
@@ -137,7 +140,7 @@ Use a fine-grained token with read-only `public_repo` access; no scopes are need
 npm test
 ```
 
-Runs JSON schema validation + structural smoke for the kernel/adapters and the web UI server. Does **not** need any API keys or network — green here just means the wiring is intact.
+Runs kernel regression tests, JSON schema validation, adapter smoke, and web UI smoke. Does **not** need any API keys or network — green here means the local gates and wiring are intact.
 
 ### 6. Run your first ADR
 
@@ -237,6 +240,14 @@ Evidence-only architecture knowledge acquired during the run:
 
 This is not a hand-authored pattern library. It is a provenance record.
 
+### `evidence.json` and `source-snapshots/`
+
+Every evidence item includes the source URL, provider, source type, quality score, extracted claims, `retrieved_at`, content hash, fetch status, and a `raw_text_path` snapshot when fetched text was available. This lets reviewers audit what the model actually saw.
+
+### `citation-audit.json` and `claim-audit.json`
+
+The citation audit verifies cited evidence against the selected decision and candidate claims. Unsupported citations on the selected topology downgrade the decision to `requires_human_architecture_review` by default. The claim audit scans generated ADR/report/evaluation artifacts for material architecture claims that need citations.
+
 ### `domain-evaluation-pack.json`
 
 Adversarial test cases for the selected architecture:
@@ -325,6 +336,7 @@ const handoff = await createBeevibeMeshHandoff({
 Benchmarks are live agentic experiments. They require credentials and fail fast without them.
 
 ```bash
+npm run benchmark:replay
 npm run benchmark:live:fast
 npm run benchmark:live
 ```
@@ -335,7 +347,7 @@ Package tests are intentionally different:
 npm test
 ```
 
-`npm test` validates schemas and adapter wiring. It does not fake a deep research run.
+`benchmark:replay` is the frozen local regression pass for trust gates; it does not perform production research. `npm test` runs that replay pass plus schema, adapter, and web smoke checks.
 
 ## Repository Shape
 
@@ -364,11 +376,10 @@ npm test
 │   ├── adr-adk.mjs                       # Google ADK / Gemini CLI
 │   ├── adr-web.mjs                       # Web UI server
 │   ├── benchmark.mjs
+│   ├── kernel-regression-tests.mjs        # frozen local replay checks
 │   ├── check-json.mjs
 │   ├── smoke-frameworks.mjs              # kernel + adapter smoke
 │   └── smoke-web.mjs                     # web UI server smoke
-├── sources/
-│   └── manifest.json                     # curated source library per family
 ├── src/
 │   └── kernel.mjs                        # the deep research kernel
 └── web/                                  # Vite + React + Tailwind UI
