@@ -70,7 +70,7 @@ Requires Node.js 20+ (see `engines` in `package.json`).
 
 ### 2. Set a live search provider (required, pick one)
 
-ADR always uses live web search to gather evidence — there is no offline mode. **The same search machinery is shared by all three runtimes**; you only need to set one of the four env vars below.
+ADR always uses live web search to gather evidence — there is no offline mode. **The same search machinery is shared by all three runtimes**; you only need to set one of the env vars below.
 
 | Provider | Env var | Free tier | Sign-up |
 | --- | --- | --- | --- |
@@ -82,6 +82,8 @@ ADR always uses live web search to gather evidence — there is no offline mode.
 ```bash
 export BRAVE_SEARCH_API_KEY=...   # or one of the other three
 ```
+
+**Fallback: OpenAI `web_search`.** If none of the four above is set but `OPENAI_API_KEY` (or `ADR_OPENAI_API_KEY`) is set, ADR uses OpenAI's hosted `web_search` tool via the Responses API. One key then powers both LLM synthesis (Step 3 Option A) and search — useful when you don't want to manage a second provider. Dedicated search keys above always take priority.
 
 If none of these is set, every runtime fails fast in `assertAgenticRuntime` with `No live search provider configured.`
 
@@ -183,7 +185,7 @@ Toggle in the run-detail header. See [docs/web-ui.md](./docs/web-ui.md).
 
 | Error | Cause / fix |
 | --- | --- |
-| `No live search provider configured.` | Step 2: export one of `BRAVE_SEARCH_API_KEY` / `SERPER_API_KEY` / `TAVILY_API_KEY` / `SEARXNG_URL`. |
+| `No live search provider configured.` | Step 2: export one of `BRAVE_SEARCH_API_KEY` / `SERPER_API_KEY` / `TAVILY_API_KEY` / `SEARXNG_URL`. Or set only `OPENAI_API_KEY` to use the OpenAI `web_search` fallback. |
 | `No LLM synthesis provider configured.` | Step 3: export the env vars for the runtime you launched. |
 | `Google ADK deep research requires GEMINI_API_KEY...` | The ADK CLI is gated; even if `ADR_OPENAI_API_KEY` is set you must also set `GEMINI_API_KEY` (or `GOOGLE_GENAI_API_KEY`) to use `npm run adr:adk`. |
 | Lots of GitHub 403 / 404 in `events.jsonl` | Step 4: set `GITHUB_TOKEN`. The unauthenticated 60/hr limit was hit. |

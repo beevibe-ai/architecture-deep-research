@@ -346,6 +346,9 @@ function activeSearchProviders() {
   if (process.env.SERPER_API_KEY) providers.push("serper");
   if (process.env.TAVILY_API_KEY) providers.push("tavily");
   if (process.env.SEARXNG_URL) providers.push("searxng");
+  if (process.env.OPENAI_API_KEY || process.env.ADR_OPENAI_API_KEY) {
+    providers.push("openai-web-search");
+  }
   return providers;
 }
 
@@ -630,6 +633,59 @@ async function searchWithProvider(query) {
       snippet: item.content || "",
       provider: "searxng"
     }));
+  }
+
+  const openaiKey = process.env.ADR_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    const baseUrl =
+      process.env.ADR_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+    const model = process.env.ADR_SEARCH_MODEL || process.env.ADR_MODEL || "gpt-4.1-mini";
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${openaiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        input: query,
+        tools: [{ type: "web_search" }],
+        tool_choice: "required"
+      }),
+      signal: AbortSignal.timeout(45_000)
+    });
+    if (!response.ok) {
+      throw new Error(
+        `OpenAI web_search failed: ${response.status} ${await response.text().catch(() => "")}`
+      );
+    }
+    const body = await response.json();
+    const seen = new Set();
+    const results = [];
+    for (const out of body.output || []) {
+      if (out.type !== "message") continue;
+      for (const block of out.content || []) {
+        const text = block.text || "";
+        for (const ann of block.annotations || []) {
+          if (ann.type !== "url_citation" || !ann.url) continue;
+          const canonical = ann.url.replace(/[?&]utm_source=openai\b/, "");
+          if (seen.has(canonical)) continue;
+          seen.add(canonical);
+          const start = Number.isInteger(ann.start_index) ? ann.start_index : 0;
+          const end = Number.isInteger(ann.end_index) ? ann.end_index : text.length;
+          results.push({
+            title: ann.title || canonical,
+            url: canonical,
+            snippet: text.slice(start, end).trim(),
+            provider: "openai-web-search"
+          });
+          if (results.length >= 8) break;
+        }
+        if (results.length >= 8) break;
+      }
+      if (results.length >= 8) break;
+    }
+    return results;
   }
 
   throw new Error("No live search provider configured.");
