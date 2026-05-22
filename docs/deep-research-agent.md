@@ -24,7 +24,7 @@ The product constraint is strict:
 
 Every real ADR run needs both:
 
-- A live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`.
+- A live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, `SEARXNG_URL`, or — as a fallback — `OPENAI_API_KEY` / `ADR_OPENAI_API_KEY` (uses OpenAI's hosted `web_search`). A private corpus via `ADR_MCP_SERVER_URL` is also accepted.
 - An LLM provider for JSON synthesis. Three backends are supported:
   - **OpenAI-compatible** (default): `ADR_OPENAI_API_KEY` or `OPENAI_API_KEY`, with optional `ADR_OPENAI_BASE_URL`.
   - **LangChain via the LangGraph runtime**: any provider supported by LangChain's `initChatModel` (OpenAI, Anthropic, Google, Bedrock, Mistral, Ollama, Groq, DeepSeek, ...). Run through the `adr:langgraph` CLI with `--model provider:model` or call `setLlmJsonProvider(createLangChainJsonProvider({ model }))` before `deepResearch`. See [framework-adapters.md](./framework-adapters.md#langgraph).
@@ -167,7 +167,7 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
 
 - `--max-rounds <n>` (default 2): max search-judge rounds per research task.
 - `--max-sources <n>` (default 5): max evidence items per task.
-- `--max-cycles <n>` (default 2): bound on planned task count.
+- `--max-cycles <n>` (default 2): multiplier on the planner's max parallel research agents (3). `--max-cycles 2` permits up to `2 * 3 = 6` planned tasks.
 - `--max-adaptive-cycles <n>` (default 1): max gap-filling re-research cycles when the knowledge map has no promoted candidates.
 - `--max-adversarial-cycles <n>` (default 1): max adversarial per-candidate cycles when the comparison matrix has empty cells.
 - `--skip-comparison-matrix`: skip the comparison-matrix phase (and the adversarial per-candidate research that depends on it).

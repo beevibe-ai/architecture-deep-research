@@ -18,6 +18,7 @@ Set one search provider:
 ```bash
 export BRAVE_SEARCH_API_KEY=...
 # or SERPER_API_KEY / TAVILY_API_KEY / SEARXNG_URL
+# or, as a fallback, just OPENAI_API_KEY (OpenAI hosted web_search)
 ```
 
 Set one OpenAI-compatible LLM provider:

@@ -26,14 +26,15 @@ START
        +-- --plan-approval flag set? --> interrupt() → resume with Command
        |
   -> execute_research             (search + claim extraction + adaptive gap-filling)
+  -> compare_topologies           (build comparison matrix, run adversarial cycles)
   -> synthesize_decision          (architecture spec)
-  -> critique_decision            (find uncited claims, contradictions, weak evidence)
-  -> verify_citations             (post-hoc per-citation verification)
+  -> critique_decision            (find uncited claims, contradictions, weak evidence; downgrade on high severity)
+  -> verify_citations             (post-hoc per-citation verification; downgrade if selected-topology citations are unsupported)
   -> write_artifacts              (ADR.md, spec, eval pack, claim audit, guardrails, handoff, ...)
   -> END
 ```
 
-Each node maps to an exported kernel phase function (`prepareRun`, `planResearchPhase`, `executeResearchPhase`, `synthesizeDecisionPhase`, `critiqueDecisionPhase`, `verifyCitationsPhase`, `writeRunArtifacts`). The graph is checkpointed with `MemorySaver`, so a run can pause and resume on the same `thread_id`.
+Each node maps to an exported kernel phase function (`prepareRun`, `planResearchPhase`, `executeResearchPhase`, `compareTopologiesPhase`, `synthesizeDecisionPhase`, `critiqueDecisionPhase`, `verifyCitationsPhase`, `writeRunArtifacts`). The graph is checkpointed with `MemorySaver`, so a run can pause and resume on the same `thread_id`.
 
 ### Human-in-the-loop plan approval
 
@@ -89,7 +90,7 @@ npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
 
 Required env:
 
-- one live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`
+- one live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, `SEARXNG_URL`, or — as a fallback — `OPENAI_API_KEY` / `ADR_OPENAI_API_KEY` (uses OpenAI's hosted `web_search`)
 - the API key for the model in `--model` (for example `OPENAI_API_KEY`)
 
 ### Programmatic use
@@ -173,7 +174,7 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
 Required env:
 
 - `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` (or `GOOGLE_API_KEY`)
-- one live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_URL`
+- one live search provider: `BRAVE_SEARCH_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`, `SEARXNG_URL`, or — as a fallback — `OPENAI_API_KEY` / `ADR_OPENAI_API_KEY` (uses OpenAI's hosted `web_search`)
 
 Optional env: `ADR_ADK_MODEL` (default `gemini-2.5-flash`).
 
@@ -241,7 +242,7 @@ npm run smoke:frameworks
 
 This test verifies adapter shape only. It does not run fake research without live credentials.
 
-- the LangGraph runtime compiles a StateGraph with all five phase nodes (`prepare_run`, `plan_research`, `execute_research`, `synthesize_decision`, `write_artifacts`) and exposes the legacy single-node graph for back-compat;
+- the LangGraph runtime compiles a StateGraph with all eight phase nodes (`prepare_run`, `plan_research`, `execute_research`, `compare_topologies`, `synthesize_decision`, `critique_decision`, `verify_citations`, `write_artifacts`) and exposes the legacy single-node graph for back-compat;
 - the LangChain JSON provider factory loads and returns a callable;
 - the Google ADK tool-wrapper adapter can construct an agent with the ADR function tool;
 - the Google ADK Gemini-as-provider adapter exports `createAdkJsonProvider`, `createAdkDeepResearchAgent`, and `createAdkDeepResearchTool`, and the kernel's `setLlmJsonProvider` / `getLlmJsonProvider` / `activeLlmProvider` hooks correctly install and report a custom provider label;
