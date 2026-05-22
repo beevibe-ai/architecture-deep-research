@@ -15,10 +15,17 @@ export default function OperatorView({ summary, artifacts }) {
   const audit = artifacts["citation-audit.json"];
   const claimAudit = artifacts["claim-audit.json"];
 
+  const artifactCount = Object.keys(artifacts).length;
+  const warming = artifactCount === 0 && summary?.status !== "completed";
+
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="space-y-5 lg:col-span-2">
-        <DecisionCard spec={spec} summary={summary} critique={critique} audit={audit} />
+        {warming ? (
+          <WarmingUpCard summary={summary} />
+        ) : (
+          <DecisionCard spec={spec} summary={summary} critique={critique} audit={audit} />
+        )}
         {Array.isArray(matrix?.cells) && matrix.cells.length > 0 && (
           <ComparisonMatrix matrix={matrix} />
         )}
@@ -37,6 +44,23 @@ export default function OperatorView({ summary, artifacts }) {
         />
         {context && <ContextCard context={context} />}
       </div>
+    </div>
+  );
+}
+
+function WarmingUpCard({ summary }) {
+  return (
+    <div className="card p-5" role="status" aria-live="polite">
+      <h2 className="card-title">Run starting</h2>
+      <p className="mt-2 text-sm text-ink-200">
+        The kernel hasn't written any artifacts yet. The first to appear is usually
+        <code className="kbd"> strategic-context.json</code> after a few seconds, followed by
+        <code className="kbd"> research-plan.json</code>.
+      </p>
+      <p className="mt-2 text-xs text-ink-400">
+        Status: <span className="font-mono text-ink-200">{summary?.status || "starting"}</span>.
+        This card will be replaced by the decision once the run produces one.
+      </p>
     </div>
   );
 }

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getArtifact, getRun, subscribeEvents } from "../lib/api.js";
 import { usePolling } from "../lib/usePolling.js";
 import OperatorView from "./OperatorView.jsx";
 import DeveloperView from "./DeveloperView.jsx";
 import StatusPill from "../components/StatusPill.jsx";
+import RelativeTime from "../components/RelativeTime.jsx";
 
 const TERMINAL_STATUSES = new Set([
   "completed",
@@ -21,6 +22,9 @@ export default function RunDetail() {
     () => getRun(id),
     { interval: 4000, enabled: !pollingPaused, deps: [id] }
   );
+
+  const lastFetchedAtRef = useRef(null);
+  if (summary) lastFetchedAtRef.current = Date.now();
 
   // Suspend polling once the run reaches a terminal status — there's nothing
   // more to refresh, and 4s polls would otherwise continue forever.
@@ -86,10 +90,21 @@ export default function RunDetail() {
     );
   }
   if (loading && !summary) {
-    return <div className="card p-4 text-sm text-ink-400">Loading run…</div>;
+    return (
+      <div className="card p-4 text-sm text-ink-300" role="status" aria-live="polite">
+        Loading run <span className="font-mono">{id}</span>…
+      </div>
+    );
   }
   if (!summary) {
-    return <div className="card p-4 text-sm text-ink-400">No data.</div>;
+    return (
+      <div className="card p-4 text-sm text-ink-300">
+        No data for <span className="font-mono">{id}</span>.{" "}
+        <Link to="/" className="link">
+          Back to runs
+        </Link>
+      </div>
+    );
   }
 
   return (
@@ -100,16 +115,28 @@ export default function RunDetail() {
             <h1 className="text-lg font-semibold tracking-tight">{id}</h1>
             <StatusPill status={summary.status} />
           </div>
-          <p className="mt-1 text-xs text-ink-500">
+          <p className="mt-1 text-xs text-ink-400">
             {summary.completed_at
               ? `Completed ${summary.completed_at}`
               : summary.modified_at
                 ? `Updated ${summary.modified_at}`
                 : "Run started"}
             {summary.selected_topology && (
-              <span className="ml-2 font-mono text-ink-300">
+              <span className="ml-2 font-mono text-ink-200">
                 · selected: {summary.selected_topology}
               </span>
+            )}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-500" aria-live="polite">
+            {pollingPaused ? (
+              <>Polling paused — run reached terminal status.</>
+            ) : lastFetchedAtRef.current ? (
+              <>
+                Auto-refreshing every 4s · last update{" "}
+                <RelativeTime timestamp={lastFetchedAtRef.current} />
+              </>
+            ) : (
+              <>Connecting…</>
             )}
           </p>
         </div>
@@ -121,7 +148,8 @@ export default function RunDetail() {
           role="alert"
           className="rounded-md border border-warn-600/40 bg-warn-500/10 px-3 py-2 text-xs text-warn-500"
         >
-          Event stream disconnected. The page will keep polling artifacts.
+          Event stream disconnected. Artifacts still refresh via polling — the stream will retry
+          automatically; reload the page if it doesn't recover.
         </div>
       )}
 
