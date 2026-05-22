@@ -31,11 +31,43 @@ export default function NewRunForm() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  function deriveRunId(outDir) {
+    return String(outDir || "")
+      .replace(/\/+$/, "")
+      .split("/")
+      .filter(Boolean)
+      .pop();
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
-    setSubmitting(true);
     setResponse(null);
     setError(null);
+
+    const required = ["inputPath", "domain", "decision", "outDir"];
+    const missing = required.filter((key) => !String(form[key] || "").trim());
+    if (missing.length > 0) {
+      setError(new Error(`Required: ${missing.join(", ")}`));
+      return;
+    }
+    if (form.runtime === "langgraph" && !String(form.model || "").trim()) {
+      setError(new Error("Model is required for the LangGraph runtime."));
+      return;
+    }
+    const runId = deriveRunId(form.outDir);
+    if (!runId) {
+      setError(new Error("Output directory must end with a run name (e.g. .adr-runs/my-run)."));
+      return;
+    }
+    const numericFields = { maxCycles: "max-cycles", maxSources: "max-sources" };
+    for (const [field, flag] of Object.entries(numericFields)) {
+      if (form[field] && !/^\d+$/.test(String(form[field]).trim())) {
+        setError(new Error(`--${flag} must be a positive integer.`));
+        return;
+      }
+    }
+
+    setSubmitting(true);
     const flags = {};
     if (form.maxCycles) flags["max-cycles"] = form.maxCycles;
     if (form.maxSources) flags["max-sources"] = form.maxSources;
@@ -52,11 +84,10 @@ export default function NewRunForm() {
         model: form.runtime === "langgraph" ? form.model : undefined,
         flags
       });
-      setResponse(result);
-      setTimeout(() => {
-        const segments = form.outDir.split("/");
-        navigate(`/runs/${encodeURIComponent(segments[segments.length - 1])}`);
-      }, 800);
+      setResponse({ ...result, runId });
+      // Give the kernel ~800ms to create the run dir before navigating; if
+      // the user prefers, the success banner exposes a manual link too.
+      setTimeout(() => navigate(`/runs/${encodeURIComponent(runId)}`), 800);
     } catch (err) {
       setError(err);
     } finally {
@@ -143,8 +174,16 @@ export default function NewRunForm() {
         </div>
 
         {response && (
-          <div className="rounded-md border border-success-600/30 bg-success-500/10 p-3 text-xs text-success-500">
-            Started (pid {response.pid}). Redirecting to run page…
+          <div
+            className="rounded-md border border-success-600/30 bg-success-500/10 p-3 text-xs text-success-500"
+            role="status"
+            aria-live="polite"
+          >
+            Started{response.pid ? ` (pid ${response.pid})` : ""}. Redirecting…{" "}
+            <a className="link" href={`/runs/${encodeURIComponent(response.runId)}`}>
+              Go to run page
+            </a>
+            {" "}if it doesn't load.
           </div>
         )}
         {error && (

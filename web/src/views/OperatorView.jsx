@@ -48,11 +48,11 @@ function ContextCard({ context }) {
       <dl className="space-y-2 text-sm">
         <div>
           <dt className="text-xs text-ink-500">Domain</dt>
-          <dd className="font-mono text-ink-200">{context.domain}</dd>
+          <dd className="font-mono text-ink-200">{context.domain || "—"}</dd>
         </div>
         <div>
           <dt className="text-xs text-ink-500">Decision focus</dt>
-          <dd className="font-mono text-ink-200">{context.decision}</dd>
+          <dd className="font-mono text-ink-200">{context.decision || "—"}</dd>
         </div>
         {Array.isArray(context.bounded_contexts) && context.bounded_contexts.length > 0 && (
           <div>

@@ -66,7 +66,18 @@ function formatTs(ts) {
 }
 
 function summarizeEvent(event) {
-  const fields = ["task_id", "title", "round", "evidence_count", "complete", "reason", "selected_topology", "issue_count", "promoted_candidate_count", "evidence_count", "unsupported_count"];
+  const fields = [
+    "task_id",
+    "title",
+    "round",
+    "evidence_count",
+    "complete",
+    "reason",
+    "selected_topology",
+    "issue_count",
+    "promoted_candidate_count",
+    "unsupported_count"
+  ];
   const summaryFields = fields
     .filter((field) => event[field] !== undefined)
     .map((field) => `${field}=${truncate(event[field])}`);

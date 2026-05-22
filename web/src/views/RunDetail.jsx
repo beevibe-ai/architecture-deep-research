@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getArtifact, getRun, subscribeEvents } from "../lib/api.js";
 import { usePolling } from "../lib/usePolling.js";
@@ -6,22 +6,35 @@ import OperatorView from "./OperatorView.jsx";
 import DeveloperView from "./DeveloperView.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "aborted_by_human",
+  "needs_clarification",
+  "failed"
+]);
+
 export default function RunDetail() {
   const { id } = useParams();
   const [mode, setMode] = useState("operator");
+  const [pollingPaused, setPollingPaused] = useState(false);
   const { data: summary, error: summaryError, loading } = usePolling(
     () => getRun(id),
-    { interval: 4000, deps: [id] }
+    { interval: 4000, enabled: !pollingPaused, deps: [id] }
   );
+
+  // Suspend polling once the run reaches a terminal status — there's nothing
+  // more to refresh, and 4s polls would otherwise continue forever.
+  useEffect(() => {
+    if (summary?.status && TERMINAL_STATUSES.has(summary.status)) {
+      setPollingPaused(true);
+    } else if (pollingPaused && summary?.status && !TERMINAL_STATUSES.has(summary.status)) {
+      setPollingPaused(false);
+    }
+  }, [summary?.status, pollingPaused]);
 
   const [artifacts, setArtifacts] = useState({});
   const [events, setEvents] = useState([]);
   const [eventStreamError, setEventStreamError] = useState(null);
-
-  const availableSet = useMemo(
-    () => new Set(summary?.artifacts || []),
-    [summary]
-  );
 
   useEffect(() => {
     if (!summary) return;
@@ -41,7 +54,12 @@ export default function RunDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id, summary?.completed_at, summary?.modified_at, summary?.artifacts?.length]);
+    // Re-fetch on every poll. The summary reference changes on each tick,
+    // so this drives a refresh whenever the dir mtime might have advanced.
+    // mtime-only dependence is unreliable across filesystems (Linux ext4
+    // doesn't bump dir mtime on file-content changes), and an artifact-count
+    // dep silently freezes after the first full snapshot is written.
+  }, [id, summary]);
 
   // Subscribe to SSE event tail. Only for developer view consumers, but
   // the operator view also wants the latest status, so we always tail.
@@ -105,14 +123,9 @@ export default function RunDetail() {
       )}
 
       {mode === "operator" ? (
-        <OperatorView summary={summary} artifacts={artifacts} availableSet={availableSet} />
+        <OperatorView summary={summary} artifacts={artifacts} />
       ) : (
-        <DeveloperView
-          summary={summary}
-          artifacts={artifacts}
-          availableSet={availableSet}
-          events={events}
-        />
+        <DeveloperView summary={summary} artifacts={artifacts} events={events} />
       )}
     </section>
   );

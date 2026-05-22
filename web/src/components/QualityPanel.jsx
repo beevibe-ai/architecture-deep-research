@@ -36,11 +36,14 @@ export default function QualityPanel({ summary, critique, audit, claimAudit, mat
         )}
         {audit && (
           <>
-            <Row label="Citations verified" value={`${audit.verified_count} / ${audit.total_citations}`} />
+            <Row
+              label="Citations verified"
+              value={`${audit.verified_count ?? "—"} / ${audit.total_citations ?? "—"}`}
+            />
             <Row
               label="Citations unsupported"
-              value={audit.unsupported_count}
-              tone={audit.unsupported_count > 0 ? "danger" : "success"}
+              value={audit.unsupported_count ?? "—"}
+              tone={(audit.unsupported_count || 0) > 0 ? "danger" : "success"}
             />
           </>
         )}
