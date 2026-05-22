@@ -774,17 +774,10 @@ async function searchWithOpenAiMcp(query) {
     if (results.length >= 8) break;
   }
   if (results.length > 0) return results;
-  const snippet = normalizeWhitespace(fallbackText).slice(0, 1600);
-  return snippet
-    ? [
-        {
-          title: `Private corpus result for ${query}`,
-          url: `mcp://${serverLabel}/${contentHash(query).slice(0, 12)}`,
-          snippet,
-          provider: "openai-remote-mcp"
-        }
-      ]
-    : [];
+  console.warn(
+    `[search] openai-remote-mcp returned no url_citation annotations for "${query.slice(0, 80)}" — yielding 0 results (no fabricated evidence).`
+  );
+  return [];
 }
 
 async function searchWithProvider(query) {
@@ -920,6 +913,11 @@ async function searchWithProvider(query) {
         if (results.length >= 8) break;
       }
       if (results.length >= 8) break;
+    }
+    if (results.length === 0) {
+      console.warn(
+        `[search] openai-web-search returned no url_citation annotations for "${query.slice(0, 80)}" — yielding 0 results.`
+      );
     }
     return results;
   }
