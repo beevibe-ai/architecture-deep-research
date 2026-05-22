@@ -37,7 +37,7 @@ export default function ComparisonMatrix({ matrix }) {
                   className="px-2 py-1 text-left text-xs font-medium text-ink-300"
                 >
                   <div>{candidate.label || candidate.name}</div>
-                  <div className="font-mono text-[10px] text-ink-500">
+                  <div className="font-mono text-2xs text-ink-500">
                     {candidate.promotion_status}
                   </div>
                 </th>
@@ -50,7 +50,7 @@ export default function ComparisonMatrix({ matrix }) {
                 <th className="px-2 py-1 text-left text-xs font-normal text-ink-400">
                   <div className="font-medium text-ink-200">{axis.label}</div>
                   {axis.rationale && (
-                    <div className="font-mono text-[10px] text-ink-500">{axis.rationale}</div>
+                    <div className="font-mono text-2xs text-ink-500">{axis.rationale}</div>
                   )}
                 </th>
                 {candidates.map((candidate) => {
@@ -60,14 +60,14 @@ export default function ComparisonMatrix({ matrix }) {
                   return (
                     <td key={candidate.name} className="align-top">
                       <div className={cls}>
-                        <div className="font-mono text-[10px] uppercase tracking-wide">
+                        <div className="font-mono text-2xs uppercase tracking-wide">
                           {verdict}
                         </div>
                         {cell?.summary && (
                           <div className="mt-0.5 text-ink-200">{cell.summary}</div>
                         )}
                         {cell?.evidence_citations?.length > 0 && (
-                          <div className="mt-0.5 text-[10px] text-ink-400">
+                          <div className="mt-0.5 text-2xs text-ink-400">
                             cites {cell.evidence_citations.map((id) => `[${id}]`).join(" ")}
                           </div>
                         )}

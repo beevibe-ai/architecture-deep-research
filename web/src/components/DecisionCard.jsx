@@ -24,10 +24,10 @@ export default function DecisionCard({ spec, summary, critique, audit }) {
         </span>
       </div>
       <div>
-        <div className="text-2xl font-semibold tracking-tight text-ink-100">
+        <div className="text-xl font-semibold tracking-tight text-ink-100">
           {selectedCandidate?.label || selected || "—"}
         </div>
-        <div className="mt-1 font-mono text-xs text-ink-500">{selected}</div>
+        <div className="mt-1 font-mono text-xs text-ink-400">{selected}</div>
         {original && original !== selected && (
           <div className="mt-1 text-xs text-warn-500">
             Downgraded from <span className="font-mono">{original}</span> by critique

@@ -100,7 +100,7 @@ export default function NewRunForm() {
   return (
     <section className="space-y-4">
       <header>
-        <h1 className="text-lg font-semibold tracking-tight">Start a new run</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Start a new run</h1>
         <p className="text-xs text-ink-500">
           The server spawns the same CLI under the hood. Required env (search provider + LLM key) must
           be present in the server's environment.
@@ -212,22 +212,13 @@ export default function NewRunForm() {
           <p className="text-xs text-ink-500">
             The run is spawned as a detached child process. Follow progress on the run page.
           </p>
-          <button
-            type="submit"
-            disabled={submitting}
-            aria-busy={submitting}
-            className="rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <button type="submit" disabled={submitting} aria-busy={submitting} className="btn-primary">
             {submitting ? "Starting…" : "Start run"}
           </button>
         </div>
 
         {response && (
-          <div
-            className="rounded-md border border-success-600/30 bg-success-500/10 p-3 text-xs text-success-500"
-            role="status"
-            aria-live="polite"
-          >
+          <div className="banner-success" role="status" aria-live="polite">
             Started{response.pid ? ` (pid ${response.pid})` : ""}. Redirecting…{" "}
             <a className="link" href={`/runs/${encodeURIComponent(response.runId)}`}>
               Go to run page
@@ -236,10 +227,7 @@ export default function NewRunForm() {
           </div>
         )}
         {error && (
-          <div
-            role="alert"
-            className="rounded-md border border-danger-600/30 bg-danger-500/10 p-3 text-xs text-danger-500"
-          >
+          <div role="alert" className="banner-danger">
             {String(error.message || error)}
           </div>
         )}

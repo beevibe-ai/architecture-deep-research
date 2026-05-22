@@ -10,7 +10,7 @@ export default function RunsIndex() {
   return (
     <section className="space-y-4">
       <header className="flex items-baseline justify-between">
-        <h1 className="text-lg font-semibold tracking-tight">Runs</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Runs</h1>
         <p className="text-xs text-ink-500">
           Polling every 5s. Newest first. State derived from <code className="kbd">state.json</code>.
         </p>

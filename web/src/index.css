@@ -33,13 +33,37 @@
     @apply rounded-xl border border-ink-800 bg-ink-900/60 shadow-sm;
   }
   .card-title {
-    @apply text-sm font-semibold uppercase tracking-wide text-ink-400;
+    @apply text-sm font-semibold uppercase tracking-wide text-ink-300;
   }
   .kbd {
-    @apply rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-xs font-mono text-ink-300;
+    @apply rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 text-xs font-mono text-ink-200;
   }
   .link {
-    @apply text-accent-400 underline-offset-2 hover:underline;
+    @apply text-accent-400 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-500;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-primary {
+    @apply btn bg-accent-500 text-ink-950 hover:bg-accent-400;
+  }
+  .btn-ghost {
+    @apply btn border border-accent-500/40 text-accent-400 hover:bg-accent-500/10;
+  }
+  .btn-secondary {
+    @apply btn bg-ink-900 text-ink-200 hover:bg-ink-800;
+  }
+  .banner {
+    @apply rounded-md border px-3 py-2 text-xs;
+  }
+  .banner-success {
+    @apply banner border-success-600/40 bg-success-500/10 text-success-500;
+  }
+  .banner-warn {
+    @apply banner border-warn-600/40 bg-warn-500/10 text-warn-500;
+  }
+  .banner-danger {
+    @apply banner border-danger-600/40 bg-danger-500/10 text-danger-500;
   }
   .matrix-cell {
     @apply rounded-md border px-2 py-1.5 text-xs;
@@ -50,10 +74,10 @@
   .matrix-mixed {
     @apply matrix-cell border-warn-600/40 bg-warn-500/10 text-warn-500;
   }
+  .matrix-empty {
+    @apply matrix-cell border-dashed border-ink-700 bg-ink-900/40 text-ink-400;
+  }
   .matrix-weak {
     @apply matrix-cell border-danger-600/40 bg-danger-500/10 text-danger-500;
-  }
-  .matrix-empty {
-    @apply matrix-cell border-dashed border-ink-700 bg-ink-900/40 text-ink-500;
   }
 }

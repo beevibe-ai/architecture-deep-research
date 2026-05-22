@@ -42,11 +42,11 @@ export default function EventTimeline({ events, onSelect, selected }) {
               aria-pressed={isSelected}
               className={`flex w-full items-baseline gap-3 px-3 py-2 text-left hover:bg-ink-900/40 focus:outline-none focus-visible:bg-ink-900/60 focus-visible:ring-1 focus-visible:ring-accent-500 ${isSelected ? "bg-ink-900/60" : ""}`}
             >
-              <span className="w-24 shrink-0 font-mono text-[10px] text-ink-400">
+              <span className="w-24 shrink-0 font-mono text-2xs text-ink-400">
                 {formatTs(event.ts)}
               </span>
               <span
-                className={`whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone}`}
+                className={`whitespace-nowrap rounded-md px-2 py-0.5 text-2xs font-medium uppercase tracking-wide ${tone}`}
               >
                 {event.type || "event"}
               </span>

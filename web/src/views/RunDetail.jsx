@@ -112,7 +112,7 @@ export default function RunDetail() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold tracking-tight">{id}</h1>
+            <h1 className="text-xl font-semibold tracking-tight">{id}</h1>
             <StatusPill status={summary.status} />
           </div>
           <p className="mt-1 text-xs text-ink-400">
@@ -144,10 +144,7 @@ export default function RunDetail() {
       </header>
 
       {eventStreamError && (
-        <div
-          role="alert"
-          className="rounded-md border border-warn-600/40 bg-warn-500/10 px-3 py-2 text-xs text-warn-500"
-        >
+        <div role="alert" className="banner-warn">
           Event stream disconnected. Artifacts still refresh via polling — the stream will retry
           automatically; reload the page if it doesn't recover.
         </div>
@@ -163,8 +160,6 @@ export default function RunDetail() {
 }
 
 function ModeToggle({ mode, onChange }) {
-  const base =
-    "rounded-md px-3 py-1.5 text-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-500";
   return (
     <div
       role="tablist"
@@ -175,7 +170,7 @@ function ModeToggle({ mode, onChange }) {
         type="button"
         role="tab"
         aria-selected={mode === "operator"}
-        className={`${base} ${mode === "operator" ? "bg-accent-500 text-ink-950 font-medium" : "bg-ink-900 text-ink-200 hover:bg-ink-800"}`}
+        className={mode === "operator" ? "btn-primary rounded-none" : "btn-secondary rounded-none"}
         onClick={() => onChange("operator")}
       >
         Operator
@@ -184,7 +179,7 @@ function ModeToggle({ mode, onChange }) {
         type="button"
         role="tab"
         aria-selected={mode === "developer"}
-        className={`${base} ${mode === "developer" ? "bg-accent-500 text-ink-950 font-medium" : "bg-ink-900 text-ink-200 hover:bg-ink-800"}`}
+        className={mode === "developer" ? "btn-primary rounded-none" : "btn-secondary rounded-none"}
         onClick={() => onChange("developer")}
       >
         Developer

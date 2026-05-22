@@ -55,7 +55,7 @@ export default function EvidencePanel({ evidence, knowledgeMap }) {
                 >
                   [{item.citation_id}] {item.title}
                 </a>
-                <div className="mt-0.5 truncate font-mono text-[10px] text-ink-500">{item.url}</div>
+                <div className="mt-0.5 truncate font-mono text-2xs text-ink-500">{item.url}</div>
               </div>
               <span className={SOURCE_TYPE_PILL[item.source_type] || "pill"}>
                 {item.source_type}

@@ -42,6 +42,9 @@ export default {
           600: "#dc2626"
         }
       },
+      fontSize: {
+        "2xs": ["0.625rem", { lineHeight: "0.875rem" }]
+      },
       fontFamily: {
         sans: ['"Inter"', "system-ui", "sans-serif"],
         mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"]

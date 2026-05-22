@@ -32,11 +32,7 @@ export default function App() {
             <Link
               to="/new"
               aria-current={pathname === "/new" ? "page" : undefined}
-              className={
-                pathname === "/new"
-                  ? "rounded-md bg-accent-500 px-3 py-1.5 text-ink-950 font-medium"
-                  : "rounded-md border border-accent-500/40 px-3 py-1.5 text-accent-400 hover:bg-accent-500/10"
-              }
+              className={pathname === "/new" ? "btn-primary" : "btn-ghost"}
             >
               + New run
             </Link>
