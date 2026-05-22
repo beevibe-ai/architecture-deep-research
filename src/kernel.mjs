@@ -2559,60 +2559,83 @@ async function verifyCitationsPhase({
   }
 
   const items = [];
-  let raw;
-  try {
-    raw = await callLlmJson({
-      label: "citation_verifier",
-      system: [
-        "You are the citation verifier for Architecture Deep Research.",
-        "For each (claim_text, citation_id) pair, decide whether the cited evidence's claims and excerpt actually support the claim_text.",
-        "Be strict: a citation that only loosely touches the topic is NOT supporting.",
-        "If the evidence is missing or empty, mark verified:false with reason 'no_evidence'.",
-        "Output JSON with {items:[{citation_id,claim_context,verified:boolean,confidence:0..1,reason:string}]}."
-      ].join("\n"),
-      user: JSON.stringify({
-        domain: context.domain,
-        decision: context.decision,
-        selected_topology: spec.decision?.selected_topology,
-        cited_points: citedPoints,
-        evidence_lookup: citedPoints.map((point) => {
-          const item = evidenceById.get(Number(point.citation_id));
-          return {
-            citation_id: point.citation_id,
-            present: Boolean(item),
-            title: item?.title,
-            url: item?.url,
-            source_type: item?.source_type,
-            score: item?.score,
-            claims: item?.claims || [],
-            excerpt: (item?.excerpt || "").slice(0, 1200)
-          };
-        })
-      })
-    });
-  } catch (error) {
-    raw = {
-      items: citedPoints.map((point) => ({
-        citation_id: point.citation_id,
-        claim_context: point.claim_context,
-        verified: false,
-        confidence: 0,
-        reason: `verifier_failed: ${String(error?.message || error)}`
-      }))
-    };
+
+  // Batch by claim_context so the verifier never sees the same citation_id twice
+  // in one call — a single-batch call lets the model dedupe and silently drop
+  // every duplicate context, which surfaces as `verifier_did_not_return_item`.
+  const pointsByContext = new Map();
+  for (const point of citedPoints) {
+    const list = pointsByContext.get(point.claim_context) || [];
+    list.push(point);
+    pointsByContext.set(point.claim_context, list);
   }
 
-  for (const item of toArray(raw.items)) {
-    const citationId = Number(item.citation_id);
-    if (!Number.isFinite(citationId)) continue;
-    items.push({
-      citation_id: citationId,
-      claim_context: String(item.claim_context || ""),
-      verified: Boolean(item.verified),
-      confidence: Math.max(0, Math.min(1, Number(item.confidence || 0))),
-      reason: String(item.reason || ""),
-      evidence_present: evidenceById.has(citationId)
-    });
+  const verifyOneBatch = async (claimContext, batchPoints) => {
+    try {
+      const raw = await callLlmJson({
+        label: "citation_verifier",
+        system: [
+          "You are the citation verifier for Architecture Deep Research.",
+          "All cited_points in this call share the same claim_context.",
+          "For each citation_id, decide whether the cited evidence's claims and excerpt actually support the shared claim_text.",
+          "Be strict: a citation that only loosely touches the topic is NOT supporting.",
+          "If the evidence is missing or empty, mark verified:false with reason 'no_evidence'.",
+          "Return exactly one entry for every citation_id you receive — do not deduplicate, omit, or merge.",
+          "Output JSON with {items:[{citation_id,verified:boolean,confidence:0..1,reason:string}]}."
+        ].join("\n"),
+        user: JSON.stringify({
+          domain: context.domain,
+          decision: context.decision,
+          selected_topology: spec.decision?.selected_topology,
+          claim_context: claimContext,
+          claim_text: batchPoints[0]?.claim_text || "",
+          cited_points: batchPoints.map((p) => ({ citation_id: p.citation_id })),
+          evidence_lookup: batchPoints.map((point) => {
+            const item = evidenceById.get(Number(point.citation_id));
+            return {
+              citation_id: point.citation_id,
+              present: Boolean(item),
+              title: item?.title,
+              url: item?.url,
+              source_type: item?.source_type,
+              score: item?.score,
+              claims: item?.claims || [],
+              excerpt: (item?.excerpt || "").slice(0, 1200)
+            };
+          })
+        })
+      });
+      return { claimContext, items: toArray(raw.items) };
+    } catch (error) {
+      return {
+        claimContext,
+        items: batchPoints.map((point) => ({
+          citation_id: point.citation_id,
+          verified: false,
+          confidence: 0,
+          reason: `verifier_failed: ${String(error?.message || error)}`
+        }))
+      };
+    }
+  };
+
+  const batchResults = await Promise.all(
+    Array.from(pointsByContext.entries()).map(([ctx, pts]) => verifyOneBatch(ctx, pts))
+  );
+
+  for (const { claimContext, items: batchItems } of batchResults) {
+    for (const item of toArray(batchItems)) {
+      const citationId = Number(item.citation_id);
+      if (!Number.isFinite(citationId)) continue;
+      items.push({
+        citation_id: citationId,
+        claim_context: claimContext,
+        verified: Boolean(item.verified),
+        confidence: Math.max(0, Math.min(1, Number(item.confidence || 0))),
+        reason: String(item.reason || ""),
+        evidence_present: evidenceById.has(citationId)
+      });
+    }
   }
 
   // Synthesize: any cited_point not returned by the verifier is unverified.
