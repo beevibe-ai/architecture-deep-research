@@ -12,124 +12,6 @@ const MAX_PARALLEL_RESEARCH_AGENTS = 3;
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const ENTITY_HINTS = [
-  "Vendor",
-  "Facility",
-  "Contract",
-  "ContractClause",
-  "Jurisdiction",
-  "ShipmentLane",
-  "RegulatoryChange",
-  "Patient",
-  "Case",
-  "Claim",
-  "Policy",
-  "Evidence",
-  "Document",
-  "Account",
-  "User",
-  "Workspace",
-  "Project",
-  "Task",
-  "Agent",
-  "Memory",
-  "SourceSpan"
-];
-
-const QUERY_SHAPE_RULES = [
-  {
-    name: "multi_hop_relational",
-    patterns: [
-      "multi-hop",
-      "multi hop",
-      "trace",
-      "tracing",
-      "dependency",
-      "dependencies",
-      "relationship",
-      "relationships",
-      "link",
-      "links",
-      "exposed",
-      "impact",
-      "ripple"
-    ]
-  },
-  {
-    name: "audit_traceability",
-    patterns: [
-      "audit",
-      "traceability",
-      "lineage",
-      "source-backed",
-      "compliance",
-      "legal",
-      "medical",
-      "regulated"
-    ]
-  },
-  {
-    name: "exploratory_research",
-    patterns: [
-      "explore",
-      "research",
-      "investigate",
-      "open-ended",
-      "open ended",
-      "compare",
-      "discover"
-    ]
-  },
-  {
-    name: "self_contained_lookup",
-    patterns: ["faq", "docs", "documentation", "lookup", "search", "support"]
-  },
-  {
-    name: "transactional_state",
-    patterns: [
-      "transaction",
-      "transactions",
-      "state",
-      "mutation",
-      "workflow",
-      "approval",
-      "command",
-      "aggregate",
-      "aggregates",
-      "source-of-truth",
-      "source of truth"
-    ]
-  }
-];
-
-const COMPLIANCE_PATTERNS = [
-  "audit",
-  "compliance",
-  "legal",
-  "medical",
-  "hipaa",
-  "gdpr",
-  "sox",
-  "regulated",
-  "privacy",
-  "traceability",
-  "lineage"
-];
-
-const CONTEXT_HINTS = [
-  "Ingestion",
-  "Extraction",
-  "QueryOrchestration",
-  "TraceabilityAudit",
-  "KnowledgeGraph",
-  "Document",
-  "Search",
-  "Policy",
-  "Review",
-  "Agent",
-  "Memory"
-];
-
 function titleCase(value) {
   return String(value || "")
     .split(/[\s_-]+/)
@@ -227,123 +109,45 @@ function toArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-function hasNegationBefore(content, index) {
-  const window = content.slice(Math.max(0, index - 80), index).toLowerCase();
-  return /\b(does not|do not|doesn't|don't|not|no|without|avoid|is not|are not|less important than)\b/.test(
-    window
-  );
-}
-
-function findEvidence(content, patterns) {
-  const normalized = content.toLowerCase();
-  return patterns.filter((pattern) => {
-    const normalizedPattern = pattern.toLowerCase();
-    let index = normalized.indexOf(normalizedPattern);
-
-    while (index !== -1) {
-      if (!hasNegationBefore(normalized, index)) return true;
-      index = normalized.indexOf(normalizedPattern, index + normalizedPattern.length);
-    }
-
-    return false;
+async function buildStrategicContext({ sourcePath, content, domain, decision }) {
+  const raw = await callLlmJson({
+    label: "strategic_context_extractor",
+    system: [
+      "You are the strategic context extractor for Architecture Deep Research.",
+      "Read the product context document and extract the architectural shape grounded in what the document actually says.",
+      "Do not invent entities, contexts, or constraints that are not supported by the text.",
+      "Leave a field empty (empty array, or the string \"not_specified\" for operational envelope fields) rather than inferring from prior knowledge of similar domains.",
+      "",
+      "Output JSON with:",
+      "- domain_entities: array of domain entity or aggregate names mentioned in or strongly implied by the text (PascalCase or as written).",
+      "- bounded_contexts: array of bounded-context names (DDD-style) that the text describes or strongly implies. Each should be a noun phrase ending in \"Context\".",
+      "- query_shapes: array of { name, evidence:[string] } describing kinds of queries or workflows the system must support. name is a slug-style identifier; evidence is brief quotes or paraphrases of the supporting text.",
+      "- risk_invariants: array of architectural invariants the text requires (lineage, compliance, transactional safety, etc.). One sentence each.",
+      "- operational_envelope: object with optional string fields latency, cost, scale, availability. Each should be a brief description of the constraint as stated, or the literal string \"not_specified\".",
+      "- compliance_constraints: array of regulatory or audit constraints mentioned (e.g. \"HIPAA\", \"GDPR\", \"audit traceability\")."
+    ].join("\n"),
+    user: JSON.stringify({
+      domain,
+      decision,
+      product_context: content.slice(0, 24_000)
+    })
   });
-}
 
-function inferEntities(content, domain) {
-  const combined = `${domain}\n${content}`;
-  const direct = ENTITY_HINTS.filter((hint) =>
-    new RegExp(`\\b${hint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?\\b`, "i").test(
-      combined
-    )
-  );
+  const queryShapes = toArray(raw.query_shapes)
+    .filter((shape) => shape && typeof shape === "object" && !Array.isArray(shape))
+    .map((shape) => ({
+      name: String(shape.name || "").trim(),
+      evidence: toArray(shape.evidence).map(String).filter(Boolean)
+    }))
+    .filter((shape) => shape.name);
 
-  const codeStyle = Array.from(
-    combined.matchAll(/\b[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)+\b/g)
-  ).map((match) => match[0]);
-
-  return unique([...direct, ...codeStyle]).slice(0, 16);
-}
-
-function inferBoundedContexts(content, entities) {
-  const contextMatches = CONTEXT_HINTS.filter((hint) =>
-    new RegExp(`\\b${hint}\\b`, "i").test(content)
-  ).map((hint) => `${hint}Context`);
-
-  const defaults = [];
-  if (entities.some((entity) => /Document|Contract|Policy|Evidence/i.test(entity))) {
-    defaults.push("IngestionContext");
-  }
-  if (entities.some((entity) => /Vendor|Facility|Case|Patient|Claim|Jurisdiction/i.test(entity))) {
-    defaults.push("DomainModelContext");
-  }
-  if (/graph|relationship|entity|multi-hop|multi hop/i.test(content)) {
-    defaults.push("KnowledgeGraphContext");
-  }
-  if (/query|search|retrieval|answer/i.test(content)) {
-    defaults.push("QueryOrchestrationContext");
-  }
-  if (/audit|traceability|lineage|citation|source/i.test(content)) {
-    defaults.push("TraceabilityAuditContext");
-  }
-
-  return unique([...contextMatches, ...defaults]).slice(0, 10);
-}
-
-function inferQueryShapes(content) {
-  return QUERY_SHAPE_RULES.map((rule) => ({
-    name: rule.name,
-    evidence: findEvidence(content, rule.patterns)
-  })).filter((shape) => shape.evidence.length > 0);
-}
-
-function inferComplianceConstraints(content) {
-  return findEvidence(content, COMPLIANCE_PATTERNS).map((item) => titleCase(item));
-}
-
-function inferOperationalEnvelope(content) {
-  const latency = content.match(/\b(?:p9[59]|latency|sla)[^.\n]{0,80}/i)?.[0];
-  const cost = content.match(/\b(?:cost|budget|spend)[^.\n]{0,80}/i)?.[0];
-  const scale = content.match(/\b(?:scale|concurrent|throughput|users|documents|requests)[^.\n]{0,80}/i)?.[0];
-  const availability = content.match(/\b(?:availability|uptime|reliability|failover)[^.\n]{0,80}/i)?.[0];
-
-  return {
-    latency: latency || "not_specified",
-    cost: cost || "not_specified",
-    scale: scale || "not_specified",
-    availability: availability || "not_specified"
+  const envelope = raw.operational_envelope && typeof raw.operational_envelope === "object"
+    ? raw.operational_envelope
+    : {};
+  const envelopeField = (key) => {
+    const value = envelope[key];
+    return typeof value === "string" && value.trim() ? value.trim() : "not_specified";
   };
-}
-
-function inferRiskInvariants(content) {
-  const invariants = [];
-
-  if (/audit|traceability|lineage|citation|source/i.test(content)) {
-    invariants.push("Answers must resolve to source-backed evidence before being returned.");
-  }
-  if (/multi-hop|multi hop|relationship|dependency|graph|entity/i.test(content)) {
-    invariants.push("The selected architecture must preserve explicit relationships between domain entities.");
-  }
-  if (/compliance|legal|medical|regulated|privacy/i.test(content)) {
-    invariants.push("Compliance-critical flows must be deterministic, reviewable, and replayable.");
-  }
-  if (/agent|tool|open-ended|open ended|research/i.test(content)) {
-    invariants.push("Agentic search must be bounded by workflow controls and must not silently mutate source-of-truth state.");
-  }
-  if (/bounded context|ddd|aggregate|ownership/i.test(content)) {
-    invariants.push("Bounded contexts must communicate through explicit interfaces or domain events.");
-  }
-  if (/transaction|mutation|approval|source-of-truth|source of truth/i.test(content)) {
-    invariants.push("Source-of-truth mutations must be explicit, reviewable, and separated from retrieval or answer generation.");
-  }
-
-  return invariants.length > 0
-    ? invariants
-    : ["The selected architecture must preserve the domain invariants stated in the source brief."];
-}
-
-function buildStrategicContext({ sourcePath, content, domain, decision }) {
-  const entities = inferEntities(content, domain);
-  const queryShapes = inferQueryShapes(content);
 
   return {
     version: VERSION,
@@ -353,15 +157,17 @@ function buildStrategicContext({ sourcePath, content, domain, decision }) {
     },
     domain,
     decision,
-    domain_entities: entities,
-    bounded_contexts: inferBoundedContexts(content, entities),
-    query_shapes:
-      queryShapes.length > 0
-        ? queryShapes
-        : [{ name: "unspecified", evidence: ["No explicit query shape found."] }],
-    risk_invariants: inferRiskInvariants(content),
-    operational_envelope: inferOperationalEnvelope(content),
-    compliance_constraints: inferComplianceConstraints(content),
+    domain_entities: toArray(raw.domain_entities).map(String).filter(Boolean),
+    bounded_contexts: toArray(raw.bounded_contexts).map(String).filter(Boolean),
+    query_shapes: queryShapes,
+    risk_invariants: toArray(raw.risk_invariants).map(String).filter(Boolean),
+    operational_envelope: {
+      latency: envelopeField("latency"),
+      cost: envelopeField("cost"),
+      scale: envelopeField("scale"),
+      availability: envelopeField("availability")
+    },
+    compliance_constraints: toArray(raw.compliance_constraints).map(String).filter(Boolean),
     acquisition_contract: {
       mode: "live_agentic_research_required",
       no_static_pattern_oracle: true,
@@ -381,7 +187,7 @@ function assessClarification(context, content) {
   if (context.domain_entities.length < 3) {
     questions.push("Which domain entities or aggregates must the architecture preserve?");
   }
-  if (context.query_shapes[0]?.name === "unspecified") {
+  if (context.query_shapes.length === 0) {
     questions.push("What are representative user questions or workflows the system must support?");
   }
   if (context.compliance_constraints.length === 0 && /legal|medical|finance|enterprise/i.test(context.domain)) {
@@ -2805,7 +2611,7 @@ async function prepareRun({ inputPath, flags }) {
     decision: flags.decision
   });
 
-  const context = buildStrategicContext({
+  const context = await buildStrategicContext({
     sourcePath: inputPath,
     content,
     domain: flags.domain,

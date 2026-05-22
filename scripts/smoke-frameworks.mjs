@@ -148,13 +148,42 @@ if (isPaperUrl("https://example.com/random-blog-post")) {
 if (typeof buildComparisonMatrix !== "function") {
   throw new Error("Kernel did not export buildComparisonMatrix.");
 }
-const sampleContext = buildStrategicContext({
+// buildStrategicContext is LLM-derived; install a fixture provider for the
+// hermetic smoke check so axes can be derived from a known-rich context.
+setLlmJsonProvider(
+  async ({ label }) => {
+    if (label !== "strategic_context_extractor") {
+      throw new Error(`smoke fixture: unexpected llm label ${label}`);
+    }
+    return {
+      domain_entities: ["Contract", "Vendor", "Shipment"],
+      bounded_contexts: ["IngestionContext", "KnowledgeGraphContext"],
+      query_shapes: [
+        { name: "multi_hop_relational", evidence: ["multi-hop entity relationships"] },
+        { name: "audit_traceability", evidence: ["audit lineage"] }
+      ],
+      risk_invariants: [
+        "Answers must resolve to source-backed evidence before being returned."
+      ],
+      operational_envelope: {
+        latency: "p95 < 2s",
+        cost: "not_specified",
+        scale: "not_specified",
+        availability: "not_specified"
+      },
+      compliance_constraints: ["audit traceability"]
+    };
+  },
+  { label: "smoke-fixture" }
+);
+const sampleContext = await buildStrategicContext({
   sourcePath: "smoke",
   content:
     "Build a logistics contract knowledge system with audit lineage, multi-hop entity relationships, and deterministic retrieval routing.",
   domain: "logistics contract analysis",
   decision: "retrieval topology"
 });
+setLlmJsonProvider(null);
 const axes = deriveComparisonAxes(sampleContext);
 if (!Array.isArray(axes) || axes.length < 4) {
   throw new Error("deriveComparisonAxes returned too few axes for a rich context.");

@@ -13,7 +13,42 @@ import {
   writeRunArtifacts
 } from "../src/kernel.mjs";
 
-const context = buildStrategicContext({
+function installProvider(handler) {
+  setLlmJsonProvider(async ({ label }) => handler(label), { label: "regression-fixture" });
+}
+
+// Strategic context is now LLM-derived (no more regex extractors). Install a
+// fixture provider that returns a hand-crafted shape so the test stays hermetic.
+installProvider((label) => {
+  if (label !== "strategic_context_extractor") {
+    throw new Error(`fixture: unexpected llm label before context extraction: ${label}`);
+  }
+  return {
+    domain_entities: ["Contract", "Vendor", "Shipment", "Jurisdiction"],
+    bounded_contexts: [
+      "IngestionContext",
+      "KnowledgeGraphContext",
+      "QueryOrchestrationContext"
+    ],
+    query_shapes: [
+      { name: "multi_hop_relational", evidence: ["multi-hop entity relationships"] },
+      { name: "audit_traceability", evidence: ["audit lineage"] }
+    ],
+    risk_invariants: [
+      "Answers must resolve to source-backed evidence before being returned.",
+      "Compliance-critical flows must be deterministic, reviewable, and replayable."
+    ],
+    operational_envelope: {
+      latency: "not_specified",
+      cost: "not_specified",
+      scale: "not_specified",
+      availability: "not_specified"
+    },
+    compliance_constraints: ["audit traceability"]
+  };
+});
+
+const context = await buildStrategicContext({
   sourcePath: "regression-fixture.md",
   content:
     "Build a source-backed retrieval system with audit lineage, multi-hop entity relationships, bounded contexts, and deterministic reviewable workflows.",
@@ -51,10 +86,6 @@ function evidenceItem(overrides = {}) {
     ],
     ...overrides
   };
-}
-
-function installProvider(handler) {
-  setLlmJsonProvider(async ({ label }) => handler(label), { label: "regression-fixture" });
 }
 
 try {
