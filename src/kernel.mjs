@@ -2380,25 +2380,15 @@ async function synthesizeArchitectureSpec({
       ...(overrideReason ? { override_reason: overrideReason } : {})
     },
     domain_model: {
-      bounded_contexts: toArray(result.domain_model?.bounded_contexts).length
-        ? toArray(result.domain_model.bounded_contexts)
-        : context.bounded_contexts,
-      core_entities: toArray(result.domain_model?.core_entities).length
-        ? toArray(result.domain_model.core_entities)
-        : context.domain_entities,
-      domain_invariants: toArray(result.domain_model?.domain_invariants).length
-        ? toArray(result.domain_model.domain_invariants)
-        : context.risk_invariants
+      bounded_contexts: toArray(result.domain_model?.bounded_contexts),
+      core_entities: toArray(result.domain_model?.core_entities),
+      domain_invariants: toArray(result.domain_model?.domain_invariants)
     },
     candidate_topologies: candidates,
     guardrails: {
       forbidden_topologies: toArray(result.guardrails?.forbidden_topologies),
-      required_invariants: toArray(result.guardrails?.required_invariants).length
-        ? toArray(result.guardrails.required_invariants)
-        : context.risk_invariants,
-      allowed_agentic_use: toArray(result.guardrails?.allowed_agentic_use).length
-        ? toArray(result.guardrails.allowed_agentic_use)
-        : ["source discovery", "evidence acquisition", "human-reviewed architecture comparison"],
+      required_invariants: toArray(result.guardrails?.required_invariants),
+      allowed_agentic_use: toArray(result.guardrails?.allowed_agentic_use),
       enforcement_notes: toArray(result.guardrails?.enforcement_notes)
     },
     evidence_summary: result.evidence_summary || {},
@@ -2440,85 +2430,58 @@ async function buildEvaluationPack(context, spec, evidenceItems) {
       ? toArray(result.target_topologies)
       : [spec.decision.selected_topology],
     metrics: normalizeEvaluationMetrics(result.metrics),
-    test_cases: normalizeEvaluationCases(result.test_cases, context, spec).slice(0, 12)
+    test_cases: normalizeEvaluationCases(result.test_cases).slice(0, 12)
   };
 }
 
 function normalizeEvaluationMetrics(metrics) {
-  const defaults = {
-    deterministic_lineage_rate: { target: 0.98 },
-    boundary_spill_tolerance: { target: 0 },
-    unsupported_answer_rate: { target: 0 },
-    p95_latency_ms: { target: 2500 }
-  };
-  const merged = { ...defaults, ...(metrics || {}) };
-  for (const [key, value] of Object.entries(merged)) {
-    if (!value || typeof value !== "object") {
-      merged[key] = { target: finiteNumber(value, defaults[key]?.target || 0) };
-      continue;
-    }
-    const defaultTarget = defaults[key]?.target || 0;
-    const target = finiteNumber(value.target, defaultTarget);
-    merged[key] = { ...value, target };
-  }
-  for (const key of [
+  // Pass through whatever the evaluation_pack_agent produced. No fabricated
+  // defaults — an empty metrics object honestly reflects "the agent did not
+  // produce evaluation metrics" rather than seeding 0.98/0/0/2500 targets
+  // that downstream consumers would read as research output.
+  const source = metrics && typeof metrics === "object" && !Array.isArray(metrics) ? metrics : {};
+  const RATE_KEYS = new Set([
     "deterministic_lineage_rate",
     "boundary_spill_tolerance",
     "unsupported_answer_rate"
-  ]) {
-    merged[key].target = clampNumber(merged[key].target, { min: 0, max: 1, fallback: defaults[key].target });
+  ]);
+  const normalized = {};
+  for (const [key, value] of Object.entries(source)) {
+    let target;
+    let extras = {};
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      target = finiteNumber(value.target, null);
+      extras = value;
+    } else {
+      target = finiteNumber(value, null);
+    }
+    if (target === null) continue;
+    if (RATE_KEYS.has(key)) {
+      target = clampNumber(target, { min: 0, max: 1, fallback: target });
+    }
+    normalized[key] = { ...extras, target };
   }
-  return merged;
+  return normalized;
 }
 
-function normalizeEvaluationCases(testCases, context, spec) {
-  const entities = context.domain_entities.length
-    ? context.domain_entities
-    : ["DomainEntity", "SourceDocument"];
-  const normalized = toArray(testCases)
-    .map((testCase, index) => ({
-      id: testCase.id || `TC-${String(index + 1).padStart(3, "0")}`,
-      type: testCase.type || "architecture_invariant",
-      question:
-        testCase.question ||
-        `Validate that ${spec.decision.selected_topology} preserves the required architecture invariants.`,
-      expected_entities: toArray(testCase.expected_entities).length
-        ? toArray(testCase.expected_entities)
-        : entities.slice(0, 5),
-      minimum_citation_depth: Number.isInteger(testCase.minimum_citation_depth)
-        ? testCase.minimum_citation_depth
-        : 1,
-      abstention_rule:
-        testCase.abstention_rule ||
-        "Abstain when the answer cannot be supported by cited source evidence.",
-      acceptance_criteria: toArray(testCase.acceptance_criteria).length
-        ? toArray(testCase.acceptance_criteria)
-        : [
-            "Answer preserves the selected architecture invariants.",
-            "Answer includes source citations for material claims.",
-            "Answer does not cross bounded-context boundaries without an explicit interface."
-          ]
-    }))
+function normalizeEvaluationCases(testCases) {
+  return toArray(testCases)
+    .map((testCase, index) => {
+      const out = {
+        id: testCase.id || `TC-${String(index + 1).padStart(3, "0")}`,
+        type: testCase.type || "architecture_invariant",
+        question: String(testCase.question || "").trim(),
+        expected_entities: toArray(testCase.expected_entities).map(String),
+        acceptance_criteria: toArray(testCase.acceptance_criteria).map(String)
+      };
+      if (Number.isInteger(testCase.minimum_citation_depth)) {
+        out.minimum_citation_depth = testCase.minimum_citation_depth;
+      }
+      const rule = String(testCase.abstention_rule || "").trim();
+      if (rule) out.abstention_rule = rule;
+      return out;
+    })
     .filter((testCase) => testCase.question);
-
-  if (normalized.length > 0) return normalized;
-
-  return [
-    {
-      id: "TC-001",
-      type: "architecture_invariant",
-      question: `Validate that ${spec.decision.selected_topology} can answer a representative ${context.domain} query without violating source lineage.`,
-      expected_entities: entities.slice(0, 5),
-      minimum_citation_depth: 1,
-      abstention_rule:
-        "Abstain when the answer cannot be supported by cited source evidence.",
-      acceptance_criteria: [
-        "Answer includes source citations for material claims.",
-        "Answer preserves bounded-context ownership.",
-        "Answer does not replace the selected topology with an easier implementation path."
-      ]
-    }
-  ];
 }
 
 function buildGuardrails(spec) {
