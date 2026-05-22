@@ -497,6 +497,20 @@ const schemaByFilename = {
   "supersedes.json": "../docs/schemas/supersedes.schema.json"
 };
 
+// Filenames intentionally written without schema validation. These are
+// operational/index artifacts (run state, cost ledger) whose shape evolves
+// with internal state rather than a stable contract. Add new content
+// artifacts to schemaByFilename, not here.
+const UNVALIDATED_ARTIFACTS = new Set(["state.json", "cost.json"]);
+
+function resolveSchemaKey(filename) {
+  if (schemaByFilename[filename]) return filename;
+  if (/^research-plan\.(adaptive|adversarial)-\d+\.json$/.test(filename)) {
+    return "research-plan.json";
+  }
+  return null;
+}
+
 let schemaValidatorState = null;
 
 async function getSchemaValidators() {
@@ -513,9 +527,16 @@ async function getSchemaValidators() {
 }
 
 async function assertSchemaValid(filename, value) {
+  if (UNVALIDATED_ARTIFACTS.has(filename)) return;
+  const key = resolveSchemaKey(filename);
+  if (!key) {
+    throw new Error(
+      `schema check requested for unregistered artifact: ${filename}. ` +
+        `Register it in schemaByFilename or add it to UNVALIDATED_ARTIFACTS with intent.`
+    );
+  }
   const { validators } = await getSchemaValidators();
-  const validator = validators.get(filename);
-  if (!validator) return;
+  const validator = validators.get(key);
   if (validator(value)) return;
   const errors = (validator.errors || [])
     .map((error) => `${error.instancePath || "/"} ${error.message}`)
