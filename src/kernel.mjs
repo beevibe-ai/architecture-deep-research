@@ -3570,6 +3570,7 @@ export {
   research,
   resetLlmCost,
   runResearchAgents,
+  searchWithProvider,
   setLlmJsonProvider,
   summarizeLlmCost,
   supersedeAdr,

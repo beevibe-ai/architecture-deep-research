@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -180,26 +180,52 @@ try {
   );
 
   installProvider((label) => {
-    if (label !== "evaluation_pack_agent") throw new Error(`unexpected label ${label}`);
-    return {
-      suite: "regression_suite",
-      target_topologies: ["graphrag"],
-      metrics: {
-        deterministic_lineage_rate: { target: "not numeric" },
-        boundary_spill_tolerance: { target: -1 },
-        unsupported_answer_rate: { target: 5 }
-      },
-      test_cases: [
-        {
-          id: "TC-001",
-          type: "adversarial_multi_hop",
-          question: "Can the topology preserve cited multi-hop lineage?",
-          expected_entities: ["Contract", "Vendor"],
-          minimum_citation_depth: 2,
-          acceptance_criteria: ["Must cite source evidence."]
-        }
-      ]
-    };
+    if (label === "evaluation_pack_agent") {
+      return {
+        suite: "regression_suite",
+        target_topologies: ["graphrag"],
+        metrics: {
+          deterministic_lineage_rate: { target: "not numeric" },
+          boundary_spill_tolerance: { target: -1 },
+          unsupported_answer_rate: { target: 5 }
+        },
+        test_cases: [
+          {
+            id: "TC-001",
+            type: "adversarial_multi_hop",
+            question: "Can the topology preserve cited multi-hop lineage?",
+            expected_entities: ["Contract", "Vendor"],
+            minimum_citation_depth: 2,
+            acceptance_criteria: ["Must cite source evidence."]
+          }
+        ]
+      };
+    }
+    if (label === "uncited_claim_scanner") {
+      return {
+        claims: [
+          {
+            artifact: "ADR.md",
+            claim_text: "GraphRAG supports multi-hop relationship retrieval.",
+            citation_ids: [1],
+            needs_citation: false,
+            severity: "low",
+            reason: "Already supported by evidence [1]."
+          },
+          {
+            artifact: "ADR.md",
+            claim_text: "GraphRAG outperforms competitors on every benchmark.",
+            citation_ids: [],
+            needs_citation: true,
+            severity: "high",
+            reason: "Sweeping superiority claim with no cited evidence."
+          },
+          "garbage_string_entry_to_test_normalizer_filter"
+        ],
+        summary: "Found one uncited high-severity claim and one supported claim."
+      };
+    }
+    throw new Error(`unexpected label ${label}`);
   });
 
   const outDir = await mkdtemp(path.join(os.tmpdir(), "adr-kernel-regression-"));
@@ -261,8 +287,20 @@ try {
     critique: null,
     citationAudit: null,
     comparisonMatrix: null,
-    flags: { "skip-claim-audit": true }
+    flags: {}
   });
+
+  // Verify the claim audit ran end-to-end (it was previously skipped, leaving
+  // scanUncitedClaimsPhase + its LLM-output normalization with zero coverage).
+  const claimAudit = JSON.parse(
+    await readFile(path.join(outDir, "claim-audit.json"), "utf8")
+  );
+  assert.equal(claimAudit.total_claims_checked, 2, "garbage string entry should be filtered out");
+  assert.equal(claimAudit.uncited_material_claim_count, 1);
+  assert.equal(claimAudit.high_severity_count, 1);
+  assert.equal(claimAudit.claims[1].needs_citation, true);
+  assert.equal(claimAudit.claims[1].severity, "high");
+
   await rm(outDir, { recursive: true, force: true });
 } finally {
   setLlmJsonProvider(null);

@@ -38,13 +38,14 @@
     "demo": "node scripts/demo.mjs",
     "deep-research": "node scripts/adr.mjs deep-research",
     "test:kernel": "node scripts/kernel-regression-tests.mjs",
+    "test:search": "node scripts/search-provider-tests.mjs",
     "check": "node scripts/check-json.mjs",
     "smoke:frameworks": "node scripts/smoke-frameworks.mjs",
     "smoke:web": "node scripts/smoke-web.mjs",
-    "test": "npm run test:kernel && npm run check && npm run smoke:frameworks && npm run smoke:web"
+    "test": "npm run test:kernel && npm run test:search && npm run check && npm run smoke:frameworks && npm run smoke:web"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "peerDependencies": {
     "@google/adk": "^1.1.0",
