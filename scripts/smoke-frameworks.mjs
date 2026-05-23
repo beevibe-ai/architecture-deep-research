@@ -21,6 +21,7 @@ import {
   buildStrategicContext,
   deriveComparisonAxes,
   digestPaper,
+  discoverPatterns,
   getLlmJsonProvider,
   inspectGithubRepo,
   isGithubRepoUrl,
@@ -196,6 +197,14 @@ const emptyMatrix = await buildComparisonMatrix({
 });
 if (emptyMatrix.candidates.length !== 0 || emptyMatrix.cells.length !== 0) {
   throw new Error("buildComparisonMatrix should short-circuit on empty knowledge map.");
+}
+
+// Structural smoke for the discover stage export. We do not run a full discover
+// pipeline here (that's covered hermetically by kernel-regression-tests.mjs) —
+// we only verify the kernel exposes the entry point so adapters and CLIs can
+// import it.
+if (typeof discoverPatterns !== "function") {
+  throw new Error("Kernel did not export discoverPatterns.");
 }
 
 console.log("framework smoke ok");

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/discovered-constraints.schema.json",
+  "title": "Beevibe Architecture Deep Research Discovered Constraints",
+  "type": "object",
+  "required": [
+    "version",
+    "source",
+    "stack",
+    "deploy_target",
+    "compliance_signals"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["repo_path", "scanned_at"],
+      "properties": {
+        "repo_path": { "type": "string" },
+        "scanned_at": { "type": "string" },
+        "decision": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "stack": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "evidence_cite"],
+        "properties": {
+          "name": { "type": "string" },
+          "category": { "type": "string" },
+          "evidence_cite": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "deploy_target": {
+      "type": "object",
+      "required": ["platform", "evidence_cite"],
+      "properties": {
+        "platform": { "type": "string" },
+        "evidence_cite": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "compliance_signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "evidence_cite"],
+        "properties": {
+          "name": { "type": "string" },
+          "evidence_cite": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "team_size_hint": { "type": "string" },
+    "codebase_age_hint": { "type": "string" }
+  },
+  "additionalProperties": true
+}

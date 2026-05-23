@@ -12,6 +12,8 @@ const schemaByFilename = {
   "clarification.json": "docs/schemas/clarification.schema.json",
   "comparison-matrix.json": "docs/schemas/comparison-matrix.schema.json",
   "critique.json": "docs/schemas/critique.schema.json",
+  "discovered-constraints.json": "docs/schemas/discovered-constraints.schema.json",
+  "discovered-principles.json": "docs/schemas/discovered-principles.schema.json",
   "domain-evaluation-pack.json": "docs/schemas/domain-evaluation-pack.schema.json",
   "evidence.json": "docs/schemas/evidence.schema.json",
   "execution-handoff.json": "docs/schemas/execution-handoff.schema.json",

@@ -1,11 +1,22 @@
 #!/usr/bin/env node
-import { deepResearch, research, supersedeAdr } from "../src/kernel.mjs";
+import { deepResearch, discoverPatterns, research, supersedeAdr } from "../src/kernel.mjs";
 
 function parseArgs(argv) {
-  const [command, inputPath, ...rest] = argv;
+  const [command, ...rest] = argv;
+  let inputPath = null;
   const flags = {};
 
-  for (let index = 0; index < rest.length; index += 1) {
+  // Take the first non-flag token after the command as the positional input
+  // path. This lets users invoke commands like `deep-research --discover-first
+  // ...` without a positional path — the parser correctly treats `--*` as a
+  // flag, not as the inputPath.
+  let index = 0;
+  if (rest.length > 0 && !rest[0].startsWith("--")) {
+    inputPath = rest[0];
+    index = 1;
+  }
+
+  for (; index < rest.length; index += 1) {
     const item = rest[index];
     if (!item.startsWith("--")) continue;
 
@@ -29,18 +40,41 @@ function parseArgs(argv) {
 function usage() {
   return `Usage:
   adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir>
+  adr deep-research --discover-first --repo <path> --domain <domain> --decision <decision> --out <dir>
+  adr discover --repo <path> --decision <decision> --out <dir> [--issue-body <path-or-text>]
   adr supersede <previous-output-dir> --with <product-context.md> --domain <domain> --decision <decision> --out <dir>
 
 Required runtime:
   - one live search provider: BRAVE_SEARCH_API_KEY, SERPER_API_KEY, TAVILY_API_KEY, or SEARXNG_URL
+    (deep-research only; not required for discover)
   - one OpenAI-compatible LLM provider: ADR_OPENAI_API_KEY or OPENAI_API_KEY
 
-	Example:
+	Example (deep-research):
 	  adr deep-research examples/logistics-contract-mesh/product-context.md \\
 	    --domain "global logistics contract analysis" \\
 	    --decision "retrieval topology" \\
 	    --out .adr-runs/logistics-contract-mesh \\
 	    --max-cycles 2
+
+	Example (discover — repo scan → draft PRD):
+	  adr discover \\
+	    --repo . \\
+	    --decision "event bus topology" \\
+	    --out .adr-runs/event-bus-discover
+
+	Example (chained — discover then deep-research in one command):
+	  adr deep-research \\
+	    --discover-first \\
+	    --repo . \\
+	    --domain "internal-tools" \\
+	    --decision "event bus topology" \\
+	    --out .adr-runs/event-bus-deep
+
+	When --discover-first is set, the inputPath argument is computed from
+	discover's pdr.draft.md and does not need to be supplied. Discovered
+	patterns and anti-patterns that name an architecture_family flow into
+	the evidence pool as private_corpus items, and anti-patterns become
+	additional axes in the comparison matrix.
 
 	Quality flags:
 	  --no-enforce-critique          do not auto-downgrade high-severity critique
@@ -58,6 +92,11 @@ async function main() {
 
   if (command === "research") {
     await research({ inputPath, flags });
+    return;
+  }
+
+  if (command === "discover") {
+    await discoverPatterns({ inputPath, flags });
     return;
   }
 

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/discovered-principles.schema.json",
+  "title": "Beevibe Architecture Deep Research Discovered Principles",
+  "type": "object",
+  "required": [
+    "version",
+    "source",
+    "patterns",
+    "antipatterns"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["repo_path", "scanned_at"],
+      "properties": {
+        "repo_path": { "type": "string" },
+        "scanned_at": { "type": "string" },
+        "decision": { "type": "string" },
+        "issue_body_present": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "evidence_cite"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "evidence_cite": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "category": { "type": "string" },
+          "architecture_family": {
+            "type": "string",
+            "description": "Optional. When this pattern clearly maps to an architecture family the comparison matrix will consider, set this so the pattern can flow into the evidence pool as a private_corpus item."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "antipatterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "evidence_cite", "reason"],
+        "properties": {
+          "name": { "type": "string" },
+          "reason": { "type": "string" },
+          "evidence_cite": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "category": { "type": "string" },
+          "architecture_family": {
+            "type": "string",
+            "description": "Optional. When this anti-pattern clearly rejects an architecture family, set this so it can flow into the evidence pool as a negative private_corpus claim against that family."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "scan_summary": {
+      "type": "object",
+      "properties": {
+        "file_count": { "type": "integer" },
+        "manifest_count": { "type": "integer" },
+        "deploy_configs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "prior_adr_count": { "type": "integer" },
+        "todo_count": { "type": "integer" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -215,6 +215,26 @@ npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md
 npm run web:build && npm run adr:web -- --open
 ```
 
+## Discover Stage: skip the blank-page PRD
+
+If you do not have a structured product brief sitting around, run `adr discover` first. It scans your local repo, extracts patterns the team already follows and anti-patterns it has explicitly rejected, identifies stack and compliance constraints, and drafts a `pdr.draft.md` that you review and edit. The deep-research stage then consumes the draft like any other PRD.
+
+```bash
+# scan a repo and draft a PRD (no web-search provider needed for this step)
+npm run adr -- discover \
+  --repo . \
+  --decision "event bus topology" \
+  --out .adr-runs/event-bus-discover
+
+# review .adr-runs/event-bus-discover/pdr.draft.md, fill in Open questions, then:
+npm run adr -- deep-research .adr-runs/event-bus-discover/pdr.draft.md \
+  --domain "$YOUR_DOMAIN" \
+  --decision "event bus topology" \
+  --out .adr-runs/event-bus-deep
+```
+
+The `--issue-body <path-or-text>` flag lets a GitHub-issue bot seed the draft with the issue body the user wrote. See [examples/self-discover/README.md](./examples/self-discover/README.md) for a dogfooded walkthrough that runs discover against this repo.
+
 ## What The Agent Produces
 
 ### `architecture.spec.json`

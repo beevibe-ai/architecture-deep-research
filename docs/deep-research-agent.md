@@ -43,7 +43,32 @@ export GEMINI_API_KEY=...
 ## Flow
 
 ```text
-Raw PRD / product context
+                            (optional) adr discover
+Local repo path  --------------------------------------+
+                                                       |
+                                                       v
+                              +------- Repo scan (deterministic) -------+
+                              |     docs, manifests, deploy configs,    |
+                              |     CODEOWNERS, git signals, TODO/FIXME |
+                              +------------+----------------------------+
+                                           v
+                              +------- Principle extractor (LLM) --------+
+                              |  patterns + anti-patterns, cited to     |
+                              |  file:line                              |
+                              +------------+----------------------------+
+                                           v
+                              +------- Constraint extractor (LLM) ------+
+                              |  stack, deploy target, compliance,      |
+                              |  team-size + codebase-age hints         |
+                              +------------+----------------------------+
+                                           v
+                              +------- PRD drafter (LLM) ----------------+
+                              |  -> pdr.draft.md (user reviews,         |
+                              |     fills in Open questions)            |
+                              +------------+----------------------------+
+                                           |
+                                           v
+Raw PRD / product context  (or pdr.draft.md from discover)
         |
         v
 Strategic Context Matrix
@@ -128,6 +153,21 @@ The `knowledge-map.json` file is the promotion boundary:
 If evidence is weak, the synthesis agent should choose `requires_human_architecture_review` rather than pretending certainty.
 
 ## CLI
+
+### Discover stage (optional pre-step)
+
+The discover stage reads the user's own local repo, extracts patterns and anti-patterns, and drafts a PRD that `deep-research` can consume. It does not need a web-search provider — only an LLM provider.
+
+```bash
+npm run adr -- discover \
+  --repo . \
+  --decision "retrieval topology" \
+  --out .adr-runs/self-discover
+```
+
+Outputs `discovered-principles.json`, `discovered-constraints.json`, and `pdr.draft.md`. See [examples/self-discover/README.md](../examples/self-discover/README.md) for the dogfooded walkthrough. The `--issue-body <path-or-text>` flag lets a GitHub-issue bot seed the draft with the issue body the user wrote.
+
+### Deep-research runtime
 
 OpenAI-compatible runtime (default):
 

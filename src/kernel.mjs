@@ -294,6 +294,8 @@ const schemaByFilename = {
   "clarification.json": "../docs/schemas/clarification.schema.json",
   "comparison-matrix.json": "../docs/schemas/comparison-matrix.schema.json",
   "critique.json": "../docs/schemas/critique.schema.json",
+  "discovered-constraints.json": "../docs/schemas/discovered-constraints.schema.json",
+  "discovered-principles.json": "../docs/schemas/discovered-principles.schema.json",
   "domain-evaluation-pack.json": "../docs/schemas/domain-evaluation-pack.schema.json",
   "evidence.json": "../docs/schemas/evidence.schema.json",
   "execution-handoff.json": "../docs/schemas/execution-handoff.schema.json",
@@ -1780,7 +1782,7 @@ function buildKnowledgeMap(evidenceItems) {
   };
 }
 
-function deriveComparisonAxes(context) {
+function deriveComparisonAxes(context, options = {}) {
   const axes = [
     {
       id: "production_examples",
@@ -1870,6 +1872,28 @@ function deriveComparisonAxes(context) {
       id: "audit_support",
       label: "Audit / compliance support",
       rationale: `Constraints: ${toArray(context.compliance_constraints).join(", ")}`
+    });
+  }
+
+  // Discovered anti-patterns from `adr discover` become first-class axes so
+  // the comparison matrix can score candidates against the team's explicit
+  // rejections. Cells filled by the LLM with the synthetic private_corpus
+  // evidence items that share the same architecture_family.
+  const discoveredAntipatterns = toArray(options.discoveredAntipatterns);
+  for (const ap of discoveredAntipatterns) {
+    if (!ap || typeof ap !== "object" || typeof ap.name !== "string" || !ap.name.trim()) {
+      continue;
+    }
+    const slug = slugify(ap.name);
+    if (!slug) continue;
+    const cites = toArray(ap.evidence_cite).map(String).filter(Boolean);
+    const reason = typeof ap.reason === "string" && ap.reason.trim() ? ap.reason.trim() : "";
+    axes.push({
+      id: `team_antipattern_${slug}`,
+      label: `Avoids: ${ap.name}`,
+      rationale: `Team has explicitly rejected this${reason ? ` — ${reason}` : ""}. Cited: ${
+        cites.length > 0 ? cites.join(", ") : "(no citations recorded)"
+      }`
     });
   }
 
@@ -1997,9 +2021,10 @@ async function fillComparisonMatrixCells({
 async function buildComparisonMatrix({
   context,
   knowledgeMap,
-  evidenceItems
+  evidenceItems,
+  discoveredAntipatterns = []
 }) {
-  const axes = deriveComparisonAxes(context);
+  const axes = deriveComparisonAxes(context, { discoveredAntipatterns });
   const candidates = candidatesFromKnowledgeMap(knowledgeMap);
   if (candidates.length === 0 || axes.length === 0) {
     return {
@@ -2591,7 +2616,42 @@ async function research({ inputPath, flags }) {
   return deepResearch({ inputPath, flags });
 }
 
-async function prepareRun({ inputPath, flags }) {
+// Loads discovered-principles.json from an outDir if it exists, converts the
+// flagged patterns/anti-patterns into private_corpus evidence items, and
+// merges them into the live-research evidence pool. Returns the merged pool
+// with stable citation_ids assigned across both sources.
+async function injectDiscoveredEvidence({ outDir, evidenceItems }) {
+  const principlesPath = path.join(outDir, "discovered-principles.json");
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(principlesPath, "utf8"));
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return {
+        evidenceItems,
+        syntheticEvidenceItems: [],
+        discoveredAntipatterns: [],
+        injected: false
+      };
+    }
+    throw error;
+  }
+
+  // Lazy-import the discover helper to avoid a circular module load.
+  const { discoveredEvidenceItems } = await import("./discover/discovered-evidence.mjs");
+  const synthetic = discoveredEvidenceItems(raw);
+  const merged = assignCitations([...evidenceItems, ...synthetic]);
+
+  return {
+    evidenceItems: merged,
+    syntheticEvidenceItems: synthetic,
+    discoveredAntipatterns: Array.isArray(raw.antipatterns) ? raw.antipatterns : [],
+    discoveredPatterns: Array.isArray(raw.patterns) ? raw.patterns : [],
+    injected: synthetic.length > 0
+  };
+}
+
+async function prepareRun({ inputPath, flags, chained = false }) {
   if (!inputPath || !flags.domain || !flags.decision || !flags.out) {
     throw new Error("Usage: adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir>");
   }
@@ -2601,14 +2661,20 @@ async function prepareRun({ inputPath, flags }) {
   const content = await readFile(path.resolve(inputPath), "utf8");
 
   await mkdir(outDir, { recursive: true });
-  await writeFile(path.join(outDir, "events.jsonl"), "");
-  resetLlmCost();
+  if (!chained) {
+    // Fresh run — truncate events.jsonl and reset cost tracking. When chained
+    // from --discover-first, the upstream discover stage already initialized
+    // both, and we want to preserve its events on the same log.
+    await writeFile(path.join(outDir, "events.jsonl"), "");
+    resetLlmCost();
+  }
   await appendEvent(outDir, "run_started", {
     command: "deep-research",
     runtime,
     input_path: inputPath,
     domain: flags.domain,
-    decision: flags.decision
+    decision: flags.decision,
+    ...(chained ? { chained_from: "discover" } : {})
   });
 
   const context = await buildStrategicContext({
@@ -2805,12 +2871,15 @@ async function compareTopologiesPhase({
   evidenceItems,
   researchResults,
   outDir,
-  flags
+  flags,
+  syntheticEvidenceItems = [],
+  discoveredAntipatterns = []
 }) {
   const initialMatrix = await buildComparisonMatrix({
     context,
     knowledgeMap,
-    evidenceItems
+    evidenceItems,
+    discoveredAntipatterns
   });
   await writeJson(path.join(outDir, "comparison-matrix.json"), initialMatrix);
   await appendEvent(outDir, "comparison_matrix_built", {
@@ -2872,9 +2941,10 @@ async function compareTopologiesPhase({
       outDir
     });
     updatedResearchResults = [...updatedResearchResults, ...moreResults];
-    updatedEvidenceItems = assignCitations(
-      updatedResearchResults.flatMap((result) => result.evidence)
-    );
+    updatedEvidenceItems = assignCitations([
+      ...updatedResearchResults.flatMap((result) => result.evidence),
+      ...syntheticEvidenceItems
+    ]);
     updatedKnowledgeMap = buildKnowledgeMap(updatedEvidenceItems);
 
     await writeJson(path.join(outDir, "evidence.json"), updatedEvidenceItems);
@@ -2887,7 +2957,8 @@ async function compareTopologiesPhase({
     matrix = await buildComparisonMatrix({
       context,
       knowledgeMap: updatedKnowledgeMap,
-      evidenceItems: updatedEvidenceItems
+      evidenceItems: updatedEvidenceItems,
+      discoveredAntipatterns
     });
     matrix.adversarial_queries_run = advPlan.tasks.flatMap((task) => task.search_queries);
     await writeJson(path.join(outDir, "comparison-matrix.json"), matrix);
@@ -3363,7 +3434,49 @@ async function writeRunArtifacts({
 }
 
 async function deepResearch({ inputPath, flags }) {
-  const prepared = await prepareRun({ inputPath, flags });
+  let resolvedInputPath = inputPath;
+  let chainedFromDiscover = false;
+
+  if (flags["discover-first"]) {
+    if (!flags.out) {
+      throw new Error(
+        "Usage: adr deep-research --discover-first --repo <path> --domain <d> --decision <d> --out <dir>"
+      );
+    }
+    if (!flags.decision) {
+      throw new Error(
+        "--discover-first requires --decision <decision>. Example: --decision \"event bus topology\"."
+      );
+    }
+    const outDir = path.resolve(flags.out);
+    await mkdir(outDir, { recursive: true });
+    // Initialize the shared events.jsonl and cost ledger here, since both
+    // discover and the deep-research phases will append to them.
+    await writeFile(path.join(outDir, "events.jsonl"), "");
+    resetLlmCost();
+    const discoverResult = await discoverPatterns({
+      flags: {
+        repo: flags.repo || ".",
+        decision: flags.decision,
+        out: outDir,
+        "issue-body": flags["issue-body"]
+      },
+      chained: true
+    });
+    resolvedInputPath = discoverResult.draftPath;
+    chainedFromDiscover = true;
+    await appendEvent(outDir, "discover_first_chained", {
+      draft_path: discoverResult.draftPath,
+      pattern_count: discoverResult.principles.patterns.length,
+      antipattern_count: discoverResult.principles.antipatterns.length
+    });
+  }
+
+  const prepared = await prepareRun({
+    inputPath: resolvedInputPath,
+    flags,
+    chained: chainedFromDiscover
+  });
   if (prepared.needsClarification) {
     console.log(
       `Clarification needed. Questions written to ${path.join(prepared.outDir, "clarification.json")}`
@@ -3388,6 +3501,31 @@ async function deepResearch({ inputPath, flags }) {
   let evidenceItems = executeResult.evidenceItems;
   let knowledgeMap = executeResult.knowledgeMap;
 
+  // If a `discovered-principles.json` is already in the outDir (either because
+  // the operator ran `adr discover` first or because --discover-first ran it
+  // a moment ago), merge the team's private_corpus evidence into the pool
+  // before the comparison matrix is built. This is what lets a candidate that
+  // conflicts with a team antipattern land a `weak` verdict on its dedicated
+  // axis with the team's own citation backing it.
+  const discoveredInjection = await injectDiscoveredEvidence({
+    outDir: prepared.outDir,
+    evidenceItems
+  });
+  let syntheticEvidenceItems = discoveredInjection.syntheticEvidenceItems;
+  const discoveredAntipatterns = discoveredInjection.discoveredAntipatterns;
+  if (discoveredInjection.injected) {
+    evidenceItems = discoveredInjection.evidenceItems;
+    knowledgeMap = buildKnowledgeMap(evidenceItems);
+    await writeJson(path.join(prepared.outDir, "evidence.json"), evidenceItems);
+    await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
+    await appendEvent(prepared.outDir, "private_corpus_evidence_injected", {
+      synthetic_count: syntheticEvidenceItems.length,
+      new_evidence_total: evidenceItems.length,
+      promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+      antipattern_axis_count: discoveredAntipatterns.length
+    });
+  }
+
   let comparisonMatrix = null;
   let adversarialCycles = 0;
   if (!flags["skip-comparison-matrix"]) {
@@ -3397,7 +3535,9 @@ async function deepResearch({ inputPath, flags }) {
       evidenceItems,
       researchResults,
       outDir: prepared.outDir,
-      flags
+      flags,
+      syntheticEvidenceItems,
+      discoveredAntipatterns
     });
     comparisonMatrix = compareResult.comparisonMatrix;
     researchResults = compareResult.researchResults;
@@ -3539,11 +3679,22 @@ This ADR supersedes ${supersedes.previous_decision_id || "the previous ADR"} fro
   );
 }
 
+// `discoverPatterns` lives in src/discover/index.mjs. It is re-exported here
+// so framework adapters and the CLI can import it from the same module as
+// every other phase. We import it lazily inside a wrapper to avoid a circular
+// import at module load: src/discover/* imports back into this kernel for
+// callLlmJson, appendEvent, writeJson, etc.
+async function discoverPatterns(input) {
+  const mod = await import("./discover/index.mjs");
+  return mod.discoverPatterns(input);
+}
+
 export {
   VERSION,
   applyCitationAudit,
   activeLlmProvider,
   activeSearchProviders,
+  appendEvent,
   applyCritique,
   assessClarification,
   buildAdaptiveResearchPlan,
@@ -3554,17 +3705,21 @@ export {
   buildKnowledgeMap,
   buildResearchPlan,
   buildStrategicContext,
+  callLlmJson,
   classifySource,
   compareTopologiesPhase,
   critiqueDecisionPhase,
   deepResearch,
   deriveComparisonAxes,
   digestPaper,
+  discoverPatterns,
   executeResearchPhase,
   getLlmJsonProvider,
+  injectDiscoveredEvidence,
   inspectGithubRepo,
   isGithubRepoUrl,
   isPaperUrl,
+  nowIso,
   planResearchPhase,
   prepareRun,
   research,
@@ -3576,5 +3731,6 @@ export {
   supersedeAdr,
   synthesizeDecisionPhase,
   verifyCitationsPhase,
+  writeJson,
   writeRunArtifacts
 };
