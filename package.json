@@ -15,9 +15,7 @@
     "scripts",
     "adapters",
     "docs/schemas",
-    "commands",
-    ".claude-plugin",
-    ".mcp.json",
+    "plugin",
     "examples",
     "README.md",
     "LICENSE"

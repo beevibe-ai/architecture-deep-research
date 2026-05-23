@@ -17,10 +17,14 @@ Capture as `<DECISION>`.
 ## Step 2 — Check the environment
 
 ```bash
-adr-doctor
+npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
 ```
 
-`adr discover` only needs an LLM provider (no web search). If that one is missing, tell the user to run `adr-doctor setup`.
+`adr discover` only needs an LLM provider (no web search). If that one is missing, tell the user to run:
+
+```bash
+npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor setup
+```
 
 ## Step 3 — Run discover via the MCP server
 

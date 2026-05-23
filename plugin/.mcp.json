@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "adr": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--package=github:beevibe-ai/architecture-deep-research",
+        "adr-mcp"
+      ]
+    }
+  }
+}

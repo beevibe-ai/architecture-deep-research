@@ -18,7 +18,7 @@
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/beevibe-ai/architecture-deep-research.git",
-        "path": ".",
+        "path": "plugin",
         "ref": "main"
       },
       "homepage": "https://github.com/beevibe-ai/architecture-deep-research"
