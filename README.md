@@ -42,6 +42,18 @@ The handoff is where ADR stops. Beevibe, Claude Code, Cursor, Codex, or another 
 - Architecture candidates must be acquired from live source evidence.
 - If evidence is insufficient, ADR should say so instead of inventing confidence.
 
+## Three Ways In
+
+ADR ships three surfaces backed by the same kernel. Pick whichever fits your workflow.
+
+| Surface | When to use | One-line invocation |
+| --- | --- | --- |
+| **CLI** | You live in the terminal, or you want to run ADR from CI / a GitHub Action. | `adr deep-research --discover-first --repo . --domain X --decision Y --out .adr-runs/Y` |
+| **MCP server** | You use Claude Code, Cursor, Codex, or another MCP-aware agent and want it to pick up ADR automatically. | Register `examples/claude-code-skill/.mcp.json`. The agent calls `adr_deep_research` when the user describes an architecture decision. |
+| **Claude Code `/adr` skill** | You want a one-slash entry that prompts for the decision name, runs the full pipeline, and summarizes the handoff. | Drop `examples/claude-code-skill/SKILL.md` into `~/.claude/skills/adr/`, restart Claude Code, type `/adr`. |
+
+All three honor the same flags and produce the same artifact set. The MCP server is a thin stdio wrapper around the CLI; the skill is markdown that tells Claude how to call the MCP server. See [examples/claude-code-skill/README.md](./examples/claude-code-skill/README.md) for the slash-command setup, [examples/self-discover/README.md](./examples/self-discover/README.md) for a dogfooded walkthrough, and the **End-to-End Setup** section below for the full CLI path.
+
 ## Why Beevibe
 
 ADR fits Beevibe naturally because Beevibe already has the primitives that an architecture researcher needs:
@@ -249,11 +261,11 @@ adr deep-research --discover-first \
 
 Both phases write to the same `events.jsonl`. Discovered patterns that name an `architecture_family` flow into the evidence pool as `private_corpus` claims (positive for patterns, rejecting for anti-patterns), and anti-patterns become first-class axes in the comparison matrix — so candidates that conflict with what the team has already rejected land `weak` verdicts with citations pointing at the team's own files.
 
-## One-Slash Use: MCP Server and Claude Code Skill
+## Installing the MCP Server and Claude Code Skill
 
-ADR ships with an MCP server (`adr-mcp`) and a Claude Code skill so users can run the full discover-first pipeline with a single `/adr` slash command, or get the same behavior automatically from any MCP-aware host (Cursor, Codex, Beevibe specialists).
+The **Three Ways In** panel at the top is the summary. This section is the install.
 
-### Quick install
+### Step 1 — make the binaries global
 
 ```bash
 git clone https://github.com/beevibe-ai/architecture-deep-research.git
@@ -262,21 +274,23 @@ npm install
 npm link    # makes `adr`, `adr-mcp`, etc. globally callable
 ```
 
-Then either:
+Once we publish to npm this becomes `npm install -g @beevibe/architecture-deep-research`.
 
-**Claude Code slash command** — install the skill and register the MCP server:
+### Step 2 — pick a host integration
+
+**Claude Code slash command:**
 
 ```bash
 mkdir -p ~/.claude/skills/adr
 cp examples/claude-code-skill/SKILL.md ~/.claude/skills/adr/SKILL.md
-
-# project-scoped registration
 cp examples/claude-code-skill/.mcp.json /path/to/your/repo/.mcp.json
 ```
 
-Restart Claude Code. In any session inside that repo, type `/adr`. The skill prompts you for the decision name, calls `adr_deep_research` with `discover_first: true`, and summarizes the handoff when the run completes. See [examples/claude-code-skill/README.md](./examples/claude-code-skill/README.md) for setup details.
+Restart Claude Code. Type `/adr` in any session inside that repo. The skill prompts you for the decision name, calls `adr_deep_research` with `discover_first: true`, and summarizes the handoff when the run completes.
 
-**Other MCP-aware hosts** — register the same `.mcp.json` block in Cursor / Codex / your Beevibe specialist's MCP config. The agent picks `adr_discover`, `adr_deep_research`, or `adr_read_handoff` automatically based on the user's request.
+**Other MCP-aware hosts (Cursor, Codex, Beevibe specialists):** register the same `.mcp.json` block in your host's MCP config. The agent picks `adr_discover`, `adr_deep_research`, or `adr_read_handoff` automatically based on the user's request.
+
+See [examples/claude-code-skill/README.md](./examples/claude-code-skill/README.md) for the full setup walk-through.
 
 ### Tools exposed by the MCP server
 

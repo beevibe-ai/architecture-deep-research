@@ -167,6 +167,30 @@ npm run adr -- discover \
 
 Outputs `discovered-principles.json`, `discovered-constraints.json`, and `pdr.draft.md`. See [examples/self-discover/README.md](../examples/self-discover/README.md) for the dogfooded walkthrough. The `--issue-body <path-or-text>` flag lets a GitHub-issue bot seed the draft with the issue body the user wrote.
 
+### Chained one-shot
+
+When you want discover + deep-research in a single command, pass `--discover-first` and skip the input path:
+
+```bash
+npm run adr -- deep-research --discover-first \
+  --repo . \
+  --domain "internal-tools" \
+  --decision "event bus topology" \
+  --out .adr-runs/event-bus
+```
+
+Both phases share a single `events.jsonl`. Discovered patterns that name an `architecture_family` flow into the evidence pool as `private_corpus` claims that vote in the promotion gate. Anti-patterns become additional axes in the comparison matrix.
+
+### MCP server
+
+`adr-mcp` exposes the kernel as a stdio MCP server. Any MCP-aware host (Claude Code, Cursor, Codex, a Beevibe specialist) can call:
+
+- `adr_discover({ repo_path, decision, out_dir, issue_body? })` — scan only.
+- `adr_deep_research({ domain, decision, out_dir, discover_first?, input_path?, repo_path?, max_cycles?, max_sources?, issue_body? })` — full pipeline.
+- `adr_read_handoff({ out_dir })` — convenience reader for `execution-handoff.json`.
+
+Register with `{ "command": "adr-mcp" }` in the host's MCP config. See [examples/claude-code-skill/.mcp.json](../examples/claude-code-skill/.mcp.json) for a working configuration. The Claude Code `/adr` slash command in [examples/claude-code-skill/SKILL.md](../examples/claude-code-skill/SKILL.md) is the simplest user-facing form.
+
 ### Deep-research runtime
 
 OpenAI-compatible runtime (default):
