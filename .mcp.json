@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "adr": {
+      "command": "adr-mcp"
+    }
+  }
+}

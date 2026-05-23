@@ -22,11 +22,18 @@ import {
   ListToolsRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { loadConfigIntoEnv } from "./adr-doctor.mjs";
 import {
   deepResearch,
   discoverPatterns,
   VERSION
 } from "../src/kernel.mjs";
+
+// First thing the server does on boot: hydrate process.env from
+// ~/.adr/config.json so the user does not need to remember to export keys
+// in the shell that launches Claude Code. Process env wins, then file —
+// matching conventional Unix override semantics.
+await loadConfigIntoEnv();
 
 const SERVER_NAME = "adr";
 const SERVER_VERSION = VERSION;

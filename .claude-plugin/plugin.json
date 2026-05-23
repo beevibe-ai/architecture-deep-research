@@ -1,0 +1,27 @@
+{
+  "name": "adr",
+  "version": "0.2.0",
+  "description": "Architecture Deep Research — scan a repo, draft a PRD, run live deep research, get a cited handoff. Use when picking a topology, retrieval architecture, event bus, storage engine, auth pattern, or any system-design decision before code lands.",
+  "author": {
+    "name": "Beevibe",
+    "url": "https://github.com/beevibe-ai"
+    },
+  "repository": "https://github.com/beevibe-ai/architecture-deep-research",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/beevibe-ai/architecture-deep-research",
+  "keywords": [
+    "architecture",
+    "deep-research",
+    "system-design",
+    "adr",
+    "decision-records",
+    "agent",
+    "mcp",
+    "beevibe"
+  ],
+  "commands": [
+    "./commands/decide.md",
+    "./commands/discover.md",
+    "./commands/doctor.md"
+  ]
+}

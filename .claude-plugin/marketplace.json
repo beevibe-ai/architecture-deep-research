@@ -1,0 +1,27 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "beevibe",
+  "description": "Beevibe Claude Code plugins. Currently: Architecture Deep Research (live, evidence-only research for system-design decisions).",
+  "owner": {
+    "name": "Beevibe",
+    "email": "hello@beevibe.ai",
+    "url": "https://github.com/beevibe-ai"
+  },
+  "plugins": [
+    {
+      "name": "adr",
+      "description": "Architecture Deep Research — scan a repo, draft a PRD, run live deep research, get a cited handoff. Use when picking a topology, retrieval architecture, event bus, storage engine, auth pattern, or any system-design decision before code lands.",
+      "author": {
+        "name": "Beevibe"
+      },
+      "category": "agent-orchestration",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/beevibe-ai/architecture-deep-research.git",
+        "path": ".",
+        "ref": "main"
+      },
+      "homepage": "https://github.com/beevibe-ai/architecture-deep-research"
+    }
+  ]
+}

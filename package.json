@@ -10,6 +10,18 @@
     "url": "https://github.com/beevibe-ai/architecture-deep-research.git"
   },
   "type": "module",
+  "files": [
+    "src",
+    "scripts",
+    "adapters",
+    "docs/schemas",
+    "commands",
+    ".claude-plugin",
+    ".mcp.json",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
     ".": "./src/kernel.mjs",
     "./adapters/langgraph": "./adapters/langgraph.mjs",
@@ -23,7 +35,8 @@
     "adr-langgraph": "./scripts/adr-langgraph.mjs",
     "adr-adk": "./scripts/adr-adk.mjs",
     "adr-web": "./scripts/adr-web.mjs",
-    "adr-mcp": "./scripts/adr-mcp.mjs"
+    "adr-mcp": "./scripts/adr-mcp.mjs",
+    "adr-doctor": "./scripts/adr-doctor.mjs"
   },
   "scripts": {
     "adr": "node scripts/adr.mjs",

@@ -1,6 +1,20 @@
 ---
 name: adr
-description: Architecture Deep Research — scan the current repo, draft a PRD, and run the deep-research loop with citation audits. Use when the user asks you to make an architecture decision, asks "what topology should we use?", says they need to pick between options like vector stores / message queues / retrieval patterns / storage engines / event bus designs, or wants you to think through an architecture choice before writing code.
+preamble-tier: 2
+version: 0.2.0
+description: |
+  Architecture Deep Research — scan the current repo, draft a PRD, and run
+  the deep-research loop with citation audits. Use when the user asks you to
+  make an architecture decision, asks "what topology should we use?", says
+  they need to pick between options like vector stores / message queues /
+  retrieval patterns / storage engines / event bus designs, or wants you to
+  think through an architecture choice before writing code.
+  Proactively invoke this skill (do NOT decide directly) when the user
+  describes an architecture choice and wants live, cited research instead
+  of a model-from-memory answer.
+allowed-tools:
+  - Bash
+  - Read
 ---
 
 # /adr — Architecture Deep Research

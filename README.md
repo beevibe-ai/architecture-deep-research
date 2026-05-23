@@ -46,13 +46,53 @@ The handoff is where ADR stops. Beevibe, Claude Code, Cursor, Codex, or another 
 
 ADR ships three surfaces backed by the same kernel. Pick whichever fits your workflow.
 
-| Surface | When to use | One-line invocation |
-| --- | --- | --- |
-| **CLI** | You live in the terminal, or you want to run ADR from CI / a GitHub Action. | `adr deep-research --discover-first --repo . --domain X --decision Y --out .adr-runs/Y` |
-| **MCP server** | You use Claude Code, Cursor, Codex, or another MCP-aware agent and want it to pick up ADR automatically. | Register `examples/claude-code-skill/.mcp.json`. The agent calls `adr_deep_research` when the user describes an architecture decision. |
-| **Claude Code `/adr` skill** | You want a one-slash entry that prompts for the decision name, runs the full pipeline, and summarizes the handoff. | Drop `examples/claude-code-skill/SKILL.md` into `~/.claude/skills/adr/`, restart Claude Code, type `/adr`. |
+### 1. Claude Code plugin (recommended)
 
-All three honor the same flags and produce the same artifact set. The MCP server is a thin stdio wrapper around the CLI; the skill is markdown that tells Claude how to call the MCP server. See [examples/claude-code-skill/README.md](./examples/claude-code-skill/README.md) for the slash-command setup, [examples/self-discover/README.md](./examples/self-discover/README.md) for a dogfooded walkthrough, and the **End-to-End Setup** section below for the full CLI path.
+The fastest path. Two commands install the plugin and register the MCP server:
+
+```bash
+claude plugin marketplace add beevibe-ai/architecture-deep-research
+claude plugin install adr
+```
+
+Then in any session:
+
+```
+/adr:doctor      # one-time: walk through API key setup
+/adr:decide      # ask a decision name, run the full pipeline, summarize the handoff
+/adr:discover    # quick scan only — drafts a PRD without the full deep-research run
+```
+
+The `/adr:doctor setup` step persists keys to `~/.adr/config.json` (mode 0600). The MCP server reads them on startup, so you never have to remember to export anything in the shell that launches Claude Code.
+
+### 2. MCP server (any host)
+
+For Cursor, Codex, a Beevibe specialist, or Claude Code without the plugin — install the package, register the server:
+
+```bash
+npm install -g @beevibe/architecture-deep-research   # once published; today: clone + npm link
+adr-doctor setup                                      # configure API keys
+```
+
+Then add to your MCP host's config:
+
+```json
+{ "mcpServers": { "adr": { "command": "adr-mcp" } } }
+```
+
+Three tools become available: `adr_discover`, `adr_deep_research`, `adr_read_handoff`. The agent picks the right one based on the user's request.
+
+### 3. CLI (no AI host)
+
+For terminal use, CI, or a GitHub Action:
+
+```bash
+adr-doctor                  # audit env, returns non-zero if anything is missing
+adr deep-research --discover-first \
+  --repo . --domain X --decision Y --out .adr-runs/Y
+```
+
+All three surfaces share the same kernel and produce the same artifact set. The plugin is a thin manifest around the MCP server; the MCP server is a thin wrapper around the CLI.
 
 ## Why Beevibe
 
