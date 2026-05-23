@@ -12,13 +12,10 @@ A single-slash entry into the full Architecture Deep Research loop. Type `/adr` 
 1. Install the `adr-mcp` bin globally:
 
 ```bash
-git clone https://github.com/beevibe-ai/architecture-deep-research.git
-cd architecture-deep-research
-npm install
-npm link               # makes adr, adr-mcp, etc. globally callable
+npm install -g github:beevibe-ai/architecture-deep-research
 ```
 
-   (Once we publish to npm, this becomes `npm install -g @beevibe/architecture-deep-research`.)
+   This installs `adr`, `adr-mcp`, and `adr-doctor` straight from the GitHub repo — no npm account required.
 
 2. Drop the skill into your Claude Code config:
 

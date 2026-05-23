@@ -13,9 +13,11 @@
 // to export anything in the shell that launches Claude Code.
 
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 const CONFIG_DIR = path.join(os.homedir(), ".adr");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
@@ -196,8 +198,19 @@ async function loadConfigIntoEnv() {
 
 export { loadConfigIntoEnv, audit, CONFIG_PATH };
 
-const isCli = import.meta.url === `file://${process.argv[1]}`;
-if (isCli) {
+// CLI detection that works for both direct invocation (`node adr-doctor.mjs`)
+// and global-bin invocation (npm symlinks `adr-doctor` to this file via the
+// package's "bin" entry).
+function isCliInvocation() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isCliInvocation()) {
   const mode = process.argv[2] || "audit";
   if (mode === "setup") {
     await setup();

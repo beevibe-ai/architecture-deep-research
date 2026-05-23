@@ -70,8 +70,8 @@ The `/adr:doctor setup` step persists keys to `~/.adr/config.json` (mode 0600). 
 For Cursor, Codex, a Beevibe specialist, or Claude Code without the plugin — install the package, register the server:
 
 ```bash
-npm install -g @beevibe/architecture-deep-research   # once published; today: clone + npm link
-adr-doctor setup                                      # configure API keys
+npm install -g github:beevibe-ai/architecture-deep-research
+adr-doctor setup    # configure API keys interactively
 ```
 
 Then add to your MCP host's config:
@@ -87,12 +87,15 @@ Three tools become available: `adr_discover`, `adr_deep_research`, `adr_read_han
 For terminal use, CI, or a GitHub Action:
 
 ```bash
-adr-doctor                  # audit env, returns non-zero if anything is missing
+npm install -g github:beevibe-ai/architecture-deep-research
+adr-doctor          # audit env, exits non-zero if anything is missing
 adr deep-research --discover-first \
   --repo . --domain X --decision Y --out .adr-runs/Y
 ```
 
 All three surfaces share the same kernel and produce the same artifact set. The plugin is a thin manifest around the MCP server; the MCP server is a thin wrapper around the CLI.
+
+> `npm install -g github:...` installs directly from this GitHub repo — no npm registry account required. A published `@beevibe/architecture-deep-research` package on npmjs.com may follow.
 
 ## Why Beevibe
 
