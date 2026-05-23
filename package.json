@@ -22,13 +22,15 @@
     "adr": "./scripts/adr.mjs",
     "adr-langgraph": "./scripts/adr-langgraph.mjs",
     "adr-adk": "./scripts/adr-adk.mjs",
-    "adr-web": "./scripts/adr-web.mjs"
+    "adr-web": "./scripts/adr-web.mjs",
+    "adr-mcp": "./scripts/adr-mcp.mjs"
   },
   "scripts": {
     "adr": "node scripts/adr.mjs",
     "adr:langgraph": "node scripts/adr-langgraph.mjs",
     "adr:adk": "node scripts/adr-adk.mjs",
     "adr:web": "node scripts/adr-web.mjs",
+    "adr:mcp": "node scripts/adr-mcp.mjs",
     "web:dev": "vite --config web/vite.config.js",
     "web:build": "vite build --config web/vite.config.js",
     "benchmark": "node scripts/benchmark.mjs",
@@ -42,7 +44,8 @@
     "check": "node scripts/check-json.mjs",
     "smoke:frameworks": "node scripts/smoke-frameworks.mjs",
     "smoke:web": "node scripts/smoke-web.mjs",
-    "test": "npm run test:kernel && npm run test:search && npm run check && npm run smoke:frameworks && npm run smoke:web"
+    "smoke:mcp": "node scripts/smoke-mcp.mjs",
+    "test": "npm run test:kernel && npm run test:search && npm run check && npm run smoke:frameworks && npm run smoke:web && npm run smoke:mcp"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -80,6 +83,7 @@
     "vite": "^8.0.14"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ajv": "^8.20.0"
   }
 }
