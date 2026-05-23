@@ -1,54 +1,36 @@
 # Beevibe Architecture Deep Research
 
-**Deep research for strategic system design.**
+**Live, evidence-only research for system-design decisions.**
 
-Architecture Deep Research, or **ADR**, is a Beevibe flagship project for answering the architecture question that coding agents still handle badly:
+ADR answers the question coding agents still handle badly:
 
-> Given this product, domain, data shape, compliance envelope, team maturity, and operating budget, which architecture family should we bet on before a coding agent writes the first file?
+> Given this product, domain, data shape, compliance envelope, team maturity, and operating budget — which architecture family should we bet on before a coding agent writes the first file?
 
-Coding agents are excellent execution engines. They edit files, run tests, and iterate quickly. The failure mode is one layer higher: they often choose the easiest local implementation path before they understand the architecture family the product actually needs.
+Coding agents are excellent execution engines. They edit files, run tests, iterate quickly. The failure mode is one layer higher: they pick the easiest local implementation path before they understand the architecture family the product actually needs.
 
-ADR is the missing deep research layer for that decision.
-
-## Product Boundary
-
-ADR does not implement the downstream product.
-
-It researches architecture choices, acquires live evidence, synthesizes a decision, generates an evaluation pack, and hands off constraints to execution agents.
+ADR is the missing research layer for that decision.
 
 ```text
-Product brief / PRD
-        |
-        v
-Architecture Deep Research
-        |
-        +--> live source acquisition
-        +--> claim extraction
-        +--> evidence-only knowledge map
-        +--> architecture synthesis
-        +--> adversarial evaluation pack
-        |
-        v
-Execution Handoff
+PRD / repo  →  research plan  →  live source acquisition  →  knowledge map
+            →  comparison matrix  →  synthesis  →  citation + claim audit
+            →  evaluation pack  →  execution handoff  →  coding agent
 ```
 
-The handoff is where ADR stops. Beevibe, Claude Code, Cursor, Codex, or another coding agent consumes the constraints afterward.
+The handoff is where ADR stops. Claude Code, Cursor, Codex, or a Beevibe specialist consumes the constraints afterward.
 
 ## Hard Rules
 
 - No offline research mode.
 - No deterministic mock research.
 - No static pattern library that forces the answer.
-- Architecture candidates must be acquired from live source evidence.
-- If evidence is insufficient, ADR should say so instead of inventing confidence.
+- Architecture candidates must come from live source evidence.
+- If evidence is insufficient, ADR returns `requires_human_architecture_review` instead of pretending confidence.
 
 ## Three Ways In
 
-ADR ships three surfaces backed by the same kernel. Pick whichever fits your workflow.
+All three surfaces share the same kernel and produce the same artifact set.
 
-### 1. Claude Code plugin (recommended)
-
-The fastest path. Two commands install the plugin and register the MCP server:
+### 1. Claude Code plugin (recommended for normal users)
 
 ```bash
 claude plugin marketplace add beevibe-ai/architecture-deep-research
@@ -57,399 +39,157 @@ claude plugin install adr
 
 Then in any session:
 
-```
-/adr:doctor      # one-time: walk through API key setup
-/adr:decide      # ask a decision name, run the full pipeline, summarize the handoff
-/adr:discover    # quick scan only — drafts a PRD without the full deep-research run
-```
+| Slash | What it does |
+| --- | --- |
+| `/adr:doctor` | One-time: audit env, walk through API key setup, persist to `~/.adr/config.json` |
+| `/adr:decide` | Ask a decision name, scan the repo, run the full pipeline, summarize the handoff |
+| `/adr:discover` | Quick scan only — drafts a PRD without the full deep-research run |
 
-The `/adr:doctor setup` step persists keys to `~/.adr/config.json` (mode 0600). The MCP server reads them on startup, so you never have to remember to export anything in the shell that launches Claude Code.
+The plugin registers the MCP server automatically. The doctor's persistent config means you never need to re-export keys in the shell that launches Claude Code.
 
-### 2. MCP server (any host)
-
-For Cursor, Codex, a Beevibe specialist, or Claude Code without the plugin — install the package, register the server:
+### 2. MCP server (Cursor, Codex, Beevibe, any MCP host)
 
 ```bash
 npm install -g github:beevibe-ai/architecture-deep-research
-adr-doctor setup    # configure API keys interactively
+adr-doctor setup
 ```
 
-Then add to your MCP host's config:
+Add to your host's MCP config:
 
 ```json
 { "mcpServers": { "adr": { "command": "adr-mcp" } } }
 ```
 
-Three tools become available: `adr_discover`, `adr_deep_research`, `adr_read_handoff`. The agent picks the right one based on the user's request.
+Three tools become available:
 
-### 3. CLI (no AI host)
-
-For terminal use, CI, or a GitHub Action:
-
-```bash
-npm install -g github:beevibe-ai/architecture-deep-research
-adr-doctor          # audit env, exits non-zero if anything is missing
-adr deep-research --discover-first \
-  --repo . --domain X --decision Y --out .adr-runs/Y
-```
-
-All three surfaces share the same kernel and produce the same artifact set. The plugin is a thin manifest around the MCP server; the MCP server is a thin wrapper around the CLI.
-
-> `npm install -g github:...` installs directly from this GitHub repo — no npm registry account required. A published `@beevibe/architecture-deep-research` package on npmjs.com may follow.
-
-## Why Beevibe
-
-ADR fits Beevibe naturally because Beevibe already has the primitives that an architecture researcher needs:
-
-- A configured Architect agent can be represented as a normal `Agent` row at team or org level.
-- Durable agent memory can store OSS precedents, DDD invariants, and failure-mode notes.
-- The mesh provides the handoff path: IC coding agents escalate architecture decisions to the Architect specialist.
-- Human review policy can require sign-off before implementation.
-- Self-hosting keeps product architecture, PRDs, and internal constraints private.
-
-ADR is not a separate bolt-on tool. It is the strategic architecture specialist inside the Beevibe agent mesh.
-
-## End-to-End Setup
-
-Follow these eight steps in order. From clone to a finished ADR open in the Web UI takes ~5 minutes plus the run time.
-
-### 1. Install
-
-```bash
-git clone https://github.com/beevibe-ai/architecture-deep-research.git
-cd architecture-deep-research
-npm install
-```
-
-Requires Node.js 20+ (see `engines` in `package.json`).
-
-### 2. Set a live search provider (required, pick one)
-
-ADR always uses live web search to gather evidence — there is no offline mode. **The same search machinery is shared by all three runtimes**; you only need to set one of the env vars below.
-
-| Provider | Env var | Free tier | Sign-up |
-| --- | --- | --- | --- |
-| Brave Search | `BRAVE_SEARCH_API_KEY` | ~2k queries/month | https://api-dashboard.search.brave.com |
-| Tavily | `TAVILY_API_KEY` | 1k requests/month | https://tavily.com |
-| Serper (Google) | `SERPER_API_KEY` | 2.5k queries on signup | https://serper.dev |
-| Self-hosted SearXNG | `SEARXNG_URL` | unlimited (your hardware) | https://docs.searxng.org |
-| Read-only remote MCP corpus via OpenAI | `ADR_MCP_SERVER_URL` + `OPENAI_API_KEY` | provider-dependent | your MCP server |
-
-```bash
-export BRAVE_SEARCH_API_KEY=...   # or one of the other three
-```
-
-**Fallback: OpenAI `web_search`.** If none of the four above is set but `OPENAI_API_KEY` (or `ADR_OPENAI_API_KEY`) is set, ADR uses OpenAI's hosted `web_search` tool via the Responses API. One key then powers both LLM synthesis (Step 3 Option A) and search — useful when you don't want to manage a second provider. Dedicated search keys above always take priority.
-
-**Private corpus / MCP hook.** Set `ADR_MCP_SERVER_URL` to search a read-only remote MCP corpus through OpenAI's hosted MCP tool. Use `ADR_SEARCH_PROVIDER=mcp` or `ADR_PRIVATE_MCP_ONLY=1` to force private-corpus search instead of public web search. Keep MCP tools read-only; ADR uses `require_approval: "never"` only for search/fetch style evidence access.
-
-If none of these is set, every runtime fails fast in `assertAgenticRuntime` with `No live search provider configured.`
-
-### 3. Set an LLM provider (required, pick one to match your runtime)
-
-The three runtimes share the same kernel and the same web search; they only differ in which LLM provider runs the JSON synthesis steps (planner, claim extractor, completeness judge, matrix filler, synthesizer, critique, citation verifier, claim auditor).
-
-**Option A — OpenAI-compatible (default; CLI: `npm run adr`)**
-
-Works with OpenAI, Azure OpenAI, vLLM, LM Studio, llamafile, Ollama with OpenAI-compatible wrapper, etc.
-
-```bash
-export ADR_OPENAI_API_KEY=...                       # or OPENAI_API_KEY
-export ADR_MODEL=gpt-4.1-mini                       # default if unset
-# Optional: point at a local OpenAI-compatible server
-export ADR_OPENAI_BASE_URL=http://localhost:1234/v1
-```
-
-**Option B — LangGraph + LangChain `initChatModel` (CLI: `npm run adr:langgraph`)**
-
-Any provider supported by LangChain's universal model initializer. Install the matching `@langchain/<provider>` package and set the provider's API key.
-
-```bash
-npm install @langchain/openai            # or @langchain/anthropic, @langchain/google-genai, @langchain/ollama, ...
-export OPENAI_API_KEY=...                # whatever the provider needs
-# Then pass --model provider:model on the CLI, e.g. openai:gpt-4.1-mini
-```
-
-Common `--model` strings: `openai:gpt-4.1-mini`, `anthropic:claude-3-5-sonnet-latest`, `google-genai:gemini-2.5-flash`, `bedrock:meta.llama3-70b-instruct-v1:0`, `ollama:llama3.1`, `groq:llama-3.3-70b-versatile`, `deepseek:deepseek-chat`.
-
-**Option C — Google ADK / Gemini (CLI: `npm run adr:adk`)**
-
-```bash
-export GEMINI_API_KEY=...                # or GOOGLE_GENAI_API_KEY / GOOGLE_API_KEY
-export ADR_ADK_MODEL=gemini-2.5-flash    # default; can be gemini-2.5-pro etc.
-```
-
-### 4. (Optional) GitHub token
-
-ADR reads GitHub repos as repositories — README, ARCHITECTURE, top-level layout, stars, license, recent failure-mode issues — via the GitHub Contents API. Without auth, the rate ceiling is **60 calls/hour**, which gets hit fast on multi-repo runs.
-
-```bash
-export GITHUB_TOKEN=...   # lifts the ceiling to 5000/hr
-```
-
-Use a fine-grained token with read-only `public_repo` access; no scopes are needed beyond reading public repos.
-
-### 5. Verify the install
-
-```bash
-npm test
-```
-
-Runs kernel regression tests, JSON schema validation, adapter smoke, and web UI smoke. Does **not** need any API keys or network — green here means the local gates and wiring are intact.
-
-### 6. Run your first ADR
-
-Pick the runtime matching the LLM provider you set in step 3. All three produce the same artifact set in `--out`.
-
-```bash
-# Option A — OpenAI-compatible (default)
-npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out .adr-runs/logistics-contract-mesh \
-  --max-cycles 2 --max-sources 4
-
-# Option B — LangGraph runtime
-npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out .adr-runs/logistics-langgraph \
-  --model openai:gpt-4.1-mini
-
-# Option C — Google ADK / Gemini runtime
-npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out .adr-runs/logistics-adk
-```
-
-A typical run takes 2–5 minutes (longer with more sources or with adaptive / adversarial cycles enabled). The CLI prints a summary on completion. See [What The Agent Produces](#what-the-agent-produces) for the full artifact list.
-
-### 7. View the results in the Web UI
-
-```bash
-npm run web:build                                          # one-time: build the React UI
-npm run adr:web -- --runs .adr-runs --port 4173 --open
-```
-
-The Web UI watches `.adr-runs/` and tails `events.jsonl` via Server-Sent Events, so you can also start it **before** launching a run and watch it progress live in either:
-
-- **Operator mode** — Onyx-style product view: decision card, comparison matrix, plan, evidence panel, run-quality sidebar.
-- **Developer mode** — Google ADK Dev UI-style: live event timeline, JSON inspector, per-artifact browser.
-
-Toggle in the run-detail header. See [docs/web-ui.md](./docs/web-ui.md).
-
-### 8. Common errors
-
-| Error | Cause / fix |
-| --- | --- |
-| `No live search provider configured.` | Step 2: export one of `BRAVE_SEARCH_API_KEY` / `SERPER_API_KEY` / `TAVILY_API_KEY` / `SEARXNG_URL`. Or set only `OPENAI_API_KEY` to use the OpenAI `web_search` fallback. |
-| `No LLM synthesis provider configured.` | Step 3: export the env vars for the runtime you launched. |
-| `Google ADK deep research requires GEMINI_API_KEY...` | The ADK CLI is gated; even if `ADR_OPENAI_API_KEY` is set you must also set `GEMINI_API_KEY` (or `GOOGLE_GENAI_API_KEY`) to use `npm run adr:adk`. |
-| Lots of GitHub 403 / 404 in `events.jsonl` | Step 4: set `GITHUB_TOKEN`. The unauthenticated 60/hr limit was hit. |
-| LangGraph crashes inside `initChatModel` | The matching `@langchain/<provider>` package for your `--model` string isn't installed (e.g. `--model anthropic:...` needs `@langchain/anthropic`). |
-| Web UI shows "no runs found" | Either no run has been started, or the server is pointed at a different directory than the CLI's `--out`. Use the same path for `--runs` and `--out`. |
-| Tailwind warns "content option missing" | Run `npm run web:build` from the project root, not from inside `web/`. The Tailwind config resolves paths via `import.meta.url`. |
-
-## Quick Start (TL;DR of the above)
-
-```bash
-git clone https://github.com/beevibe-ai/architecture-deep-research.git
-cd architecture-deep-research
-npm install
-
-export BRAVE_SEARCH_API_KEY=...
-export ADR_OPENAI_API_KEY=...
-export ADR_MODEL=gpt-4.1-mini
-
-npm run adr -- deep-research examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out .adr-runs/logistics-contract-mesh
-
-npm run web:build && npm run adr:web -- --open
-```
-
-## Discover Stage: skip the blank-page PRD
-
-If you do not have a structured product brief sitting around, run `adr discover` first. It scans your local repo, extracts patterns the team already follows and anti-patterns it has explicitly rejected, identifies stack and compliance constraints, and drafts a `pdr.draft.md` that you review and edit. The deep-research stage then consumes the draft like any other PRD.
-
-```bash
-# scan a repo and draft a PRD (no web-search provider needed for this step)
-npm run adr -- discover \
-  --repo . \
-  --decision "event bus topology" \
-  --out .adr-runs/event-bus-discover
-
-# review .adr-runs/event-bus-discover/pdr.draft.md, fill in Open questions, then:
-npm run adr -- deep-research .adr-runs/event-bus-discover/pdr.draft.md \
-  --domain "$YOUR_DOMAIN" \
-  --decision "event bus topology" \
-  --out .adr-runs/event-bus-deep
-```
-
-The `--issue-body <path-or-text>` flag lets a GitHub-issue bot seed the draft with the issue body the user wrote. See [examples/self-discover/README.md](./examples/self-discover/README.md) for a dogfooded walkthrough that runs discover against this repo.
-
-### Chained one-shot
-
-When you want discover + deep-research in a single command:
-
-```bash
-adr deep-research --discover-first \
-  --repo . \
-  --domain "internal-tools" \
-  --decision "event bus topology" \
-  --out .adr-runs/event-bus
-```
-
-Both phases write to the same `events.jsonl`. Discovered patterns that name an `architecture_family` flow into the evidence pool as `private_corpus` claims (positive for patterns, rejecting for anti-patterns), and anti-patterns become first-class axes in the comparison matrix — so candidates that conflict with what the team has already rejected land `weak` verdicts with citations pointing at the team's own files.
-
-## Installing the MCP Server and Claude Code Skill
-
-The **Three Ways In** panel at the top is the summary. This section is the install.
-
-### Step 1 — make the binaries global
-
-```bash
-git clone https://github.com/beevibe-ai/architecture-deep-research.git
-cd architecture-deep-research
-npm install
-npm link    # makes `adr`, `adr-mcp`, etc. globally callable
-```
-
-Once we publish to npm this becomes `npm install -g @beevibe/architecture-deep-research`.
-
-### Step 2 — pick a host integration
-
-**Claude Code slash command:**
-
-```bash
-mkdir -p ~/.claude/skills/adr
-cp examples/claude-code-skill/SKILL.md ~/.claude/skills/adr/SKILL.md
-cp examples/claude-code-skill/.mcp.json /path/to/your/repo/.mcp.json
-```
-
-Restart Claude Code. Type `/adr` in any session inside that repo. The skill prompts you for the decision name, calls `adr_deep_research` with `discover_first: true`, and summarizes the handoff when the run completes.
-
-**Other MCP-aware hosts (Cursor, Codex, Beevibe specialists):** register the same `.mcp.json` block in your host's MCP config. The agent picks `adr_discover`, `adr_deep_research`, or `adr_read_handoff` automatically based on the user's request.
-
-See [examples/claude-code-skill/README.md](./examples/claude-code-skill/README.md) for the full setup walk-through.
-
-### Tools exposed by the MCP server
-
-- `adr_discover({ repo_path, decision, out_dir, issue_body? })` — scan only, produce draft PRD
+- `adr_discover({ repo_path, decision, out_dir, issue_body? })` — scan only
 - `adr_deep_research({ domain, decision, out_dir, discover_first?, input_path?, repo_path?, max_cycles?, max_sources?, issue_body? })` — full pipeline (with optional chained discover)
 - `adr_read_handoff({ out_dir })` — convenience reader for `execution-handoff.json`
 
-The server runs over stdio, so it boots in milliseconds when an MCP host opens the connection.
+The server boots in milliseconds over stdio.
 
-## What The Agent Produces
+### 3. CLI (terminal, CI, GitHub Action)
 
-### `architecture.spec.json`
+```bash
+npm install -g github:beevibe-ai/architecture-deep-research
+adr-doctor            # audit env, exits non-zero if anything is missing
 
-Machine-readable architecture state:
+# Discover + deep-research in one command
+adr deep-research --discover-first \
+  --repo . --domain "internal-tools" --decision "event bus topology" \
+  --out .adr-runs/event-bus
 
-- selected topology;
-- bounded contexts;
-- domain invariants;
-- rejected alternatives;
-- required guardrails;
-- evidence citations.
+# Or two-step: scan, edit the draft, then run
+adr discover --repo . --decision "event bus topology" --out .adr-runs/discover
+$EDITOR .adr-runs/discover/pdr.draft.md     # fill in the Open questions
+adr deep-research .adr-runs/discover/pdr.draft.md \
+  --domain "internal-tools" --decision "event bus topology" \
+  --out .adr-runs/event-bus-deep
+```
 
-### `knowledge-map.json`
+> `npm install -g github:...` installs straight from this GitHub repo — no npm registry account required. A published `@beevibe/architecture-deep-research` package on npmjs.com may follow.
 
-Evidence-only architecture knowledge acquired during the run:
+## API Keys
 
-- promoted candidates;
-- insufficient-evidence candidates;
-- source types;
-- citation IDs;
-- support/warning/rejection claims.
+`adr-doctor setup` walks you through these interactively and persists them to `~/.adr/config.json` (mode 0600). Process env always overrides the file.
 
-This is not a hand-authored pattern library. It is a provenance record.
+### Required (at least one of each)
 
-### `evidence.json` and `source-snapshots/`
+| Group | Env var | Sign-up |
+| --- | --- | --- |
+| Search | `BRAVE_SEARCH_API_KEY` | https://api-dashboard.search.brave.com (~2k queries/month free) |
+| Search | `TAVILY_API_KEY` | https://tavily.com (1k requests/month free) |
+| Search | `SERPER_API_KEY` | https://serper.dev (2.5k queries on signup) |
+| Search | `SEARXNG_URL` | self-hosted, https://docs.searxng.org |
+| LLM | `ADR_OPENAI_API_KEY` | https://platform.openai.com/api-keys |
+| LLM | `OPENAI_API_KEY` | (fallback alias for the same key) |
 
-Every evidence item includes the source URL, provider, source type, quality score, extracted claims, `retrieved_at`, content hash, fetch status, and a `raw_text_path` snapshot when fetched text was available. This lets reviewers audit what the model actually saw.
+If no dedicated search key is set but an OpenAI key is, ADR falls back to OpenAI's hosted `web_search` — one key powers both research and synthesis.
 
-### `citation-audit.json` and `claim-audit.json`
+### Optional
 
-The citation audit verifies cited evidence against the selected decision and candidate claims. Unsupported citations on the selected topology downgrade the decision to `requires_human_architecture_review` by default. The claim audit scans generated ADR/report/evaluation artifacts for material architecture claims that need citations.
+- `GITHUB_TOKEN` — strongly recommended. Lifts the GitHub API limit from 60/hr to 5000/hr.
+- `ADR_MODEL` — override the default model (`gpt-4.1-mini`).
+- `ADR_OPENAI_BASE_URL` — point at a local OpenAI-compatible server (vLLM, LM Studio, llamafile).
+- `ADR_MCP_SERVER_URL` — search a read-only private MCP corpus instead of the public web. Combine with `ADR_PRIVATE_MCP_ONLY=1` to force private-corpus search.
 
-### `domain-evaluation-pack.json`
+### LangGraph and Google ADK runtimes
 
-Adversarial test cases for the selected architecture:
+ADR's kernel is framework-neutral. Two extra runtimes are wired in via `adapters/`:
 
-- lineage checks;
-- boundary-spill checks;
-- multi-hop checks;
-- abstention checks;
-- agentic drift checks;
-- latency or SLA expectations when available.
+```bash
+# LangGraph (full StateGraph; any LangChain-supported provider)
+npm install @langchain/openai     # or @langchain/anthropic, @langchain/google-genai, ...
+adr-langgraph examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" --decision "retrieval topology" \
+  --out .adr-runs/langgraph --model openai:gpt-4.1-mini
 
-### `execution-handoff.json`
+# Google ADK (Gemini as the LLM backend)
+export GEMINI_API_KEY=...
+adr-adk examples/logistics-contract-mesh/product-context.md \
+  --domain "global logistics contract analysis" --decision "retrieval topology" \
+  --out .adr-runs/adk
+```
 
-The machine-readable boundary object consumed by downstream agents. It states that ADR stops at Execution Handoff and lists the artifacts implementation agents must obey.
+All three runtimes produce the same artifact set. See [docs/framework-adapters.md](./docs/framework-adapters.md).
+
+## What ADR Produces
+
+| Artifact | Content |
+| --- | --- |
+| `strategic-context.json` | Domain entities, bounded contexts, query shapes, risk invariants, operational envelope, compliance constraints extracted from the brief. |
+| `research-plan.json` | LLM-planned research tasks with search queries and source targets. |
+| `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims, content hash, snapshot path. Audit-grade. |
+| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. |
+| `comparison-matrix.json` | Candidates × axes (derived from query shapes, risk invariants, operational envelope, compliance, plus any discovered anti-patterns). Each cell carries `strong` / `mixed` / `weak` / `no_evidence` + citation IDs. |
+| `architecture.spec.json` | Selected topology, bounded contexts, domain invariants, rejected alternatives, required guardrails, evidence citations. |
+| `critique.json` | LLM critique pass flagging uncited claims, contradictions, weak evidence. High-severity issues auto-downgrade the decision unless `--no-enforce-critique`. |
+| `citation-audit.json` | Per-citation supported/unsupported verdicts. Unsupported selected-topology citations auto-downgrade. |
+| `claim-audit.json` | Scans generated ADR/report/eval artifacts for material claims without citations. |
+| `domain-evaluation-pack.json` | Adversarial test cases: lineage, boundary-spill, multi-hop, abstention, agentic-drift checks the implementation has to pass. |
+| `execution-handoff.json` | The boundary contract: selected topology, required invariants, forbidden topologies, evaluation suite name, memory facts for the Architect bee. |
+| `ADR.md`, `sources.md`, `research-report.md` | Human-readable decision record, citation table, long-form report. |
+
+If `adr-doctor`-managed `~/.adr/config.json` is wired up and the run completes, every artifact lands in `--out`. See [examples/self-discover/](./examples/self-discover/) for a dogfooded walkthrough against this repo itself.
+
+## Discovered Patterns Feed the Pipeline
+
+When you run `--discover-first` (or run `adr discover` then `adr deep-research` in the same `--out`), two integrations fire automatically:
+
+1. **Discovered anti-patterns become matrix axes.** A candidate that conflicts with `no_kafka` (cited to `docs/adr/0003.md`) lands a `weak` verdict on that axis, with the citation pointing at the team's own file.
+2. **Discovered patterns flow into the evidence pool as `private_corpus` claims.** Patterns tagged with an `architecture_family` produce positive supporting claims; anti-patterns produce rejecting claims. They contribute to the promotion gate alongside live-research evidence.
+
+The result: your team's actual history shapes what the synthesizer will consider, instead of the kernel re-deriving constraints from scratch every run.
 
 ## Superseding ADRs
 
-If implementation evidence, drift reports, or new research invalidates the decision, create a superseding ADR:
+When implementation evidence contradicts a prior spec, create a superseding ADR:
 
 ```bash
-npm run adr -- supersede .adr-runs/logistics-contract-mesh \
+adr supersede .adr-runs/logistics-contract-mesh \
   --with ./new-product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
+  --domain "global logistics contract analysis" --decision "retrieval topology" \
   --out .adr-runs/logistics-contract-mesh-v2 \
-  --reason "New evidence changes the topology decision."
+  --reason "Production latency contradicts the matrix verdict."
 ```
 
-The new run writes `supersedes.json` and appends a supersession section to the ADR.
+The new run writes `supersedes.json`, appends a supersession section to `ADR.md`, and pulls the prior decision's evidence forward.
 
 ## Web UI
 
-A single web app with two modes, both reading the kernel's artifacts on disk:
-
-- **Operator mode** — Onyx-style, product-facing. Decision card, comparison matrix, plan, evidence panel, run-quality sidebar.
-- **Developer mode** — Google ADK Dev UI-style, observability-facing. Live event timeline (SSE tail of `events.jsonl`), JSON inspector, per-artifact browser.
-
 ```bash
-npm run web:build                          # builds web/dist
-npm run adr:web -- --runs .adr-runs --open # serves the UI + watches runs
+npm run web:build                                    # build once
+adr-web --runs .adr-runs --port 4173 --open          # serve + watch
 ```
 
-See [docs/web-ui.md](./docs/web-ui.md).
+Two modes, both reading kernel artifacts on disk:
 
-## Framework Adapters
+- **Operator** — decision card, comparison matrix, plan, evidence panel, run-quality sidebar.
+- **Developer** — live event timeline (SSE tail of `events.jsonl`), JSON inspector, per-artifact browser.
 
-ADR keeps the kernel framework-neutral and exposes adapters:
+Start it **before** a run to watch the loop happen live. See [docs/web-ui.md](./docs/web-ui.md).
 
-- `adapters/langgraph.mjs`
-- `adapters/google-adk.mjs`
-- `adapters/beevibe.mjs`
-
-LangGraph (full StateGraph runtime; LangChain `initChatModel` for the LLM):
-
-```bash
-npm run adr:langgraph -- examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out .adr-runs/langgraph-logistics \
-  --model openai:gpt-4.1-mini
-```
-
-The `--model` string is passed to LangChain's universal `initChatModel`. Examples: `openai:gpt-4.1-mini`, `google-genai:gemini-2.5-flash`, `anthropic:claude-3-5-sonnet-latest`, `ollama:llama3.1`. Install the matching `@langchain/<provider>` package.
-
-Google ADK (Gemini as the LLM backend for the live agentic loop):
-
-```bash
-npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
-  --domain "global logistics contract analysis" \
-  --decision "retrieval topology" \
-  --out .adr-runs/adk-logistics-contract-mesh
-```
-
-Beevibe handoff:
+## Beevibe Mesh Handoff
 
 ```js
 import { createBeevibeMeshHandoff } from "@beevibe/architecture-deep-research/adapters/beevibe";
@@ -459,72 +199,108 @@ const handoff = await createBeevibeMeshHandoff({
 });
 ```
 
-## Benchmarks
+The handoff names the Architect specialist as a normal `Agent` row, attaches memory facts for durable storage, and lists the constraints downstream coding agents must obey. See [docs/beevibe-integration.md](./docs/beevibe-integration.md).
 
-Benchmarks are live agentic experiments. They require credentials and fail fast without them.
+## Why Not Just Prompt a Coding Agent?
 
-```bash
-npm run benchmark:replay
-npm run benchmark:live:fast
-npm run benchmark:live
-```
+Two reasons.
 
-Package tests are intentionally different:
+**Coding agents plan inside one session with one context window.** They cannot reason about facts that aren't in that window: current deployment topology, vendors legal flagged in March, the postmortem from last quarter's incident. A planner step does not go acquire them. A research loop does.
+
+**Coding agents are rewarded for completion.** If you ask for an architecture, they produce one. The shape of "produce a plan" punishes saying "I do not have enough evidence." ADR's promotion gate makes refusal a first-class output.
+
+For the longer form, see the post series:
+
+- [Architecture Deep Research: the layer before the coding agent](https://beevibe.ai/blog/03-architecture-deep-research/)
+- [Inside one ADR run: from PRD to execution handoff](https://beevibe.ai/blog/05-inside-one-adr-run/)
+- [The questions that keep coming up about ADR](https://beevibe.ai/blog/04-adr-questions/)
+
+## Verifying Your Install
 
 ```bash
 npm test
 ```
 
-`benchmark:replay` is the frozen local regression pass for trust gates; it does not perform production research. `npm test` runs that replay pass plus schema, adapter, and web smoke checks.
+Runs six suites locally — kernel regression, search provider, schema check, framework smoke, web smoke, MCP smoke. None of them hit the network; green here means the wiring is intact.
+
+To exercise the live loop:
+
+```bash
+adr-doctor                       # confirm READY
+adr deep-research --discover-first \
+  --repo . --domain "test" --decision "retrieval topology" \
+  --out .adr-runs/self-test
+```
+
+A typical run is 3–6 minutes.
 
 ## Repository Shape
 
 ```text
 .
+├── .claude-plugin/
+│   ├── plugin.json                   Claude Code plugin manifest
+│   └── marketplace.json              1-plugin marketplace (this repo doubles as one)
+├── commands/
+│   ├── decide.md                     /adr:decide slash command
+│   ├── discover.md                   /adr:discover slash command
+│   └── doctor.md                     /adr:doctor slash command
+├── .mcp.json                         auto-registers the MCP server when plugin installs
 ├── adapters/
-│   ├── beevibe.mjs                       # Beevibe mesh handoff
-│   ├── google-adk.mjs                    # ADK Agent + FunctionTool wrapper
-│   ├── google-adk-deep-research.mjs      # ADK as the kernel's LLM provider
-│   ├── langgraph.mjs                     # full StateGraph runtime
-│   └── langgraph-llm.mjs                 # LangChain initChatModel JSON provider
+│   ├── beevibe.mjs                   Beevibe mesh handoff
+│   ├── google-adk.mjs                ADK Agent + FunctionTool wrapper
+│   ├── google-adk-deep-research.mjs  ADK as the kernel's LLM provider
+│   ├── langgraph.mjs                 full StateGraph runtime
+│   └── langgraph-llm.mjs             LangChain initChatModel JSON provider
 ├── benchmarks/
-│   ├── configs/                          # live-fast.json, live.json
+│   ├── configs/                      live-fast.json, live.json
 │   └── cases/
 ├── docs/
 │   ├── deep-research-agent.md
 │   ├── framework-adapters.md
+│   ├── beevibe-integration.md
 │   ├── web-ui.md
 │   ├── experiments.md
-│   └── schemas/
+│   └── schemas/                      JSON Schemas for every artifact
 ├── examples/
-│   └── logistics-contract-mesh/
+│   ├── logistics-contract-mesh/      reference PRD + a real run output
+│   ├── self-discover/                dogfooding walkthrough
+│   └── claude-code-skill/            legacy manual-skill install
 ├── scripts/
-│   ├── adr.mjs                           # OpenAI-compatible CLI
-│   ├── adr-langgraph.mjs                 # LangGraph CLI
-│   ├── adr-adk.mjs                       # Google ADK / Gemini CLI
-│   ├── adr-web.mjs                       # Web UI server
+│   ├── adr.mjs                       CLI (deep-research / discover / supersede)
+│   ├── adr-langgraph.mjs             LangGraph CLI
+│   ├── adr-adk.mjs                   Google ADK / Gemini CLI
+│   ├── adr-web.mjs                   Web UI server
+│   ├── adr-mcp.mjs                   MCP server (stdio)
+│   ├── adr-doctor.mjs                env audit + interactive key setup
 │   ├── benchmark.mjs
-│   ├── kernel-regression-tests.mjs        # frozen local replay checks
-│   ├── check-json.mjs
-│   ├── smoke-frameworks.mjs              # kernel + adapter smoke
-│   └── smoke-web.mjs                     # web UI server smoke
+│   ├── kernel-regression-tests.mjs   frozen local replay checks
+│   ├── check-json.mjs                schema validation across all artifacts
+│   ├── smoke-frameworks.mjs          kernel + adapter smoke
+│   ├── smoke-web.mjs                 web UI server smoke
+│   └── smoke-mcp.mjs                 MCP server smoke
 ├── src/
-│   └── kernel.mjs                        # the deep research kernel
-└── web/                                  # Vite + React + Tailwind UI
-    ├── src/
-    ├── index.html
-    ├── vite.config.js
-    └── tailwind.config.js
+│   ├── kernel.mjs                    the deep research kernel
+│   └── discover/
+│       ├── index.mjs                 discover stage orchestrator
+│       ├── repo-scan.mjs             deterministic filesystem walk
+│       ├── principle-extractor.mjs   LLM: scan -> patterns + anti-patterns
+│       ├── constraint-extractor.mjs  LLM: scan -> stack/deploy/compliance
+│       ├── prd-drafter.mjs           LLM: above -> markdown PRD draft
+│       └── discovered-evidence.mjs   converts principles to private_corpus items
+└── web/                              Vite + React + Tailwind UI
 ```
 
 ## Status
 
-This repo is the open-source core:
+Open-source core (Apache-2.0):
 
-- live agentic research kernel;
-- artifact schemas;
-- framework adapters;
-- benchmark harness;
-- Beevibe mesh handoff adapter.
+- Live agentic research kernel.
+- Discover stage and principle/anti-pattern integration into the comparison matrix.
+- Artifact schemas validated end-to-end.
+- LangGraph and Google ADK adapters.
+- Claude Code plugin with MCP server + `/adr:decide`, `/adr:discover`, `/adr:doctor` commands.
+- Persistent local key store via `adr-doctor`.
+- Benchmark harness.
 
 The commercial Beevibe surface can layer curated corpora, managed researcher agents, org-level memory, and team governance on top.
