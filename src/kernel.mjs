@@ -3963,25 +3963,20 @@ async function prepareRun({ inputPath, flags, chained = false }) {
 
   // Persist run-config.json so `adr resume <out_dir>` can re-invoke with
   // the original flag set. Only write on a fresh run (resume re-reads it).
+  // Persists every flag the caller passed (minus `resume` itself, which
+  // is set by the resume command, not the original invocation). A hand-
+  // picked allowlist used to drop --clarification-profile,
+  // --clarification-answers, --no-clarify, --skip-* flags, etc., so
+  // resume invocations of profile-based runs went back to the clarification
+  // gate with no way to override.
   if (!flags.resume) {
     try {
+      const { resume: _ignoredResume, ...persistedFlags } = flags;
       const runConfig = {
         version: VERSION,
         started_at: nowIso(),
         input_path: inputPath || null,
-        flags: {
-          domain: flags.domain,
-          decision: flags.decision,
-          out: flags.out,
-          repo: flags.repo,
-          "decision-kind": flags["decision-kind"],
-          "discover-first": flags["discover-first"],
-          "include-peers": flags["include-peers"],
-          "max-peers": flags["max-peers"],
-          seed: flags.seed,
-          "max-cycles": flags["max-cycles"],
-          "max-sources": flags["max-sources"]
-        }
+        flags: persistedFlags
       };
       await writeFile(
         path.join(outDir, "run-config.json"),

@@ -142,14 +142,17 @@ async function main() {
     return;
   }
 
-  // `adr resume <out_dir>` — replay the prior run's flags with --resume,
-  // which skips the expensive research stage (evidence.json gets loaded
-  // from disk) and re-runs synthesis + critique + audits + handoff.
-  // Reads run-config.json from the out_dir to reconstruct the original
-  // flags + inputPath.
+  // `adr resume <out_dir> [--flag value ...]` — replay the prior run's
+  // flags with --resume, which skips the expensive research stage
+  // (evidence.json gets loaded from disk) and re-runs synthesis +
+  // critique + audits + handoff. Reads run-config.json from the out_dir
+  // to reconstruct the original flags + inputPath. Any flags passed at
+  // resume time override the persisted set, so a profile-based run that
+  // crashed can be resumed past the clarification gate with
+  // `--no-clarify` or a different `--clarification-profile`.
   if (command === "resume") {
     if (!inputPath) {
-      console.error("Usage: adr resume <out_dir>");
+      console.error("Usage: adr resume <out_dir> [--flag value ...]");
       process.exitCode = 1;
       return;
     }
@@ -167,7 +170,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    const replayFlags = { ...config.flags, resume: true };
+    const replayFlags = { ...config.flags, ...flags, resume: true };
     await deepResearch({
       inputPath: config.input_path || null,
       flags: replayFlags
