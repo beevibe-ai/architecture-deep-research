@@ -66,7 +66,7 @@ The handoff is where ADR stops. Claude Code, Cursor, Codex, or a Beevibe special
 - No deterministic mock research.
 - No static pattern library that forces the answer.
 - Architecture candidates must come from live source evidence.
-- ADR produces a **ranked option set with explicit tradeoffs**, not a single forced winner. A `recommendation` is populated only when one option clearly dominates the comparison matrix; otherwise the mode is `ranked_options` and the caller picks based on team-side constraints ADR cannot know. When no candidate clears the promotion gate at all, the mode is `deferred` — re-run with sharper context.
+- ADR produces a **ranked option set with explicit tradeoffs**, not a single forced winner. Every run maps the option space — even when only one candidate survives the promotion gate, that just means "we found one option in this space," not "this is the answer." The caller picks based on team-side constraints ADR cannot know. When no candidate clears the gate at all, the mode is `deferred` — re-run with sharper context.
 
 ## Three Ways In
 
@@ -142,60 +142,50 @@ adr deep-research .adr-runs/discover/pdr.draft.md \
 
 ## Ranked Options, Not a Single Forced Winner
 
-Every architecture decision is a tradeoff. ADR's primary output is a **ranked option set** — every viable candidate from the comparison matrix appears with explicit `when_to_pick` / `when_not_to_pick` conditions, `strong_axes` / `weak_axes`, and per-option `required_invariants` and `forbidden_topologies`.
-
-A `recommendation` is added only when one option clearly dominates (strong on multiple axes that matter AND others are weak or no_evidence on at least one critical axis). When no option dominates, `mode = "ranked_options"` and the caller picks based on team-side constraints ADR cannot know (existing infrastructure, hiring plans, vendor relationships, budget envelope).
+Every architecture decision is a tradeoff. ADR's job is to **map the option space** — every viable candidate from the comparison matrix appears with explicit `when_to_pick` / `when_not_to_pick` conditions, `strong_axes` / `weak_axes`, and per-option `required_invariants` and `forbidden_topologies`. The caller picks based on team-side constraints ADR cannot know (existing infrastructure, hiring plans, vendor relationships, budget envelope).
 
 | Mode | Meaning |
 | --- | --- |
-| `recommended` | One option dominates; `recommendation.name` names it. The other options are recorded with their tradeoffs as alternatives. |
-| `ranked_options` | Multiple options are viable with genuine tradeoffs. `recommendation: null`. Pick the option whose conditions match your situation. |
+| `ranked_options` | The option space is mapped. Every viable candidate appears in `ranked_options[]` with its tradeoffs. Pick the option whose conditions match your situation. `recommendation` is always `null`. |
 | `deferred` | No candidate cleared the promotion gate. Re-run with sharper context. |
 
-**Commitment threshold:** when the surviving field is narrow (1 candidate, or 2 candidates where one has a 2+ lead on net strong axes), ADR commits — refusing to recommend with the field already narrowed is dishonest, not nuanced. Multi-option fields with genuine tradeoffs still land at `ranked_options`.
+A run that returns one viable option lands in `ranked_options` with `ranked_options[].length === 1`. That means "we found one option in this space," not "this is the answer" — the reader is still the one picking. The follow-up questions section (see below) is how ADR widens the search if one option feels too thin.
 
 Coding agents downstream pick one option, then honor the matching block in `agent-guardrails.md` (per-option contract). The handoff JSON's `options[]` is the machine-readable equivalent.
 
-## Hard Constraints
+## Decision Context (Annotations, Not Filters)
 
-The PRD and clarification answers carry phrases like "self-hosted only", "must fit Docker Compose", "no managed services". Those are not preferences to score against — they are filters. ADR extracts them into `constraints.json` with explicit severities and uses them to eliminate candidates BEFORE the comparison matrix is built.
+The PRD and clarification answers carry phrases like "self-hosted only", "p95 < 500ms", "SOC2 in 12 months". ADR extracts these into `decision-context.json` as **annotations on the option space** — they show up in the report header and flow to synthesis as soft context. They do NOT eliminate candidates.
+
+The user applies their own constraints by reading the matrix. A "self-hosted only" annotation does not drop Pinecone from `ranked_options`; the reader sees Pinecone's deployment row marked `cloud only` and rules it out themselves. This is intentional — filtering candidates inside ADR is the failure mode where a mislabeled "ideally self-hosted" annotation silently drops the option the user would actually have picked.
 
 ```json
-// constraints.json (excerpt)
+// decision-context.json (excerpt)
 {
-  "constraints": [
+  "version": "1.0",
+  "decision": "vector store",
+  "domain": "agent-native OS",
+  "tags": ["phase:pre_pmf", "deployment:self_hosted", "cost_sensitivity:high"],
+  "notes": [
     {
-      "id": "self_hosted_only",
+      "id": "self_hosted_primary",
+      "category": "deployment",
       "statement": "Self-hosted deployment is the primary model.",
-      "severity": "must_have",
-      "check_question": "Does <CANDIDATE> support self-hosted deployment?",
-      "evidence_from_input": "self-hosted is the primary deploy model",
-      "decision_scope_relevant": true,
-      "category": "deployment"
+      "evidence_from_input": "self-hosted is the primary deploy model"
     },
     {
-      "id": "supports_agent_identities",
-      "statement": "Must support persistent agent identities.",
-      "severity": "must_have",
-      "decision_scope_relevant": false,
-      "decision_scope_reason": "Application-layer requirement; no vector-store candidate can satisfy or violate this on its own."
+      "id": "fits_docker_compose",
+      "category": "deployment",
+      "statement": "Should fit the existing Docker Compose stack.",
+      "evidence_from_input": "fits the existing Docker Compose"
     }
   ]
 }
 ```
 
-Severities + scope:
+`notes` are LLM-extracted from the PRD. `tags` come from a pre-built profile when one was selected (see [Profiles](#profiles-tags-not-constraints) below). Both are shown in the ADR.md report header so reviewers see what the user said about their situation.
 
-| Severity | Behavior |
-| --- | --- |
-| `must_have` + `decision_scope_relevant: true` | Eliminates candidates. "Self-hosted only" + Pinecone (cloud-only) → Pinecone is OUT of `ranked_options`. Eliminated candidates are recorded in ADR.md under "Eliminated by hard constraints" with the failure reason. |
-| `must_have` + `decision_scope_relevant: false` | App-layer requirement that the decision layer can't satisfy on its own (e.g., "must support agent identities" for a vector-store decision). Stays in `constraints.json` for transparency, scoring inputs only — no elimination. |
-| `preferred` | Scoring input. Influences ranking but does not filter. |
-| `nice_to_have` | Lowest weight scoring input. |
-
-**Safety net:** if every promoted candidate would fail the must_have set, the filter aborts (keeps the original pool) and emits `constraint_filter_aborted_empty_pool` with guidance to edit `constraints.json`. Beats crashing synthesis with an empty pool.
-
-`constraints.json` is **editable between runs**. ADR uses the file as-is on re-invocation, so if the LLM mislabeled "ideally self-hosted" as must_have, you can change it to preferred and re-run — no full extraction needed.
+`decision-context.json` is **editable between runs**. ADR uses the file as-is on re-invocation, so you can refine the notes or strip irrelevant tags and re-run — no full extraction needed.
 
 ## Peer Products (Similar / Competitor Research)
 
@@ -215,54 +205,58 @@ What happens:
 
 Useful when you want concrete grounding ("WorkOS, Cal.com, and Onyx all use Postgres for tenancy") instead of abstract comparisons. The peer list is written to `peers.json` — you can edit it between runs to add/remove products. CLI knobs: `--include-peers`, `--max-peers <N>` (default 5), `--seed <name>` (anchor peer-finding to a specific seed).
 
-## Decision Kind: Family vs Concrete
+### Architecture vs adoption strategies
 
-ADR distinguishes two kinds of decisions and adapts accordingly:
+Not every peer is read the same way. Each peer in `peers.json` carries an `evidence_strategy` field:
 
-| Mode | When | Candidates are | Extra matrix axes |
-| --- | --- | --- | --- |
-| `family` | "retrieval topology", "event bus architecture", "consistency model" | architecture patterns ("graph_retrieval", "token_based_auth") | none (default axes only) |
-| `concrete` | "auth provider", "queue library", "logging vendor" | specific products ("Clerk", "BullMQ", "Datadog") | pricing model, vendor lock-in, SDK quality, on-prem availability, ecosystem health |
+| Strategy | Used for | Where ADR looks |
+| --- | --- | --- |
+| `architecture` | Open-source peers with public source code, ARCHITECTURE.md, or engineering blogs (Neo4j, Memgraph, Onyx, Cal.com). | GitHub repo internals, docs, engineering posts. The existing query templates. |
+| `adoption` | Closed-source or lightly-documented peers that nonetheless carry strong adoption signal (Obsidian, Roam, Mem.ai, Notion). | Community channels — Reddit, Hacker News, Twitter/X, migration write-ups. A dedicated `adoption_research_planner` LLM picks the queries. |
+| `both` | Open-source peers where community signal also matters (the architecture set wins ties when the merged query budget caps at 5). | Both query sets. |
 
-ADR auto-detects from the decision name: keywords like `provider`, `vendor`, `library`, `service`, `platform`, `tool`, `sdk` switch to `concrete`. Override explicitly via the CLI:
+Adoption-strategy peers exist because architecture posts can't tell you whether r/LocalLLaMA practitioners actually like a tool, what migration regrets show up on HN, or which plugin ecosystem has lock-in. Community sources from reddit.com, news.ycombinator.com, twitter.com / x.com, stackoverflow.com, and the Stack Exchange network get tagged `source_type: community_discussion` and carry a `platform` field (with `subreddit` for Reddit, `story_id` for HN where available).
 
-```bash
-adr deep-research --decision-kind concrete --decision "auth provider" ...
+Community-source claims are framed as **practitioner signal, not architectural fact**. The synthesis prompt phrases them like "r/LocalLLaMA practitioners report X" rather than treating them as authoritative. The citation auditor relaxes its literal-substring rule for these sources (≥60% significant-token overlap instead of an exact quote), because community posts paraphrase. When the evidence pool contains at least one `community_discussion` source, three adoption-flavored axes are added to the comparison matrix: `ecosystem_traction`, `integration_breadth`, `practitioner_pain_points`. Pure-architecture runs are unaffected.
+
+## Follow-up Questions (Non-Blocking)
+
+ADR does not refuse to run on thin context. Gap detection still runs at the start — if the PRD lacks latency / scale / compliance / budget / region signals, the kernel emits `decision_context_gaps_detected` with the open questions — but the run **continues**. Burning the evidence budget on a thin PRD beats forcing the user to answer a clarification dialog before they've seen anything.
+
+After synthesis, ADR inspects the comparison matrix's axis variance and proposes **follow-up questions** — each one a sharper sub-decision targeting the highest-spread axis. They're written to `follow-up-questions.json` and appended to `ADR.md` under `## Follow-up Questions`. Each question carries a pre-filled `adr deep-research` command the user can paste.
+
+```json
+// follow-up-questions.json (excerpt)
+{
+  "version": "1.0",
+  "decision": "vector store",
+  "follow_ups": [
+    {
+      "axis": "deployment_model",
+      "spread_score": 0.84,
+      "question": "Self-hosted or managed? The matrix splits cleanly on this axis — pgvector + Weaviate self-host; Pinecone is cloud-only.",
+      "suggested_command": "adr deep-research --discover-first --repo . --domain \"agent-native OS\" --decision \"self-hosted vector store\" --out .adr-runs/vector-store-self-hosted"
+    }
+  ]
+}
 ```
 
-The MCP tool takes the same value via the `decision_kind` arg. The `/adr:decide` slash command asks the user to confirm before running.
+The decision becomes a **tree of ADR runs**, each one drilling into the highest-uncertainty axis from the prior run. First run maps the space; the follow-up questions tell you where the space is widest; the next run goes narrower on that axis with sharper inputs.
 
-This was a real bug in earlier versions: asking ADR for an "auth provider" got back "token-based auth" (a pattern) instead of "Clerk" (a product). Decision-kind makes that mismatch impossible — the synthesizer prompt branches on the field and is told explicitly to commit to a product in concrete mode.
+### Profiles (Tags, Not Constraints)
 
-**Concrete-mode candidate validator.** When `decision_kind: concrete`, after promotion ADR runs an extra LLM check on each candidate: `product | pattern | unsure`. Pattern-shaped names (`vector_rag`, `postgres_centric_storage`, `token_based_auth`) that leaked through from the extractor get demoted to `insufficient_evidence_candidates` with `promotion_status: "non_product_in_concrete_mode"`. The matrix only sees real products. Family mode is a no-op. Bypass with `--skip-concrete-validation`.
+Profiles attach a flat tag array (stage, team size, deployment shape, cost sensitivity) to a run so the report header carries the user's situation without an extra dialog. Tags are shown alongside the option space and passed to synthesis as soft annotations. **They do not filter candidates** — a `deployment:self_hosted_single_vm` tag does not eliminate Pinecone; the matrix shows you Pinecone's deployment row and you rule it out yourself.
 
-## Clarification Gate
+Profiles shipped with the package (in [`src/clarification-profiles.mjs`](src/clarification-profiles.mjs)):
 
-ADR refuses to bluff. When the PRD lacks enough context (latency / scale / compliance / budget / region signals), the kernel writes `clarification.json` with the open questions and stops before spending tokens on a guaranteed-low-confidence run.
-
-Three ways to unblock:
-
-```bash
-# Pass answers as free-form text or a path to a file
-adr deep-research ... --clarification-answers "Self-hosted only. p95 < 500ms. 10-100 tenants. SOC2 in 12 months."
-
-# Pick a pre-built profile (skip the questions entirely)
-adr deep-research ... --clarification-profile first_paying_customers
-
-# Force a low-confidence run (you accept the risk)
-adr deep-research ... --no-clarify
-```
-
-Profiles shipped with the package:
-
-| Profile | Fit |
+| Profile | Tags |
 | --- | --- |
-| `pre_pmf_solo` | Pre-PMF, 1-3 engineers, self-hosted single-VM, budget < $50/mo. Optimizes for time-to-ship. |
-| `first_paying_customers` | 3-10 engineers, 10-100 tenants, managed cloud, SOC2 in 12 months, $50-500/mo per tenant. |
-| `scaling_team_post_seed` | 10-30 engineers, 100+ tenants, multi-region, SOC2 + GDPR, p95 < 200ms, $500-5k/mo per tenant. |
-| `enterprise_regulated` | 30+ engineers, multi-region or on-prem, HIPAA + SOC2 + GDPR, vendor lock-in is a board concern. |
+| `pre_pmf_solo` | `phase:pre_pmf`, `team:1-3`, `deployment:self_hosted_single_vm`, `cost_sensitivity:high` |
+| `first_paying_customers` | `phase:early_paying`, `team:3-10`, `deployment:managed_cloud`, `compliance:soc2_in_progress`, `cost_sensitivity:medium` |
+| `scaling_team_post_seed` | `phase:post_seed`, `team:10-30`, `deployment:multi_region`, `compliance:soc2+gdpr`, `latency:p95_under_200ms`, `cost_sensitivity:low` |
+| `enterprise_regulated` | `phase:enterprise`, `team:30+`, `deployment:multi_region_or_on_prem`, `compliance:hipaa+soc2+gdpr`, `cost_sensitivity:control_dominates` |
 
-When the gate fires after a `discover` step, `clarification.json` carries a `suggested_profiles` array — the kernel matches discover signals (contributor count, codebase age, compliance) to 1-3 profiles. The slash command surfaces them as quick-pick options.
+The module exports `PROFILES`, `suggestProfiles({ discovered signals })`, `profileById(id)`, and `profileTagsAsText(profile)`. A `--profile` CLI flag wiring these into the run is a follow-up — today, copy the tag text into your PRD before running.
 
 ## Cost Transparency
 
@@ -356,26 +350,26 @@ All three runtimes produce the same artifact set. See [docs/framework-adapters.m
 | Artifact | Content |
 | --- | --- |
 | `run-config.json` | The original flags + input path the run was invoked with. Used by `adr resume <out_dir>` to replay. |
-| `state.json` | Run lifecycle: `completed` / `crashed` / `needs_clarification` / `dry_run_complete`. On crash, includes `error` + `error_stack` so you don't have to grep `events.jsonl`. |
+| `state.json` | Run lifecycle: `completed` / `crashed` / `dry_run_complete`. On crash, includes `error` + `error_stack` so you don't have to grep `events.jsonl`. |
 | `strategic-context.json` | Domain entities, bounded contexts, query shapes, risk invariants, operational envelope, compliance constraints extracted from the brief. |
-| `clarification.json` | Open questions the PRD doesn't answer. Blocking gate by default. Unblocks via `--clarification-answers '<text>'`, `--clarification-profile <id>`, or `--no-clarify`. Carries `suggested_profiles` when discover signals match a built-in profile. |
-| `constraints.json` | Hard constraints (`must_have` / `preferred` / `nice_to_have`) with `decision_scope_relevant` flag. Only must_haves that pass the scope check filter the candidate pool. Editable — re-runs pick up your edits. |
+| `decision-context.json` | Context notes + profile tags extracted from the PRD and clarification answers. **Annotations on the option space, not filters.** Shown in the report header and passed to synthesis as soft context. Editable — re-runs pick up your edits. |
+| `follow-up-questions.json` | Sharper sub-decision questions derived from comparison-matrix axis variance. Each carries the axis, the variance score, the question, and a pre-filled `adr deep-research` command. Also appended to `ADR.md` under "## Follow-up Questions". |
 | `cost-estimate.json` | Written after the plan, before the expensive stages. Carries planned task count + estimated USD + per-task / per-peer coefficients. `--dry-run` short-circuits here. |
 | `peers.json` *(opt-in via `--include-peers`)* | 3-5 similar / competitor products with their GitHub URLs and momentum signal. The deep-research planner adds one targeted task per peer for the specific decision aspect. |
 | `discovered-principles.json` + `discovered-constraints.json` *(when `discover` ran)* | Patterns + antipatterns + stack signals from the user's own repo. Patterns flow into the evidence pool as `private_corpus` claims. The stack signals drive a `fits_existing_stack` matrix axis. |
 | `research-plan.json` | LLM-planned research tasks with search queries and source targets. Includes peer-targeted tasks when `peers.json` is present. Placeholder queries (`<product name>`) get filtered out at parse time. |
 | `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims (each with a literal `quote` from the excerpt), content hash, snapshot path. Audit-grade. Reused by `adr resume`. |
-| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. Eliminated candidates carry the reason: `eliminated_by_hard_constraint`, `non_product_in_concrete_mode`, or `off_topic_for_decision`. |
-| `comparison-matrix.json` | Candidates × axes. Axes are derived from query shapes (every shape becomes an axis), risk invariants (every invariant becomes an axis), operational envelope, compliance, plus `fits_existing_stack` when discover surfaced a stack, plus team-antipattern axes. Each cell carries `strong` / `mixed` / `weak` / `no_evidence`, citation IDs, and a quantitative summary (numbers verbatim from the source when available). |
-| `architecture.spec.json` | `decision.mode` (`recommended` / `ranked_options` / `deferred`), `decision.ranked_options[]` (every viable option with `when_to_pick`, `when_not_to_pick`, `strong_axes`, `weak_axes`, per-option `required_invariants` and `forbidden_topologies`), `decision.recommendation` (when one option dominates). Schema failures fall back to `architecture.spec.invalid.json` + `architecture.spec.validation-errors.txt` so downstream artifacts still write. |
+| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. Eliminated candidates carry the reason: `off_topic_for_decision` is the typical one. |
+| `comparison-matrix.json` | Candidates × axes. Axes are derived from query shapes (every shape becomes an axis), risk invariants (every invariant becomes an axis), operational envelope, compliance, plus `fits_existing_stack` when discover surfaced a stack, plus team-antipattern axes. When the evidence pool contains at least one `community_discussion` source, three adoption axes are added: `ecosystem_traction`, `integration_breadth`, `practitioner_pain_points`. Each cell carries `strong` / `mixed` / `weak` / `no_evidence`, citation IDs, and a quantitative summary (numbers verbatim from the source when available). |
+| `architecture.spec.json` | `decision.mode` (`ranked_options` or `deferred`), `decision.ranked_options[]` (every viable option with `when_to_pick`, `when_not_to_pick`, `strong_axes`, `weak_axes`, per-option `required_invariants` and `forbidden_topologies`). `recommendation` is always `null` — the reader picks from the ranked tradeoffs. Schema failures fall back to `architecture.spec.invalid.json` + `architecture.spec.validation-errors.txt` so downstream artifacts still write. |
 | `architecture.spec.v1.json` / `critique.v1.json` *(when resynth fired)* | Original pre-resynthesis spec + its critique, kept for transparency. |
 | `critique.json` | LLM critique pass — evaluates option-set quality (duplicate options, ungrounded `strong_axes`, citation bleed, unsupported recommendation, missing options). High-severity issues drop the recommendation (option set survives) unless `--no-enforce-critique`. |
 | `citation-audit.json` | Per-citation supported/unsupported verdicts, batched by claim_context. Unsupported recommendation citations drop the recommendation. |
 | `claim-audit.json` | Scans generated ADR/report/eval artifacts for material claims without citations. |
 | `domain-evaluation-pack.json` | Option-aware adversarial test cases: per-option behavior tests (tenant isolation, MFA flow, lineage depth, latency-at-load), keyed on each option's `strong_axes`. Caller runs these against the implementation. |
-| `ADR.md` | Reader-facing markdown. Leads with the tradeoffs across options, then the recommendation (if any), then per-option `Pick this when` / `Avoid when`. Includes `## Eliminated by hard constraints`, `## Evidence from your repo` (private_corpus items), and `## References` (every citation_id → URL + title + source_type). |
+| `ADR.md` | Reader-facing markdown. Leads with the decision-context header (tags + notes), then the tradeoffs across options, then per-option `Pick this when` / `Avoid when`. Includes `## Evidence from your repo` (private_corpus items), `## Follow-up Questions` (sharper sub-decisions for the next run), and `## References` (every citation_id → URL + title + source_type). |
 | `agent-guardrails.md` | Per-option contract blocks. A coding agent implementing option A applies A's invariants and forbidden_topologies — not B's. |
-| `execution-handoff.json` | Per-option contracts in `options[]` plus `recommendation` and `validation_warnings` when any artifact failed schema. |
+| `execution-handoff.json` | Per-option contracts in `options[]` plus `validation_warnings` when any artifact failed schema. `recommendation` is always `null` — pick an option from the matrix. |
 | `events.jsonl` | Live research log. Every event carries concrete content: page previews, claim quotes, per-option summaries, eliminated-candidate reasons, running cost tally. Stream via `tail -F` for a chat surface. |
 | `cost.json` | Final ledger: per-LLM-label call counts, token counts (input / output / cached), per-phase USD estimate, run total. |
 | `sources.md`, `research-report.md` | Citation table, long-form report. |
@@ -528,10 +522,11 @@ Open-source core (Apache-2.0):
 **Shipped (the ADR flagship):**
 - Live agentic research kernel — decide stage.
 - Discover stage and principle/anti-pattern integration into the comparison matrix.
-- Hard constraints with decision-scope-relevance + commitment threshold.
-- Concrete-mode candidate validation; relevance filter; quantitative cell content.
-- Peer-product research via `--include-peers`.
-- Clarification gate with pre-built profiles.
+- Decision context as annotations (not filters); profile tags carried through to synthesis.
+- Relevance filter; quantitative cell content.
+- Peer-product research via `--include-peers`, with `evidence_strategy` (architecture / adoption / both) per peer.
+- `community_discussion` source class for Reddit / HN / Twitter / Stack Exchange, with relaxed citation auditing and conditional adoption axes.
+- Non-blocking gap detection + post-run follow-up question proposal driven by matrix axis variance.
 - Cost transparency (`--dry-run`, `cost-estimate.json`, per-stage tally).
 - Crash-aware `state.json` + `adr resume <out_dir>`.
 - Artifact schemas validated end-to-end.
