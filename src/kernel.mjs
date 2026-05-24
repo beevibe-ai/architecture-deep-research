@@ -2719,19 +2719,99 @@ async function synthesizeArchitectureSpec({
   };
 }
 
-async function buildEvaluationPack(context, spec, evidenceItems) {
+async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix = null) {
+  const mode = spec.decision?.mode || "deferred";
+  const rankedOptions = toArray(spec.decision?.ranked_options);
+
+  // When the run is deferred (no viable options), there is nothing to
+  // evaluate. Return an honest empty pack rather than fabricate test cases
+  // against candidates the synthesizer rejected.
+  if (mode === "deferred" || rankedOptions.length === 0) {
+    return {
+      version: VERSION,
+      suite: slugify(context.domain || "architecture_deep_research_suite"),
+      target_topologies: [],
+      metrics: {},
+      test_cases: [],
+      mode: "deferred"
+    };
+  }
+
+  const kind = context.decision_kind || "family";
   const result = await callLlmJson({
     label: "evaluation_pack_agent",
     system: [
-      "You generate adversarial domain evaluation packs for architecture validation.",
-      "Use the selected architecture spec and domain context.",
-      "Create tests that stress DDD boundaries, lineage, abstention, multi-hop behavior, SLA, and agentic drift.",
-      "Do not implement the product.",
-      "Output JSON with {suite,target_topologies,metrics,test_cases}."
+      "You generate the domain evaluation pack for Architecture Deep Research.",
+      "",
+      "The pack is what a downstream coding agent runs AFTER implementing one",
+      "of the options to verify the implementation actually delivers what the",
+      "option claimed. It is NOT a generic test suite — it must be specific",
+      "to this decision, this option set, and these claimed strong_axes.",
+      "",
+      `Decision: "${context.decision}" (kind: ${kind})`,
+      `Domain: "${context.domain}"`,
+      `Mode: ${mode}`,
+      "",
+      "INPUTS:",
+      "- ranked_options[]: every viable option with its strong_axes, weak_axes,",
+      "  when_to_pick, when_not_to_pick, required_invariants. Test cases should",
+      "  cover every option's claimed strong_axes (verify the strength holds in",
+      "  practice) AND the weak_axes (verify the weakness is documented, not a",
+      "  surprise).",
+      "- comparison_matrix: shows which axis verdicts came from evidence. Use",
+      "  it to identify the axes that actually discriminate options.",
+      "",
+      "REQUIRED OUTPUT — be specific, not generic:",
+      "- 6 to 12 test_cases. Each one must:",
+      "    * name a target_topology from ranked_options[].name OR multiple",
+      "      (a test that all options must pass)",
+      "    * test a CONCRETE behavior with measurable acceptance_criteria",
+      "    * NOT be a generic \"is the API up\" test",
+      "  Examples by decision kind:",
+      "    family / 'retrieval topology': multi-hop accuracy, citation lineage",
+      "      depth, abstention rate on out-of-corpus queries, latency at p95",
+      "    concrete / 'auth provider': tenant isolation under concurrent writes,",
+      "      MFA enrollment flow, session revocation latency, SSO/SAML round",
+      "      trip, on-prem deployment smoke if relevant",
+      "    family / 'event bus topology': message ordering under partition,",
+      "      at-least-once vs exactly-once, DLQ shape, replay-from-offset",
+      "- 3 to 6 metrics. Each one has a numeric target and a definition. Use",
+      "  rates in [0,1] for the well-known keys (deterministic_lineage_rate,",
+      "  boundary_spill_tolerance, unsupported_answer_rate). Add",
+      "  decision-specific metrics beyond those when relevant (p95_latency_ms,",
+      "  tenant_isolation_violations_per_1m_requests, etc.)",
+      "",
+      "DO NOT return an empty test_cases array. DO NOT return an empty metrics",
+      "object. If you cannot identify decision-specific tests, return tests",
+      "anchored to the strong_axes / weak_axes from ranked_options.",
+      "",
+      "Output JSON: {suite: string, target_topologies: [string], metrics: object, test_cases: [object]}."
     ].join("\n"),
     user: JSON.stringify({
       context,
-      spec,
+      mode,
+      ranked_options: rankedOptions.map((o) => ({
+        name: o.name,
+        label: o.label,
+        summary: o.summary,
+        when_to_pick: o.when_to_pick,
+        when_not_to_pick: o.when_not_to_pick,
+        strong_axes: o.strong_axes,
+        weak_axes: o.weak_axes,
+        required_invariants: o.required_invariants,
+        evidence_citations: o.evidence_citations
+      })),
+      recommendation: spec.decision?.recommendation || null,
+      comparison_matrix: comparisonMatrix
+        ? {
+            axes: (comparisonMatrix.axes || []).map((a) => ({ id: a.id, label: a.label })),
+            cells: (comparisonMatrix.cells || []).map((c) => ({
+              candidate: c.candidate,
+              axis_id: c.axis_id,
+              verdict: c.verdict
+            }))
+          }
+        : null,
       evidence: evidenceItems.slice(0, 10).map((item) => ({
         citation_id: item.citation_id,
         title: item.title,
@@ -2740,14 +2820,17 @@ async function buildEvaluationPack(context, spec, evidenceItems) {
     })
   });
 
+  const targetTopologies = toArray(result.target_topologies).length
+    ? toArray(result.target_topologies)
+    : rankedOptions.map((o) => o.name);
+
   return {
     version: VERSION,
     suite: result.suite || slugify(context.domain || "architecture_deep_research_suite"),
-    target_topologies: toArray(result.target_topologies).length
-      ? toArray(result.target_topologies)
-      : [spec.decision.selected_topology],
+    target_topologies: targetTopologies,
     metrics: normalizeEvaluationMetrics(result.metrics),
-    test_cases: normalizeEvaluationCases(result.test_cases).slice(0, 12)
+    test_cases: normalizeEvaluationCases(result.test_cases).slice(0, 12),
+    mode
   };
 }
 
@@ -4166,7 +4249,7 @@ async function writeRunArtifacts({
   comparisonMatrix,
   flags = {}
 }) {
-  const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems);
+  const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix);
   const baseHandoff = buildExecutionHandoff(spec);
   let handoff = baseHandoff;
   if (comparisonMatrix) {
