@@ -92,6 +92,7 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `discover_completed` | ✓  Discover stage complete |
 | `run_started` | 🚀  Deep-research started — `<domain>`: `<decision>` |
 | `strategic_context_created` | ✓  Strategic context: `N` entities, `M` query shapes |
+| `run_waiting_for_clarification` | ❓  Clarification needed — go to **Step 6.5** |
 | `research_plan_created` | 🌐  Planned `N` research tasks |
 | `research_batch_started` | 🔎  Dispatching parallel research agents (max `N`) |
 | `research_agent_started` | &nbsp;&nbsp;🔍  task: `<task_title or task_id>` |
@@ -116,6 +117,41 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 Unknown event types: print as `<event_type>` with no message body. Don't lose them.
 
 **Pacing:** if many events land in quick succession (e.g. `research_round_*` × 20), batch them into a single update so chat doesn't get spammed. e.g. "Research: 6 tasks dispatched, 12 rounds, 47 evidence items so far."
+
+## Step 6.5 — Handle the clarification gate (only if `run_waiting_for_clarification` fires)
+
+The clarification gate is **blocking by default**. When it fires, the deep-research task will exit having only written `strategic-context.json`, `clarification.json`, and `state.json` (status: `needs_clarification`). The matrix, synthesis, and handoff stages do NOT run — burning the evidence budget on a guaranteed-low-confidence answer is the failure mode this gate exists to prevent.
+
+1. Kill the `tail -F` background task — it will hang otherwise.
+2. Read the questions:
+
+```bash
+cat .adr-runs/<SLUG>/clarification.json
+```
+
+3. Ask the user with `AskUserQuestion`. Use one question per `AskUserQuestion` call only if there are 1–4 questions and they have natural options; for free-form latency / scale / compliance values use a single open question with the whole list shown to the user as context, then read their full text reply.
+4. Re-invoke `adr deep-research` with `--clarification-answers '<text>'`, threading every answer the user gave. Use the **same** `--out` so events.jsonl keeps accumulating:
+
+```bash
+npx -y --package=github:beevibe-ai/architecture-deep-research adr \
+  deep-research --discover-first \
+  --repo . \
+  --domain "<DOMAIN>" \
+  --decision "<DECISION>" \
+  --decision-kind <KIND> \
+  --out .adr-runs/<SLUG> \
+  --clarification-answers "$(cat <<'EOF'
+- Latency target: <user answer>
+- Expected scale: <user answer>
+- Compliance: <user answer>
+- ...
+EOF
+)"
+```
+
+5. Restart the `tail -F` task and resume streaming events. The strategic-context extraction will re-run with the answers folded in, and the gate will not re-block.
+
+**Do NOT default to `--no-clarify`** — the user has to opt out of clarification explicitly. The point of the gate is that running with no answers wastes 3+ minutes of evidence collection to land on `requires_human_architecture_review`.
 
 ## Step 7 — When the deep-research task finishes
 

@@ -8,12 +8,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 
 import {
   applyCitationAudit,
+  assessClarification,
   buildKnowledgeMap,
   buildStrategicContext,
   deriveComparisonAxes,
   discoverPatterns,
   inferDecisionKind,
   injectDiscoveredEvidence,
+  prepareRun,
   setLlmJsonProvider,
   synthesizeDecisionPhase,
   writeJson,
@@ -782,6 +784,139 @@ try {
       `family-mode axes should NOT include ${id}, got: ${familyAxes.map((a) => a.id).join(", ")}`
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Clarification gate: PRD "Open questions" are folded into clarification,
+// gate is blocking by default, --clarification-answers unblocks, --no-clarify
+// opts out.
+// ---------------------------------------------------------------------------
+
+{
+  // assessClarification merges PRD Open questions.
+  const ctx = {
+    domain: "saas",
+    domain_entities: ["A", "B", "C", "D"],
+    bounded_contexts: ["one"],
+    query_shapes: [{ name: "q1" }, { name: "q2" }],
+    operational_envelope: {
+      latency: "100ms",
+      cost: "not_specified",
+      scale: "not_specified",
+      availability: "not_specified"
+    },
+    compliance_constraints: ["audit"]
+  };
+  const prdContent = [
+    "# Product Context: foo",
+    "## Decision",
+    "Pick X.",
+    "## Open questions",
+    "- What is the expected QPS?",
+    "- What is the SLA?",
+    "## Important constraints",
+    "- something"
+  ].join("\n");
+  const result = assessClarification(ctx, prdContent);
+  assert.equal(result.needs_clarification, true, "PRD Open questions should trigger the gate");
+  const prdQs = result.questions.filter((q) => q.startsWith("From PRD Open questions:"));
+  assert.equal(prdQs.length, 2, `expected 2 PRD questions, got: ${JSON.stringify(result.questions)}`);
+  assert.ok(prdQs.some((q) => q.includes("QPS")));
+  assert.ok(prdQs.some((q) => q.includes("SLA")));
+
+  // No PRD Open questions section + enough context = no gate.
+  const cleanCtx = {
+    ...ctx,
+    operational_envelope: { latency: "100ms", cost: "$1k/mo", scale: "10k qps", availability: "99.9%" }
+  };
+  const clean = assessClarification(cleanCtx, "# Product Context: foo\n\nbody only\n".padEnd(800, "x"));
+  assert.equal(clean.needs_clarification, false);
+}
+
+{
+  // prepareRun calls assertAgenticRuntime which checks for a live search
+  // provider env var. Set a fake one for the gate-behavior test; restore at
+  // the end so we do not pollute later tests.
+  const priorTavily = process.env.TAVILY_API_KEY;
+  process.env.TAVILY_API_KEY = priorTavily || "fixture-only";
+
+  // prepareRun: gate blocks by default when PRD is thin.
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-clarify-test-"));
+  const thinPrdPath = path.join(tmpDir, "thin.md");
+  await writeFile(
+    thinPrdPath,
+    "# Product Context\n\n## Decision\n\nPick something.\n\n## Open questions\n\n- What latency?\n- What scale?\n"
+  );
+
+  installProvider((label) => {
+    if (label !== "strategic_context_extractor") {
+      throw new Error(`prepareRun clarify fixture: unexpected label ${label}`);
+    }
+    return {
+      domain_entities: [],
+      bounded_contexts: [],
+      query_shapes: [],
+      risk_invariants: [],
+      operational_envelope: {
+        latency: "not_specified",
+        cost: "not_specified",
+        scale: "not_specified",
+        availability: "not_specified"
+      },
+      compliance_constraints: []
+    };
+  });
+
+  // Default = blocking.
+  const blocked = await prepareRun({
+    inputPath: thinPrdPath,
+    flags: {
+      domain: "saas",
+      decision: "auth provider",
+      out: path.join(tmpDir, "out-blocked")
+    }
+  });
+  assert.equal(blocked.needsClarification, true, "thin PRD should block by default");
+  assert.ok(blocked.clarification.questions.length > 0);
+  assert.ok(
+    blocked.clarification.questions.some((q) => q.startsWith("From PRD Open questions:")),
+    "blocked clarification should include the PRD's Open questions"
+  );
+
+  // --no-clarify opts out.
+  const opted = await prepareRun({
+    inputPath: thinPrdPath,
+    flags: {
+      domain: "saas",
+      decision: "auth provider",
+      out: path.join(tmpDir, "out-noclarify"),
+      "no-clarify": true
+    }
+  });
+  assert.equal(opted.needsClarification, false, "--no-clarify should bypass the gate");
+
+  // --clarification-answers unblocks and appends to content.
+  const answered = await prepareRun({
+    inputPath: thinPrdPath,
+    flags: {
+      domain: "saas",
+      decision: "auth provider",
+      out: path.join(tmpDir, "out-answered"),
+      "clarification-answers":
+        "Latency: 100ms p95. Scale: 10k qps. Compliance: SOC2."
+    }
+  });
+  assert.equal(answered.needsClarification, false, "--clarification-answers should unblock");
+  assert.ok(
+    answered.content.includes("## Clarification answers"),
+    "answers should be appended to content"
+  );
+  assert.ok(answered.content.includes("Latency: 100ms p95"));
+
+  setLlmJsonProvider(null);
+  await rm(tmpDir, { recursive: true, force: true });
+  if (priorTavily === undefined) delete process.env.TAVILY_API_KEY;
+  else process.env.TAVILY_API_KEY = priorTavily;
 }
 
 console.log("kernel regression tests ok");

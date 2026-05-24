@@ -10,7 +10,7 @@
     "questions": {
       "type": "array",
       "items": { "type": "string" },
-      "maxItems": 5
+      "maxItems": 8
     },
     "action": { "type": "string" }
   },

@@ -94,6 +94,16 @@ Required runtime:
 	  vendor-grade axes (pricing, vendor lock-in, SDK quality, on-prem,
 	  ecosystem health) to the comparison matrix.
 
+	Clarification gate:
+	  Clarification is blocking by default. If the PRD lacks enough context
+	  (e.g. no latency / scale / compliance signals, or the PRD's "Open
+	  questions" section has un-answered bullets), the run will stop and
+	  print the questions instead of consuming evidence budget on a
+	  guaranteed-low-confidence run.
+
+	  --clarification-answers <text-or-path>   provide answers as a string or a path to a file
+	  --no-clarify                              skip the gate; accept a lower-confidence run
+
 	Quality flags:
 	  --no-enforce-critique          do not auto-downgrade high-severity critique
 	  --no-enforce-citation-audit   do not auto-downgrade unsupported selected citations

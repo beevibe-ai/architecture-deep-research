@@ -120,6 +120,16 @@ const tools = [
         issue_body: {
           type: "string",
           description: "Optional issue body to seed the discover stage when discover_first=true."
+        },
+        clarification_answers: {
+          type: "string",
+          description:
+            "Free-text answers to the clarification questions ADR raised on a prior call. Pass when re-invoking after a needs_clarification response so the run can proceed. The answers are appended to the PRD before strategic-context extraction, so latency / scale / compliance signals feed the comparison matrix."
+        },
+        no_clarify: {
+          type: "boolean",
+          description:
+            "Skip the clarification gate entirely and accept a lower-confidence run. Use only when the caller has already decided that the current PRD context is enough — clarification is blocking by default in the new flow."
         }
       },
       required: ["domain", "decision", "out_dir"]
@@ -204,8 +214,22 @@ async function handleDeepResearch(args) {
   if (typeof args.max_cycles === "number") flags["max-cycles"] = String(args.max_cycles);
   if (typeof args.max_sources === "number") flags["max-sources"] = String(args.max_sources);
   if (args.decision_kind) flags["decision-kind"] = args.decision_kind;
+  if (args.clarification_answers) flags["clarification-answers"] = args.clarification_answers;
+  if (args.no_clarify) flags["no-clarify"] = true;
 
-  await deepResearch({ inputPath: args.input_path || null, flags });
+  const drResult = await deepResearch({ inputPath: args.input_path || null, flags });
+
+  // Clarification gate blocked the run — surface the questions so the host
+  // can prompt the user and re-invoke with `clarification_answers`.
+  if (drResult && drResult.status === "needs_clarification") {
+    return textResult({
+      status: "needs_clarification",
+      out_dir: drResult.out_dir,
+      questions: drResult.questions,
+      next_step:
+        "Answer these questions and re-invoke adr_deep_research with `clarification_answers` set to the answers as text. Set `no_clarify: true` to force the run with the current PRD context instead."
+    });
+  }
 
   // Read back the handoff so the caller sees the result without a second tool
   // call. Some hosts (Claude Code) display the response inline and this gives

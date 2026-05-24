@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { appendFile, mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -220,6 +220,32 @@ async function buildStrategicContext({ sourcePath, content, domain, decision, de
   };
 }
 
+// Parse `## Open questions` bullets from a PRD-style markdown body. The
+// discover stage explicitly writes this section as "things the scan could not
+// infer and the user MUST fill in before running deep-research" — so we lift
+// them straight into the clarification list rather than letting them sit
+// dormant in the PRD nobody re-reads.
+function parseOpenQuestions(content) {
+  if (typeof content !== "string" || content.length === 0) return [];
+  const lines = content.split(/\r?\n/);
+  const headerRe = /^##\s+Open\s+questions\b/i;
+  const nextHeaderRe = /^##\s+\S/;
+  const bulletRe = /^\s*[-*+]\s+(.+\S)\s*$/;
+  let inSection = false;
+  const questions = [];
+  for (const line of lines) {
+    if (headerRe.test(line)) {
+      inSection = true;
+      continue;
+    }
+    if (!inSection) continue;
+    if (nextHeaderRe.test(line)) break;
+    const m = line.match(bulletRe);
+    if (m && m[1]) questions.push(m[1].trim());
+  }
+  return questions;
+}
+
 function assessClarification(context, content) {
   const questions = [];
 
@@ -239,13 +265,17 @@ function assessClarification(context, content) {
     questions.push("What latency, cost, scale, or availability constraints should shape the decision?");
   }
 
+  for (const q of parseOpenQuestions(content)) {
+    questions.push(`From PRD Open questions: ${q}`);
+  }
+
   return {
     version: VERSION,
     needs_clarification: questions.length > 0,
-    questions: questions.slice(0, 5),
+    questions: questions.slice(0, 8),
     action:
       questions.length > 0
-        ? "Proceed only if the caller accepts a lower-confidence research run or supplies the missing context."
+        ? "Re-run with --clarification-answers '<text>' (or edit the PRD), or pass --no-clarify to force a lower-confidence run."
         : "Enough context for Architecture Deep Research."
   };
 }
@@ -2750,7 +2780,32 @@ async function prepareRun({ inputPath, flags, chained = false }) {
 
   const runtime = assertAgenticRuntime(flags);
   const outDir = path.resolve(flags.out);
-  const content = await readFile(path.resolve(inputPath), "utf8");
+  let content = await readFile(path.resolve(inputPath), "utf8");
+
+  // `--clarification-answers` lets the caller unblock the clarification gate
+  // by passing the answers as text (or a path to a text file). The answers
+  // are appended to `content` before strategic-context extraction so any
+  // latency / scale / compliance signals land in the matrix. When provided,
+  // the gate does not re-block — the caller has explicitly accepted the
+  // run with what they supplied.
+  const answersFlag = flags["clarification-answers"];
+  let clarificationAnswers = null;
+  if (typeof answersFlag === "string" && answersFlag.length > 0) {
+    let answersText = answersFlag;
+    try {
+      const resolved = path.resolve(answersFlag);
+      const stats = await stat(resolved);
+      if (stats.isFile()) {
+        answersText = await readFile(resolved, "utf8");
+      }
+    } catch {
+      // Not a file path — treat as inline text.
+    }
+    if (answersText && answersText.trim().length > 0) {
+      clarificationAnswers = answersText.trim();
+      content = `${content}\n\n## Clarification answers\n\n${clarificationAnswers}\n`;
+    }
+  }
 
   await mkdir(outDir, { recursive: true });
   if (!chained) {
@@ -2766,7 +2821,8 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     input_path: inputPath,
     domain: flags.domain,
     decision: flags.decision,
-    ...(chained ? { chained_from: "discover" } : {})
+    ...(chained ? { chained_from: "discover" } : {}),
+    ...(clarificationAnswers ? { clarification_answers_provided: true } : {})
   });
 
   const context = await buildStrategicContext({
@@ -2785,8 +2841,13 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     needs_clarification: clarification.needs_clarification
   });
 
-  const needsClarification =
-    clarification.needs_clarification && Boolean(flags["strict-clarification"]);
+  // Clarification is a hard gate by default. Three ways to satisfy it:
+  //   1. Supply enough context in the PRD that no questions are generated.
+  //   2. Pass --clarification-answers '<text>' (or a path to a text file).
+  //   3. Pass --no-clarify to explicitly accept a lower-confidence run.
+  // --strict-clarification is the legacy flag name; accepted as a no-op.
+  const optOut = Boolean(flags["no-clarify"]) || Boolean(clarificationAnswers);
+  const needsClarification = clarification.needs_clarification && !optOut;
 
   if (needsClarification) {
     await writeJson(path.join(outDir, "state.json"), {
@@ -3571,10 +3632,25 @@ async function deepResearch({ inputPath, flags }) {
     chained: chainedFromDiscover
   });
   if (prepared.needsClarification) {
-    console.log(
-      `Clarification needed. Questions written to ${path.join(prepared.outDir, "clarification.json")}`
-    );
-    return;
+    const questions = prepared.clarification.questions || [];
+    console.log("");
+    console.log("Clarification needed before deep-research can run:");
+    console.log("");
+    questions.forEach((q, i) => {
+      console.log(`  ${i + 1}. ${q}`);
+    });
+    console.log("");
+    console.log("Two ways to unblock:");
+    console.log("  - Re-run with --clarification-answers '<text>'   (answers as text or a path to a file)");
+    console.log(`  - Edit ${path.resolve(resolvedInputPath)} to address the questions, then re-run`);
+    console.log("");
+    console.log("To skip the gate entirely: pass --no-clarify (you accept a lower-confidence run).");
+    console.log(`Full questions also written to ${path.join(prepared.outDir, "clarification.json")}`);
+    return {
+      status: "needs_clarification",
+      out_dir: prepared.outDir,
+      questions
+    };
   }
 
   const plan = await planResearchPhase({
@@ -3726,6 +3802,12 @@ async function deepResearch({ inputPath, flags }) {
     console.log(`LLM cost: ${result.totalLlmCalls} calls, ~${usd} (see cost.json)`);
   }
   console.log("Boundary: ADR stops at Execution Handoff");
+
+  return {
+    status: "completed",
+    out_dir: prepared.outDir,
+    selected_topology: result.selectedTopology
+  };
 }
 
 async function supersedeAdr({ previousDir, inputPath, flags }) {
@@ -3739,7 +3821,10 @@ async function supersedeAdr({ previousDir, inputPath, flags }) {
     throw new Error("Superseding ADR requires --with <product-context.md>.");
   }
 
-  await deepResearch({ inputPath: nextInputPath, flags });
+  const drResult = await deepResearch({ inputPath: nextInputPath, flags });
+  if (drResult && drResult.status === "needs_clarification") {
+    return drResult;
+  }
 
   const outDir = path.resolve(flags.out);
   const nextSpec = JSON.parse(await readFile(path.join(outDir, "architecture.spec.json"), "utf8"));
