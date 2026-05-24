@@ -1,4 +1,6 @@
 # Beevibe AI CTO
+<img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/d3f2f4ce-7c00-4d21-8a7e-824e871e5138" />
+
 
 **The decision layer your coding agents are missing.**
 
