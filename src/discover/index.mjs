@@ -148,6 +148,10 @@ async function discoverPatterns({ inputPath, flags = {}, chained = false } = {})
   let peerCount = 0;
   if (flags["include-peers"]) {
     const maxPeers = Number(flags["max-peers"] || DEFAULT_MAX_PEERS);
+    await appendEvent(outDir, "peers_extraction_started", {
+      max_peers: maxPeers,
+      seed: flags.seed || flags["peer-seed"] || null
+    });
     try {
       const peersArtifact = await findPeers({
         decision,
@@ -162,6 +166,14 @@ async function discoverPatterns({ inputPath, flags = {}, chained = false } = {})
       });
       await writeJson(path.join(outDir, "peers.json"), peersArtifact);
       peerCount = peersArtifact.peers.length;
+      // Loud-failure on empty: --include-peers was explicit, so 0 peers
+      // means the finder ran but found nothing usable. Tell the user
+      // (silent no-ops are the worst outcome).
+      if (peerCount === 0) {
+        await appendEvent(outDir, "peers_extraction_empty", {
+          reason: "Peer finder ran but returned 0 viable peers. Possible causes: LLM returned no candidates; all returned peers failed the staleness or signal-fetch checks; PRD lacked enough context to anchor peers. Provide --seed <product-name> to anchor, or edit peers.json by hand."
+        });
+      }
       await appendEvent(outDir, "peers_found", {
         peer_count: peerCount,
         // Concrete content: each peer with the WHY — "Cal.com - multi-

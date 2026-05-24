@@ -390,6 +390,15 @@ function resolveSchemaKey(filename) {
   if (/^research-plan\.(adaptive|adversarial)-\d+\.json$/.test(filename)) {
     return "research-plan.json";
   }
+  // Re-synthesis loop writes architecture.spec.v1.json (the original) and
+  // architecture.spec.v2.json (the post-critique re-synthesis). Both are
+  // architecture.spec shapes. Same for critique.v1.json / critique.v2.json.
+  if (/^architecture\.spec\.v\d+\.json$/.test(filename)) {
+    return "architecture.spec.json";
+  }
+  if (/^critique\.v\d+\.json$/.test(filename)) {
+    return "critique.json";
+  }
   return null;
 }
 
@@ -583,6 +592,13 @@ async function buildResearchPlan(context, content) {
         ? "Concrete mode: candidates are SPECIFIC PRODUCTS / VENDORS / LIBRARIES, not architecture families. Generate tasks that (a) enumerate the 5-8 most credible product options for this decision, (b) investigate each named product's official docs, real-user case studies, pricing model, lock-in risk, and limitations. Search queries should include specific product names. source_targets should include vendor docs, product comparison pages, real engineering writeups about specific products, and postmortems naming specific products. Do NOT generate tasks about generic architecture patterns in this mode — the user already knows the pattern; they want the product."
         : "Family mode: candidates are ARCHITECTURE FAMILIES / TOPOLOGIES / PATTERNS. Generate tasks that survey patterns, compare topologies, and dig into engineering trade-offs at the family level.",
       "",
+      "CRITICAL: every search_query MUST be a search string a human could paste",
+      "into Google as-is and get useful results. Do NOT emit template placeholders",
+      "like <product name>, <candidate>, or <vendor> in search_queries — fill them",
+      "in with actual product or family names. A query containing literal angle-",
+      "bracket placeholders will be dropped by the search executor and waste a",
+      "task slot.",
+      "",
       "Output JSON with: {tasks:[{id,title,objective,search_queries,source_targets,success_criteria}]}."
     ].join("\n"),
     user: JSON.stringify({
@@ -598,18 +614,34 @@ async function buildResearchPlan(context, content) {
     throw new Error("Research planning agent returned no tasks.");
   }
 
+  // Defensive: drop search_queries that still contain literal angle-bracket
+  // template placeholders. The prompt forbids them but LLMs sometimes emit
+  // <product name> or <candidate> as plain text — those waste a task slot
+  // by fetching unrelated marketing pages (we saw "Product Pricing: What Do
+  // I Charge?" surface during a real run).
+  const PLACEHOLDER_RE = /<[a-z][a-z0-9 _-]*>/i;
   return {
     version: VERSION,
     architecture: "live_agentic_deep_research",
     max_parallel_research_agents: MAX_PARALLEL_RESEARCH_AGENTS,
-    tasks: result.tasks.slice(0, 8).map((task, index) => ({
-      id: task.id || `R${index + 1}`,
-      title: task.title || `Research task ${index + 1}`,
-      objective: task.objective || "Acquire architecture evidence.",
-      search_queries: toArray(task.search_queries).slice(0, 5),
-      source_targets: toArray(task.source_targets).slice(0, 8),
-      success_criteria: toArray(task.success_criteria).slice(0, 5)
-    }))
+    tasks: result.tasks
+      .slice(0, 8)
+      .map((task, index) => {
+        const filteredQueries = toArray(task.search_queries)
+          .map(String)
+          .filter((q) => q.trim().length > 0 && !PLACEHOLDER_RE.test(q));
+        return {
+          id: task.id || `R${index + 1}`,
+          title: task.title || `Research task ${index + 1}`,
+          objective: task.objective || "Acquire architecture evidence.",
+          search_queries: filteredQueries.slice(0, 5),
+          source_targets: toArray(task.source_targets).slice(0, 8),
+          success_criteria: toArray(task.success_criteria).slice(0, 5)
+        };
+      })
+      // Drop tasks whose every query was a placeholder — there is nothing
+      // to search and the task slot is wasted.
+      .filter((task) => task.search_queries.length > 0)
   };
 }
 
@@ -1764,13 +1796,10 @@ async function gatherEvidenceForQuery({
 
     const source_type = classifySource(result.url);
 
-    await appendEvent(outDir, "research_source_fetching", {
-      task_id: task.id,
-      round,
-      url: result.url,
-      title: result.title || result.url,
-      source_type
-    });
+    // Dropped: research_source_fetching event. The companion
+    // research_source_processed event below carries everything in one,
+    // so the per-source event count goes from 4 to 1. Without this cut,
+    // 30 sources × 4 events = 120 events drowns out the high-signal beats.
 
     let repoDigest = null;
     let paperDigest = null;
@@ -1796,28 +1825,14 @@ async function gatherEvidenceForQuery({
       sourceText = opened || result.snippet || "";
       fetchStatus = opened ? "http_fetch_ok" : "search_snippet_only";
     }
-    await appendEvent(outDir, "research_source_fetched", {
-      task_id: task.id,
-      round,
-      url: result.url,
-      title: result.title || result.url,
-      source_type,
-      fetch_status: fetchStatus,
-      text_bytes: Buffer.byteLength(sourceText || "", "utf8"),
-      // Concrete content the user can read: a 240-char preview of what
-      // the page actually said. Stripped of leading whitespace, single-
-      // lined so it renders cleanly in a chat surface.
-      preview: String(sourceText || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 240)
-    });
     const excerpt = extractExcerpt(sourceText, keywords);
     if (!excerpt || excerpt.length < 120) {
       await appendEvent(outDir, "research_source_skipped", {
         task_id: task.id,
         round,
         url: result.url,
+        title: result.title || result.url,
+        source_type,
         reason: "excerpt_too_short_or_empty"
       });
       continue;
@@ -1843,24 +1858,29 @@ async function gatherEvidenceForQuery({
       relevance: task.objective,
       ...sourceSnapshot
     };
-    await appendEvent(outDir, "research_claims_extracting", {
-      task_id: task.id,
-      round,
-      url: result.url
-    });
     const claims = await extractClaims({ context, task, source: partial });
     const scored = scoreEvidence({ sourceType: source_type, excerpt, context, task, claims });
-    await appendEvent(outDir, "research_claims_extracted", {
+
+    // Single per-source event with everything: fetch result + extracted
+    // claims. Replaces the previous 4 events (fetching / fetched /
+    // claims_extracting / claims_extracted) so 30 sources fire 30 events
+    // instead of 120 — chat surfaces stop auto-throttling.
+    await appendEvent(outDir, "research_source_processed", {
       task_id: task.id,
       round,
       url: result.url,
+      title: result.title || result.url,
+      source_type,
+      fetch_status: fetchStatus,
+      text_bytes: Buffer.byteLength(sourceText || "", "utf8"),
       claim_count: claims.length,
       score: scored.score,
-      // Concrete content: top 3 claims with their family + polarity +
-      // a snippet of the actual quote that backed the claim. This is
-      // what the user actually wants to see streaming — "Cal.com uses
-      // pgvector with 4M vectors across 1500 tenants [supports]" —
-      // not "extracted 3 claims (score 0.8)".
+      // Concrete content the user can read: page preview + top claims.
+      // Two short lines beat eight noisy events.
+      preview: String(sourceText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 240),
       claims_preview: claims.slice(0, 3).map((c) => ({
         family: c.architecture_family,
         polarity: c.polarity,
@@ -4087,18 +4107,50 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
         `Decision: "${context.decision}" (kind: ${context.decision_kind || "family"})`,
         `Domain: "${context.domain}"`,
         "",
-        "Read the user's PRD + clarification answers. Extract every constraint",
-        "they expressed, with a severity label:",
-        "  - must_have: explicit non-negotiable. Language signals: \"must\",",
-        "    \"only\", \"required\", \"cannot use X\", \"no Y\", \"the primary deploy",
-        "    model is Z\", \"we need\". These will ELIMINATE candidates from the",
-        "    pool before the matrix gets built. Be conservative — if the user",
-        "    used softer language (\"prefer\", \"ideally\", \"would like\"), it's",
-        "    NOT must_have.",
-        "  - preferred: explicit preference but not a hard rule. Language",
-        "    signals: \"prefer\", \"ideally\", \"would rather\". Influences scoring",
-        "    but does not filter.",
-        "  - nice_to_have: stated interest with no commitment. Lowest weight.",
+        "Read the user's PRD + clarification answers. Extract constraints that",
+        "discriminate candidates — i.e. statements that would let you say 'this",
+        "candidate is OUT' if violated. NOT every requirement is a hard",
+        "constraint.",
+        "",
+        "WHAT QUALIFIES AS must_have (eliminates candidates):",
+        "  Only structural constraints about HOW the system is deployed or",
+        "  WHERE the data lives. These genuinely rule candidates in or out.",
+        "    ✓ deployment: 'self-hosted only', 'must run in Docker Compose',",
+        "      'no managed services', 'no SaaS'",
+        "    ✓ data residency / compliance: 'data must stay in EU', 'SOC2 Type II",
+        "      required', 'GDPR right-to-deletion required', 'air-gapped'",
+        "    ✓ cost ceiling: 'must run on $X/mo per tenant', 'must be free at",
+        "      our scale'",
+        "    ✓ infra constraint: 'must integrate with our existing Postgres',",
+        "      'no new container processes'",
+        "    ✓ region / latency floor: 'p95 < 50ms', 'must serve EU + APAC",
+        "      from local regions'",
+        "",
+        "WHAT DOES NOT QUALIFY AS must_have (these are not constraints, they",
+        "are features the chosen candidate must support — they describe the",
+        "APPLICATION, not what eliminates candidate options):",
+        "    ✗ 'must support agent persistent identities' — this is an app",
+        "      requirement; multiple candidates can support it",
+        "    ✗ 'must enable human-in-the-loop workflows' — same",
+        "    ✗ 'must support multi-tenant filtering' — almost every candidate",
+        "      can support this; it doesn't eliminate anyone",
+        "    ✗ 'must store embeddings with metadata' — table-stakes for any",
+        "      vector store",
+        "    ✗ feature lists, capabilities, behaviors of the resulting system",
+        "  These either become matrix axes (scored, not filtered) or they're",
+        "  implementation details for the chosen candidate. Do NOT extract",
+        "  them as constraints at all unless the user said something like",
+        "  'cannot use any product that does not support X'.",
+        "",
+        "Severity ladder:",
+        "  - must_have: structural deployment / data / cost / compliance /",
+        "    region constraint. Eliminates candidates. Language signals:",
+        "    'must', 'only', 'required', 'cannot use', 'no managed', 'no",
+        "    SaaS', 'the primary deploy model is'. Be conservative.",
+        "  - preferred: explicit preference but not a hard rule. Influences",
+        "    scoring, does not filter. Language: 'prefer', 'ideally', 'would",
+        "    rather'.",
+        "  - nice_to_have: stated interest with no commitment.",
         "",
         "For each constraint, also produce a yes/no check_question that ADR",
         "will ask of each candidate during filtering. Example:",
@@ -4108,13 +4160,14 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
         "Constraint shape:",
         "  { id (kebab-case slug), statement (the user's words),",
         "    severity, check_question, evidence_from_input (verbatim quote),",
-        "    category (deployment / compliance / cost / integration / scale / data) }",
+        "    category (deployment / compliance / cost / region / integration / data) }",
         "",
-        "Quote evidence_from_input verbatim from the PRD or clarification answers.",
-        "Do not invent constraints. If the user said nothing about cost, do not",
-        "extract a cost constraint.",
+        "Quote evidence_from_input verbatim. Do not invent constraints.",
         "",
-        "Cap at 6 constraints total. Bias toward fewer-but-real over many-but-soft.",
+        "Cap at 4 must_have constraints. If you find yourself extracting more",
+        "than 4, you're probably labeling app-level requirements as must_have —",
+        "downgrade most to preferred. Real architectural decisions rarely have",
+        "more than 3-4 genuine structural constraints.",
         "",
         "Output JSON: { constraints: [{id, statement, severity, check_question, evidence_from_input, category}] }."
       ].join("\n"),
@@ -4282,6 +4335,22 @@ async function applyConstraintFilter({ context, knowledgeMap, constraints, outDi
     } else {
       survivors.push(candidate);
     }
+  }
+
+  // Safety net: if constraint filtering eliminated ALL candidates, the
+  // must_have set is too aggressive (typically because the LLM extractor
+  // promoted app-level requirements to must_have). Falling through with an
+  // empty pool would break the synthesis stage. Instead, abort the filter,
+  // keep the original pool, log the issue, and let the synthesis stage see
+  // the constraints as scoring inputs only. The user can edit
+  // constraints.json to downgrade severities and re-run.
+  if (survivors.length === 0) {
+    await appendEvent(outDir, "constraint_filter_aborted_empty_pool", {
+      must_have_count: mustHaves.length,
+      would_have_eliminated: eliminated.map((e) => e.name),
+      reason: "Every promoted candidate failed at least one must_have constraint. The constraint set is likely too aggressive — edit constraints.json to downgrade non-deployment-grade constraints to 'preferred', then re-run. Keeping the original pool for this run."
+    });
+    return { knowledgeMap, eliminated: [], skipped: false, aborted_empty: true };
   }
 
   if (eliminated.length === 0) {
@@ -5284,6 +5353,44 @@ async function writeRunArtifacts({
 }
 
 async function deepResearch({ inputPath, flags }) {
+  try {
+    return await _deepResearchImpl({ inputPath, flags });
+  } catch (error) {
+    // Crash-aware state.json. state.json used to lie ({"status":
+    // "needs_clarification" from 6 minutes ago}) when deep-research died
+    // mid-stage. Now we write a final {"status": "crashed", ...} on every
+    // error path so operators can grep state.json instead of events.jsonl
+    // to find out what died.
+    if (flags && flags.out) {
+      try {
+        const outDir = path.resolve(flags.out);
+        await mkdir(outDir, { recursive: true });
+        await writeFile(
+          path.join(outDir, "state.json"),
+          JSON.stringify(
+            {
+              version: VERSION,
+              status: "crashed",
+              completed_at: nowIso(),
+              error: String(error?.message || error),
+              error_stack: String(error?.stack || "").slice(0, 4000)
+            },
+            null,
+            2
+          )
+        );
+        await appendEvent(outDir, "run_crashed", {
+          error: String(error?.message || error)
+        });
+      } catch {
+        // crash-state-write failed too — nothing more we can do
+      }
+    }
+    throw error;
+  }
+}
+
+async function _deepResearchImpl({ inputPath, flags }) {
   let resolvedInputPath = inputPath;
   let chainedFromDiscover = false;
 
@@ -5309,17 +5416,25 @@ async function deepResearch({ inputPath, flags }) {
         repo: flags.repo || ".",
         decision: flags.decision,
         out: outDir,
-        "issue-body": flags["issue-body"]
+        "issue-body": flags["issue-body"],
+        // Forward peer-finding flags so --discover-first --include-peers
+        // actually triggers peers.json generation. Without these, the
+        // discover stage's peer-finder never sees the include-peers flag
+        // because we hand-built a fresh flags object.
+        "include-peers": flags["include-peers"],
+        "max-peers": flags["max-peers"],
+        seed: flags.seed,
+        // Forward decision_kind + domain too so the discover stage can
+        // pass them to peer-finder for better peer relevance.
+        "decision-kind": flags["decision-kind"],
+        domain: flags.domain
       },
       chained: true
     });
     resolvedInputPath = discoverResult.draftPath;
     chainedFromDiscover = true;
-    await appendEvent(outDir, "discover_first_chained", {
-      draft_path: discoverResult.draftPath,
-      pattern_count: discoverResult.principles.patterns.length,
-      antipattern_count: discoverResult.principles.antipatterns.length
-    });
+    // discover_completed already fired with these payload fields — no need
+    // for a second event saying the same thing.
   }
 
   const prepared = await prepareRun({

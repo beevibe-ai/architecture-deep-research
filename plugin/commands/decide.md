@@ -100,7 +100,6 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 
 | event_type | One-line message |
 | --- | --- |
-| `discover_first_chained` | 🔍  Discover: scanning the repo first |
 | `repo_scanned` | ✓  Repo scan done — `file_count` files, `manifest_count` manifests, `deploy_config_count` deploy configs |
 | `principles_extracted` | ✓  Discovered `pattern_count` patterns + `antipattern_count` anti-patterns |
 | `pdr_drafted` | ✓  Drafted PRD — `bytes` bytes |
@@ -117,9 +116,7 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `research_agent_started` | &nbsp;&nbsp;🔍  task: `<title>` |
 | `research_round_started` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` searching: `queries[0]` |
 | `research_search_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` got `result_count` hits for `query` |
-| `research_source_fetching` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;⤓ fetching `<title>` (`source_type`) |
-| `research_source_skipped` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↪ skipped `<url>` (`reason`) |
-| `research_claims_extracting` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🧠 extracting claims from `<url>` |
+| `research_source_skipped` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↪ skipped `<title>` (`reason`) |
 | `research_round_judged` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` judge: complete=`<value>` |
 | `research_round_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` ✓ (`evidence_count` evidence) |
 | `research_agent_finished` | &nbsp;&nbsp;✓  task done (`evidence_count` evidence) |
@@ -186,15 +183,10 @@ These carry **concrete content** the user wants to see. Render each as a 2-6 lin
   …
 ```
 
-**`research_source_fetched`** — single line + indented preview:
+**`research_source_processed`** — the combined per-source beat. One header line for the fetch + preview, then one bullet per top claim. Replaces the previous 4 per-source events (fetching / fetched / claims_extracting / claims_extracted) so 30 sources fire 30 events instead of 120:
 ```
-      ✓ fetched "Architecture · Onyx Docs" (8.1KB, http_fetch_ok)
+      ✓ "Architecture · Onyx Docs" (8.1KB, http_fetch_ok, 3 claims, score 0.82)
         └ "Onyx uses Postgres with pgvector as the default vector store. The schema separates per-tenant indexes via..."
-```
-
-**`research_claims_extracted`** — single header line + one bullet per top claim:
-```
-      ✓ extracted 3 claims (score 0.8)
         • [pgvector / supports] Onyx ships with pgvector as the default vector store across all deployments.
         • [pgvector / supports] Schema separates per-tenant indexes via tenant_id partition columns.
         • [self_hosted / supports] Default deployment is single-container Docker Compose with embedded Postgres.
@@ -297,13 +289,19 @@ EOF
 You'll be notified when the background deep-research task completes (the one from Step 4, NOT the tail task). At that point:
 
 1. Stop the `tail -F` task (let it die naturally — it has no more input — or kill it explicitly via Bash).
-2. Read the handoff file:
+2. **Read `ADR.md` first.** This is the founder-facing artifact — the rendered tradeoffs, recommendation reasoning, References section, and "Evidence from your repo" section. It's what the user actually wants to read. The handoff JSON is for downstream coding agents.
+
+```bash
+cat .adr-runs/<SLUG>/ADR.md
+```
+
+3. Then read `execution-handoff.json` ONLY if you need the structured `mode` / `recommendation` / `options[]` fields for the summary at Step 8, or to drive an implement-the-option flow at Step 9.
 
 ```bash
 cat .adr-runs/<SLUG>/execution-handoff.json
 ```
 
-3. If the file doesn't exist, the run did not reach the handoff stage. Inspect `.adr-runs/<SLUG>/state.json` and the last events to figure out why. Report the failure clearly to the user.
+4. If `ADR.md` doesn't exist, the run did not reach the artifact stage. Inspect `.adr-runs/<SLUG>/state.json` (the kernel writes `{"status": "crashed", "error": ...}` on every failure path now) and the tail of `events.jsonl` to find out what died. Report clearly to the user. Salvageable run state: `evidence.json`, `comparison-matrix.json`, and `critique.json` may still be present and useful even when the run crashed.
 
 ## Step 8 — Summarize the result
 
