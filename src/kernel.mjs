@@ -1800,9 +1800,17 @@ async function gatherEvidenceForQuery({
       task_id: task.id,
       round,
       url: result.url,
+      title: result.title || result.url,
       source_type,
       fetch_status: fetchStatus,
-      text_bytes: Buffer.byteLength(sourceText || "", "utf8")
+      text_bytes: Buffer.byteLength(sourceText || "", "utf8"),
+      // Concrete content the user can read: a 240-char preview of what
+      // the page actually said. Stripped of leading whitespace, single-
+      // lined so it renders cleanly in a chat surface.
+      preview: String(sourceText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 240)
     });
     const excerpt = extractExcerpt(sourceText, keywords);
     if (!excerpt || excerpt.length < 120) {
@@ -1847,7 +1855,18 @@ async function gatherEvidenceForQuery({
       round,
       url: result.url,
       claim_count: claims.length,
-      score: scored.score
+      score: scored.score,
+      // Concrete content: top 3 claims with their family + polarity +
+      // a snippet of the actual quote that backed the claim. This is
+      // what the user actually wants to see streaming — "Cal.com uses
+      // pgvector with 4M vectors across 1500 tenants [supports]" —
+      // not "extracted 3 claims (score 0.8)".
+      claims_preview: claims.slice(0, 3).map((c) => ({
+        family: c.architecture_family,
+        polarity: c.polarity,
+        claim: String(c.claim || "").slice(0, 200),
+        quote: String(c.quote || "").slice(0, 180)
+      }))
     });
 
     evidence.push({
@@ -3955,7 +3974,14 @@ async function planResearchPhase({ context, content, outDir, flags }) {
   if (peerTasks.length > 0) {
     await appendEvent(outDir, "peer_research_tasks_added", {
       peer_task_count: peerTasks.length,
-      peers: peerTasks.map((t) => t.peer_target)
+      // Concrete content: each task's title, target peer, and the URL
+      // it will hit. Lets the user see what's about to happen, not just
+      // a count.
+      tasks: peerTasks.map((t) => ({
+        peer: t.peer_target,
+        title: t.title,
+        sources: (t.source_targets || []).slice(0, 3)
+      }))
     });
   }
 
@@ -4138,7 +4164,17 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
   await appendEvent(outDir, "constraints_extracted", {
     constraint_count: constraints.length,
     must_have_count: constraints.filter((c) => c.severity === "must_have").length,
-    preferred_count: constraints.filter((c) => c.severity === "preferred").length
+    preferred_count: constraints.filter((c) => c.severity === "preferred").length,
+    // Concrete content: every constraint with its severity and the
+    // verbatim user statement that produced it. This is what makes the
+    // filter feel intelligible — "must_have: Self-hosted deployment
+    // (from 'self-hosted is the primary deploy model')".
+    constraints: constraints.map((c) => ({
+      id: c.id,
+      severity: c.severity,
+      statement: c.statement,
+      evidence: String(c.evidence_from_input || "").slice(0, 200)
+    }))
   });
   return out;
 }
@@ -4280,7 +4316,18 @@ async function applyConstraintFilter({ context, knowledgeMap, constraints, outDi
     must_have_count: mustHaves.length,
     candidates_kept: survivors.length,
     candidates_eliminated: eliminated.length,
-    eliminated_names: eliminated.map((e) => e.name)
+    // Concrete content: each eliminated candidate with WHICH constraint
+    // it failed and the reason. "Pinecone — failed self-hosted-only
+    // (cloud-only managed service)" beats "eliminated 1 candidate".
+    eliminated: eliminated.map((e) => ({
+      name: e.name,
+      label: e.label,
+      failures: e.failures.map((f) => ({
+        constraint: f.constraint_statement,
+        reason: String(f.reason || "").slice(0, 200)
+      }))
+    })),
+    survivors: survivors.map((s) => s.name)
   });
 
   return { knowledgeMap: updated, eliminated, skipped: false };
@@ -4522,11 +4569,34 @@ async function compareTopologiesPhase({
     discoveredStack
   });
   await writeJson(path.join(outDir, "comparison-matrix.json"), initialMatrix);
+  // Concrete content: the strongest cell per candidate so the user sees
+  // WHAT made each candidate strong. "pgvector — strong on
+  // fits_existing_stack: builds on existing Postgres deployment [12]"
+  // beats "matrix: 5×13, 35 empty".
+  const cellsByCandidate = new Map();
+  for (const cell of toArray(initialMatrix.cells)) {
+    if (cell.verdict !== "strong") continue;
+    if (!cellsByCandidate.has(cell.candidate)) cellsByCandidate.set(cell.candidate, []);
+    cellsByCandidate.get(cell.candidate).push(cell);
+  }
+  const topCells = [];
+  for (const [candidate, cells] of cellsByCandidate.entries()) {
+    const top = cells[0]; // first 'strong' cell
+    topCells.push({
+      candidate,
+      axis: top.axis,
+      summary: String(top.summary || "").slice(0, 220),
+      citations: (top.evidence_citations || []).slice(0, 3)
+    });
+  }
   await appendEvent(outDir, "comparison_matrix_built", {
     axes: initialMatrix.axes.length,
     candidates: initialMatrix.candidates.length,
     cells: initialMatrix.cells.length,
-    empty_cells: initialMatrix.empty_cells.length
+    empty_cells: initialMatrix.empty_cells.length,
+    strong_cells: initialMatrix.cells.filter((c) => c.verdict === "strong").length,
+    weak_cells: initialMatrix.cells.filter((c) => c.verdict === "weak").length,
+    top_strong_cells: topCells.slice(0, 6)
   });
 
   const maxAdversarialCycles = Math.max(
@@ -4744,7 +4814,24 @@ async function critiqueDecisionPhase({
   await appendEvent(outDir, "critique_completed", {
     issue_count: issues.length,
     high_severity_count: highSeverityCount,
-    recommend_human_review: critique.recommend_human_review
+    recommend_human_review: critique.recommend_human_review,
+    // Concrete content: top 3 high-severity issues with category + the
+    // model's actual description. "duplicate_options: token_based_auth
+    // and token_based_authentication describe the same thing under
+    // different names" beats "7 issues (0 high)".
+    top_issues: issues
+      .sort((a, b) => {
+        const order = { high: 0, medium: 1, low: 2 };
+        return (order[a.severity] || 9) - (order[b.severity] || 9);
+      })
+      .slice(0, 3)
+      .map((issue) => ({
+        severity: issue.severity,
+        category: issue.category,
+        description: String(issue.description || "").slice(0, 280),
+        citations: (issue.evidence_citations || []).slice(0, 3)
+      })),
+    summary: String(critique.summary || "").slice(0, 280)
   });
 
   return critique;
@@ -4917,10 +5004,23 @@ async function verifyCitationsPhase({
   };
 
   await writeJson(path.join(outDir, "citation-audit.json"), audit);
+  // Concrete content: list the unsupported citations so the user sees
+  // exactly which sources the verifier rejected. "[57] WorkOS blog —
+  // Reason: discusses OAuth2 client credentials, not token-based auth"
+  // beats "1 unsupported".
+  const unsupportedDetails = toArray(audit.items)
+    .filter((i) => !i.verified)
+    .slice(0, 5)
+    .map((i) => ({
+      citation_id: i.citation_id,
+      claim_context: i.claim_context,
+      reason: String(i.reason || "").slice(0, 200)
+    }));
   await appendEvent(outDir, "citation_audit_completed", {
     total_citations: totalCitations,
     verified_count: verifiedCount,
-    unsupported_count: unsupportedCount
+    unsupported_count: unsupportedCount,
+    unsupported_details: unsupportedDetails
   });
   return audit;
 }
@@ -5355,11 +5455,27 @@ async function deepResearch({ inputPath, flags }) {
     evidenceItems,
     comparisonMatrix
   });
+  // Concrete content: each ranked option with its name, label, 1-line
+  // summary, top strong + weak axes, and pick-this-when condition. Plus
+  // the recommendation's full "why" reasoning when there is one. This is
+  // the moment the user finds out what ADR decided.
+  const synthOptions = toArray(rawSpec.decision?.ranked_options).map((o) => ({
+    name: o.name,
+    label: o.label,
+    summary: String(o.summary || "").slice(0, 200),
+    strong_axes: toArray(o.strong_axes).slice(0, 4),
+    weak_axes: toArray(o.weak_axes).slice(0, 4),
+    when_to_pick: toArray(o.when_to_pick).slice(0, 2).map((s) => String(s).slice(0, 160))
+  }));
   await appendEvent(prepared.outDir, "synthesis_completed", {
     mode: rawSpec.decision?.mode,
-    ranked_options_count: toArray(rawSpec.decision?.ranked_options).length,
+    ranked_options_count: synthOptions.length,
     has_recommendation: Boolean(rawSpec.decision?.recommendation),
-    recommendation_name: rawSpec.decision?.recommendation?.name || null
+    recommendation_name: rawSpec.decision?.recommendation?.name || null,
+    recommendation_why: rawSpec.decision?.recommendation?.why
+      ? String(rawSpec.decision.recommendation.why).slice(0, 360)
+      : null,
+    options: synthOptions
   });
 
   await appendEvent(prepared.outDir, "critique_started", {

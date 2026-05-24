@@ -94,64 +94,158 @@ Each line that lands is a JSON object: `{"ts":"...","type":"<event_type>", ...ex
 
 ## Step 6 — Stream events to the user via Monitor
 
-Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notification with one event. Pretty-print to the user with a short one-line summary. **Use this mapping** — do not invent or skip events:
+Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notification with one event. **Render every event** — most as a single line, some as a multi-line content block when the payload carries concrete content the user should see (URLs, claims, options, eliminated candidates, etc.). The point is for the chat to be a live research log, not a progress bar.
 
-| event_type | One-line message to the user |
+### Single-line events (one chat line each)
+
+| event_type | One-line message |
 | --- | --- |
 | `discover_first_chained` | 🔍  Discover: scanning the repo first |
-| `repo_scanned` | ✓  Repo scan done — `N` files, `K` manifests, `D` deploy configs (use `file_count`, `manifest_count`, `deploy_config_count`) |
-| `principles_extracted` | ✓  Discovered `N` patterns + `M` anti-patterns from the repo |
-| `constraints_extracted` | ✓  Extracted stack + `K` compliance signals |
-| `pdr_drafted` | ✓  Drafted PRD — moving to live research |
-| `peers_found` | 🤝  Found `N` peer products: `peers[].label` |
+| `repo_scanned` | ✓  Repo scan done — `file_count` files, `manifest_count` manifests, `deploy_config_count` deploy configs |
+| `principles_extracted` | ✓  Discovered `pattern_count` patterns + `antipattern_count` anti-patterns |
+| `pdr_drafted` | ✓  Drafted PRD — `bytes` bytes |
 | `peers_extraction_failed` | ⚠  Peer finder failed — proceeding without peers |
-| `peer_research_tasks_added` | 🎯  Added `peer_task_count` peer-targeted research tasks (`peers`) |
 | `discover_completed` | ✓  Discover stage complete |
 | `run_started` | 🚀  Deep-research started — `<domain>`: `<decision>` |
-| `strategic_context_created` | ✓  Strategic context: `N` entities, `M` query shapes |
+| `strategic_context_created` | ✓  Strategic context: `query_shapes.length` entities, `bounded_contexts.length` query shapes |
 | `run_waiting_for_clarification` | ❓  Clarification needed — go to **Step 6.5** |
-| `constraints_extracted` | ✓  Extracted `N` constraints (`must_have_count` must_have) |
-| `constraints_loaded_from_disk` | ✓  Constraints loaded from existing `constraints.json` |
+| `constraints_loaded_from_disk` | ✓  Constraints loaded from existing `constraints.json` (`constraint_count` items) |
 | `constraints_extraction_failed` | ⚠  Constraint extraction failed — proceeding without hard filter |
-| `constraint_filter_completed` | 🚫  Hard-constraint filter: kept `N`, eliminated `K` (`eliminated_names`) |
 | `constraint_filter_failed` | ⚠  Constraint filter failed — keeping all candidates |
-| `research_plan_created` | 🌐  Planned `N` research tasks |
-| `research_batch_started` | 🔎  Dispatching parallel research agents (max `N`) |
-| `research_agent_started` | &nbsp;&nbsp;🔍  task: `<task_title or task_id>` |
-| `research_round_started` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` searching |
-| `research_search_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` got `result_count` results for `query` |
-| `research_source_fetching` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;⤓ fetching `<url>` (`source_type`) |
-| `research_source_fetched` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;✓ fetched `<url>` (`text_bytes` bytes, `fetch_status`) |
+| `research_plan_created` | 🌐  Planned `task_count` research tasks (`peer_task_count` peer-targeted) |
+| `research_batch_started` | 🔎  Dispatching parallel research agents (max `max_parallel`) |
+| `research_agent_started` | &nbsp;&nbsp;🔍  task: `<title>` |
+| `research_round_started` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` searching: `queries[0]` |
+| `research_search_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` got `result_count` hits for `query` |
+| `research_source_fetching` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;⤓ fetching `<title>` (`source_type`) |
 | `research_source_skipped` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↪ skipped `<url>` (`reason`) |
 | `research_claims_extracting` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🧠 extracting claims from `<url>` |
-| `research_claims_extracted` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;✓ extracted `claim_count` claims (score `<score>`) |
-| `research_round_judged` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` judge: complete=`<value>` |
-| `research_round_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` ✓ (`N` evidence) |
-| `research_agent_finished` | &nbsp;&nbsp;✓  task done (`N` evidence) |
-| `evidence_collected` | ✓  Evidence pool: `N` items, `K` promoted candidates |
-| `private_corpus_evidence_injected` | 🧠  Injected `N` private_corpus items from discover; `K` antipattern axes added |
-| `candidate_relevance_filter_completed` | 🎯  Dropped `N` off-topic candidates from promoted pool (`dropped_names`) |
-| `candidate_relevance_filter_failed` | ⚠  Relevance filter failed — keeping all candidates (LLM error) |
-| `comparison_matrix_built` | 📊  Matrix: `C` candidates × `A` axes (`E` empty cells) |
-| `adaptive_research_cycle_started` | 🔁  Adaptive cycle `N`: filling evidence gaps |
-| `adaptive_research_cycle_completed` | ✓  Adaptive cycle `N` complete (`K` promoted candidates now) |
-| `adversarial_research_cycle_started` | ⚔️  Adversarial cycle `N`: arguing against candidates |
-| `adversarial_research_cycle_completed` | ✓  Adversarial cycle `N` complete (`E` empty cells remain) |
-| `synthesis_started` | 🧩  Synthesizing — `K` promoted candidates, `N` evidence items |
-| `synthesis_completed` | ✓  Synthesis done — mode=`<mode>`, `N` ranked options, recommendation: `<name or none>` |
+| `research_round_judged` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` judge: complete=`<value>` |
+| `research_round_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `round` ✓ (`evidence_count` evidence) |
+| `research_agent_finished` | &nbsp;&nbsp;✓  task done (`evidence_count` evidence) |
+| `evidence_collected` | ✓  Evidence pool: `total_items` items, `promoted_candidates_count` promoted |
+| `private_corpus_evidence_injected` | 🧠  Injected `synthetic_count` items from discover; `antipattern_axis_count` antipattern axes |
+| `candidate_relevance_filter_failed` | ⚠  Relevance filter failed — keeping all candidates |
+| `adaptive_research_cycle_started` | 🔁  Adaptive cycle `cycle`: filling evidence gaps |
+| `adaptive_research_cycle_completed` | ✓  Adaptive cycle `cycle` complete (`promoted_candidate_count` promoted) |
+| `adversarial_research_cycle_started` | ⚔️  Adversarial cycle `cycle`: arguing against candidates |
+| `adversarial_research_cycle_completed` | ✓  Adversarial cycle `cycle` complete (`empty_cells_after` empty cells remain) |
+| `synthesis_started` | 🧩  Synthesizing — `promoted_candidates` candidates, `evidence_count` evidence items |
 | `critique_started` | 🧐  Critique: evaluating option set quality |
-| `critique_completed` | 🧐  Critique: `N` issues (`H` high-severity) |
-| `resynthesis_started` | 🔄  Re-synthesizing to address `N` high-severity issues |
-| `resynthesis_accepted` | ✓  Re-synthesis accepted (`N` → `M` high-severity, selected: `<value>`) |
+| `resynthesis_started` | 🔄  Re-synthesizing to address `original_high_severity_count` high-severity issues |
+| `resynthesis_accepted` | ✓  Re-synthesis accepted (`original_high_severity_count` → `new_high_severity_count`, selected: `new_selected_topology`) |
 | `resynthesis_rejected` | ↪  Re-synthesis rejected — keeping original (`reason`) |
 | `citation_audit_started` | 🔗  Citation audit: verifying citations across `evidence_count` items |
 | `citation_audit_batch_started` | &nbsp;&nbsp;⤓ batch `<claim_context>` (`citation_count` citations) |
-| `citation_audit_batch_completed` | &nbsp;&nbsp;✓ batch `<claim_context>` — `verified_count` verified, `unsupported_count` unsupported |
-| `citation_audit_completed` | 🔗  Citation audit: `V/T` verified, `U` unsupported |
+| `citation_audit_batch_completed` | &nbsp;&nbsp;✓ batch `<claim_context>` — `verified_count`/`citation_count` verified |
 | `evaluation_pack_started` | 🧪  Building evaluation pack |
 | `evaluation_pack_completed` | ✓  Evaluation pack — `test_case_count` test cases, `metric_count` metrics |
-| `claim_audit_started` | 📝  Claim audit: scanning artifacts for uncited material claims |
-| `claim_audit_completed` | 📝  Claim audit complete |
+| `claim_audit_started` | 📝  Claim audit: scanning artifacts |
+| `claim_audit_completed` | 📝  Claim audit: `total_claims_checked` checked, `uncited_material_claim_count` uncited |
+| `artifact_validation_warnings` | ⚠  `warning_count` artifact(s) failed schema; wrote .invalid.json siblings (`files`) |
+| `handoff_writing` | 📝  Writing handoff artifacts |
+
+### Multi-line content events (render as a small block in chat)
+
+These carry **concrete content** the user wants to see. Render each as a 2-6 line block with the header on its own line, then the items indented. Do not collapse to a single line.
+
+**`constraints_extracted`** — header `✓  Extracted N constraints (M must_have, K preferred)` then one bullet per `constraints[]`:
+```
+✓  Extracted 3 constraints (2 must_have, 1 preferred)
+  • [must_have] Self-hosted is the primary deploy model
+    └ from: "self-hosted is the primary deploy model"
+  • [must_have] Must fit existing Docker Compose stack
+    └ from: "fits the existing Docker Compose"
+  • [preferred] Prefer low cost at low scale
+    └ from: "budget-sensitive at early stage"
+```
+
+**`constraint_filter_completed`** — header `🚫 Hard-constraint filter: kept N, eliminated K` then one bullet per `eliminated[]`:
+```
+🚫  Hard-constraint filter: kept 3, eliminated 1
+  ✗ Pinecone — failed "Self-hosted is the primary deploy model"
+    └ Cloud-only managed service; cannot run inside Docker Compose.
+  Survivors: pgvector, weaviate, milvus
+```
+
+**`peers_found`** — header `🤝 Found N peer products` then one bullet per peer:
+```
+🤝  Found 5 peer products
+  • Cal.com (★33k, TypeScript) — Multi-tenant SaaS shipping its own auth + scheduling
+  • Onyx (★12k, Python) — Self-hosted agent runtime with similar agent OS shape
+  • AnythingLLM (★22k, JavaScript) — Self-hosted RAG / chat OS
+  • Open WebUI (★45k, Python) — Self-hosted LLM front-end with multi-user support
+  • Notion (closed-source) — SaaS at similar abstraction layer
+```
+
+**`peer_research_tasks_added`** — header `🎯 Added N peer-targeted research tasks` then bullets:
+```
+🎯  Added 5 peer-targeted research tasks
+  • Cal.com → how does Cal.com handle vector store for agent memory? (cal.com/docs, github.com/cal-com/cal.com)
+  • Onyx → how does Onyx handle vector store for agent memory? (docs.onyx.app)
+  …
+```
+
+**`research_source_fetched`** — single line + indented preview:
+```
+      ✓ fetched "Architecture · Onyx Docs" (8.1KB, http_fetch_ok)
+        └ "Onyx uses Postgres with pgvector as the default vector store. The schema separates per-tenant indexes via..."
+```
+
+**`research_claims_extracted`** — single header line + one bullet per top claim:
+```
+      ✓ extracted 3 claims (score 0.8)
+        • [pgvector / supports] Onyx ships with pgvector as the default vector store across all deployments.
+        • [pgvector / supports] Schema separates per-tenant indexes via tenant_id partition columns.
+        • [self_hosted / supports] Default deployment is single-container Docker Compose with embedded Postgres.
+```
+
+**`candidate_relevance_filter_completed`** — header + bullet per dropped:
+```
+🎯  Dropped 2 off-topic candidates: nextjs, postgres_centric_storage
+  • nextjs — Framework, not a vector store
+  • postgres_centric_storage — Storage stack choice, not a vector store
+```
+
+**`comparison_matrix_built`** — header + top strong cells:
+```
+📊  Matrix: 5 candidates × 13 axes (35 empty, 18 strong, 6 weak)
+  • pgvector — strong on fits_existing_stack: "Postgres extension; runs inside the existing 5433 deployment without adding a new container [12]"
+  • Onyx → pgvector — strong on production_examples: "Onyx default deploy uses pgvector across all customers [4]"
+  • weaviate — weak on fits_existing_stack: "Requires its own container alongside Postgres [9]"
+```
+
+**`synthesis_completed`** — header + recommendation reasoning + per-option summary:
+```
+✓  Synthesis done — mode=recommended, recommendation=pgvector
+  Why: Only viable option after constraint filtering. Hedging would be dishonest here — every other promoted candidate failed at least one must-have constraint.
+  Options:
+    • pgvector (strong on fits_existing_stack, cost_envelope, p95_latency)
+      └ Pick when: existing Postgres deployment, low-single-digit-M vectors
+    • weaviate (strong on hybrid_search; weak on fits_existing_stack)
+      └ Pick when: hybrid search is mandatory and Postgres is not in the stack
+```
+
+**`critique_completed`** — header + top issues:
+```
+🧐  Critique: 7 issues (0 high-severity, human review NOT recommended)
+  Summary: pgvector strong_axes are evidence-backed; one minor citation_mismatch on weaviate's failure_modes cell.
+  Top issues:
+    • [medium] citation_mismatch: citation [57] discusses OAuth2, not token_based_auth
+```
+
+**`citation_audit_completed`** — header + unsupported list (only when N > 0):
+```
+🔗  Citation audit: 29/30 verified, 1 unsupported
+  Unsupported:
+    • [21] for candidate:pgvector:considered — "Cited paper discusses HNSW indexes in general, not pgvector specifically"
+```
+
+**`run_completed`** — final summary block (lives at the end of Step 7).
+
+### Pacing
+
+Stream every event individually. Do NOT consolidate multiple events into one message. The only exception: when `research_source_fetching` fires for many URLs in the same round, render them consecutively on adjacent lines (still one chat message per event).
 | `decision_downgraded_by_critique` | ⚠️  Recommendation dropped by critique (option set preserved) |
 | `decision_downgraded_by_citation_audit` | ⚠️  Recommendation dropped by citation audit (option set preserved) |
 | `handoff_writing` | 📝  Writing handoff artifacts |

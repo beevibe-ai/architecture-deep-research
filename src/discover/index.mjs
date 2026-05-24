@@ -164,11 +164,16 @@ async function discoverPatterns({ inputPath, flags = {}, chained = false } = {})
       peerCount = peersArtifact.peers.length;
       await appendEvent(outDir, "peers_found", {
         peer_count: peerCount,
+        // Concrete content: each peer with the WHY — "Cal.com - multi-
+        // tenant SaaS shipping its own auth + scheduling" — and momentum
+        // signal so the user can see why this peer was picked.
         peers: peersArtifact.peers.map((p) => ({
           name: p.name,
           label: p.label,
           github_url: p.github_url || null,
-          stars: p.signal?.stars || null
+          stars: p.signal?.stars || null,
+          last_commit_at: p.signal?.last_commit_at || null,
+          why_comparable: p.why_comparable || ""
         }))
       });
     } catch (error) {
