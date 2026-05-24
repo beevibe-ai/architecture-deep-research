@@ -3246,7 +3246,7 @@ without producing a superseding ADR.
 `;
 }
 
-function buildADR(context, spec, knowledgeMap) {
+function buildADR(context, spec, knowledgeMap, evidenceItems = []) {
   const mode = spec.decision?.mode || "deferred";
   const rankedOptions = toArray(spec.decision?.ranked_options);
   const recommendation = spec.decision?.recommendation || null;
@@ -3379,6 +3379,56 @@ ${rejected
 ## Bounded Contexts
 
 ${spec.domain_model.bounded_contexts.map((item) => `- ${item}`).join("\n") || "- To be reviewed by the Architect agent."}
+
+${(() => {
+  // T3.3: surface private_corpus items the discover stage injected. These
+  // are the priors from the user's own repo — patterns + antipatterns
+  // tagged with architecture_family that voted in the matrix. Showing
+  // them inline so the user can see WHICH of their existing patterns
+  // shaped the recommendation, not just that "2 items got injected."
+  const privateCorpus = toArray(evidenceItems).filter(
+    (item) => item.source_type === "private_corpus"
+  );
+  if (privateCorpus.length === 0) return "";
+  const items = privateCorpus
+    .map((item) => {
+      const firstClaim = (toArray(item.claims)[0] || {});
+      const polarityIcon = firstClaim.polarity === "supports" ? "✓" : firstClaim.polarity === "rejects" ? "✗" : "·";
+      return `- ${polarityIcon} [${item.citation_id}] **${item.title}** — ${firstClaim.architecture_family || "unspecified"}: ${firstClaim.claim || item.excerpt.slice(0, 200)} (from ${item.url})`;
+    })
+    .join("\n");
+  return `## Evidence from your repo (discover stage)
+
+The repo scan surfaced these patterns + antipatterns as private-corpus evidence. They voted in the comparison matrix alongside the web research:
+
+${items}
+`;
+})()}
+
+${(() => {
+  // T3.2: ## References section so a reader of ADR.md can resolve [N]
+  // citation markers without jumping to citation-audit.json or
+  // evidence.json. One bullet per citation_id in citation order, including
+  // source_type so the reader can weight credibility at a glance.
+  const items = toArray(evidenceItems)
+    .filter((item) => Number.isFinite(Number(item.citation_id)))
+    .sort((a, b) => Number(a.citation_id) - Number(b.citation_id))
+    .map((item) => {
+      const title = String(item.title || "(untitled)").trim();
+      const url = String(item.url || "").trim();
+      const sourceType = String(item.source_type || "unknown");
+      const retrieved = item.retrieved_at ? ` · retrieved ${item.retrieved_at}` : "";
+      const score = item.score != null ? ` · score ${item.score}` : "";
+      return `- [${item.citation_id}] **${title}** — *${sourceType}*${score}${retrieved}${url ? `\n  ${url}` : ""}`;
+    })
+    .join("\n");
+  return items
+    ? `## References
+
+${items}
+`
+    : "";
+})()}
 
 ## Execution Handoff
 
@@ -3624,6 +3674,39 @@ async function writeJson(filePath, value) {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+// Best-effort variant: if schema validation fails, write the JSON anyway
+// (with .invalid suffix) plus a sibling .validation-errors.txt so the user
+// can inspect both the data and the failure reason. Returns metadata the
+// caller can use to surface the warning in the handoff. Never throws —
+// downstream artifact writes must continue regardless.
+async function writeJsonBestEffort(filePath, value) {
+  try {
+    await assertSchemaValid(path.basename(filePath), value);
+    await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+    return { ok: true, path: filePath };
+  } catch (error) {
+    const errorMsg = String(error?.message || error);
+    const invalidPath = filePath.replace(/\.json$/, ".invalid.json");
+    const errorsPath = filePath.replace(/\.json$/, ".validation-errors.txt");
+    try {
+      await writeFile(invalidPath, `${JSON.stringify(value, null, 2)}\n`);
+      await writeFile(
+        errorsPath,
+        `Schema validation failed for ${path.basename(filePath)}.\n\n${errorMsg}\n\nThe data was written to ${path.basename(invalidPath)} for inspection. Fix the data shape or update the schema in docs/schemas/ to clear this warning.\n`
+      );
+    } catch {
+      // Even the fallback write failed — nothing more we can do.
+    }
+    return {
+      ok: false,
+      error: errorMsg,
+      path: filePath,
+      invalid_path: invalidPath,
+      errors_path: errorsPath
+    };
+  }
+}
+
 async function research({ inputPath, flags }) {
   return deepResearch({ inputPath, flags });
 }
@@ -3740,7 +3823,21 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     decision: flags.decision,
     decisionKind: flags["decision-kind"]
   });
-  const clarification = assessClarification(context, content);
+  // assessClarification doesn't know whether the user already provided
+  // answers — it just inspects the post-append content. When
+  // --clarification-answers was provided, suppress the needs_clarification
+  // signal entirely so the second run doesn't emit the same prompt-the-user
+  // event that the first run did. The categorical check is also less
+  // meaningful after answers were threaded in.
+  const rawClarification = assessClarification(context, content);
+  const clarification = clarificationAnswers
+    ? {
+        ...rawClarification,
+        needs_clarification: false,
+        questions: [],
+        action: "Clarification answers were provided on this run; gate suppressed."
+      }
+    : rawClarification;
   await writeJson(path.join(outDir, "strategic-context.json"), context);
   await writeJson(path.join(outDir, "clarification.json"), clarification);
   await appendEvent(outDir, "strategic_context_created", {
@@ -4909,7 +5006,7 @@ async function writeRunArtifacts({
     researchResults,
     knowledgeMap
   });
-  const adrMarkdown = buildADR(context, spec, knowledgeMap);
+  const adrMarkdown = buildADR(context, spec, knowledgeMap, evidenceItems);
   const claimAudit = flags["skip-claim-audit"]
     ? null
     : await scanUncitedClaimsPhase({
@@ -4934,13 +5031,33 @@ async function writeRunArtifacts({
   }
 
   await appendEvent(outDir, "handoff_writing", {});
+  // Each artifact is written best-effort so one schema validation failure
+  // doesn't nuke the rest. ADR.md is the most important reader-facing
+  // artifact and MUST be written; the structured JSON files are checked
+  // against their schema but a failure falls back to writing .invalid.json
+  // + .validation-errors.txt and continues with the next artifact.
+  const validationWarnings = [];
   await writeFile(path.join(outDir, "ADR.md"), adrMarkdown);
-  await writeJson(path.join(outDir, "architecture.spec.json"), spec);
-  await writeJson(path.join(outDir, "domain-evaluation-pack.json"), evaluationPack);
+  const specWrite = await writeJsonBestEffort(path.join(outDir, "architecture.spec.json"), spec);
+  if (!specWrite.ok) validationWarnings.push({ file: "architecture.spec.json", error: specWrite.error });
+  const evalWrite = await writeJsonBestEffort(path.join(outDir, "domain-evaluation-pack.json"), evaluationPack);
+  if (!evalWrite.ok) validationWarnings.push({ file: "domain-evaluation-pack.json", error: evalWrite.error });
   await writeFile(path.join(outDir, "agent-guardrails.md"), buildGuardrails(spec));
-  await writeJson(path.join(outDir, "execution-handoff.json"), handoff);
+  // The handoff is annotated with any validation warnings from earlier
+  // writes so the downstream consumer sees them.
+  if (validationWarnings.length > 0) {
+    handoff = { ...handoff, validation_warnings: validationWarnings };
+  }
+  const handoffWrite = await writeJsonBestEffort(path.join(outDir, "execution-handoff.json"), handoff);
+  if (!handoffWrite.ok) validationWarnings.push({ file: "execution-handoff.json", error: handoffWrite.error });
   await writeFile(path.join(outDir, "research-report.md"), report);
   await writeFile(path.join(outDir, "sources.md"), buildDeepSources(context, evidenceItems));
+  if (validationWarnings.length > 0) {
+    await appendEvent(outDir, "artifact_validation_warnings", {
+      warning_count: validationWarnings.length,
+      files: validationWarnings.map((w) => w.file)
+    });
+  }
   const costSummary = summarizeLlmCost();
   await writeJson(path.join(outDir, "cost.json"), costSummary);
   const mode = spec.decision?.mode || "deferred";
