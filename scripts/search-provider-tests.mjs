@@ -122,6 +122,51 @@ try {
   assert.equal(results[0].provider, "tavily");
   assert.equal(results[0].snippet, "tavily content");
 
+  // ---------- Tavily with include_domains + exclude_domains env ----------
+  clearSearchEnv();
+  resetFetchCalls();
+  let capturedBody = null;
+  stubFetch(async (url, init) => {
+    assert.equal(url, "https://api.tavily.com/search");
+    capturedBody = JSON.parse(init.body);
+    return jsonResponse({ results: [{ title: "x", url: "https://example.com", content: "y" }] });
+  });
+  await withEnv(
+    {
+      TAVILY_API_KEY: "x",
+      ADR_SEARCH_INCLUDE_DOMAINS: "engineering.linear.app, vercel.com/blog",
+      ADR_SEARCH_EXCLUDE_DOMAINS: "geeksforgeeks.org tutorialspoint.com"
+    },
+    () => searchWithProvider("auth provider comparison")
+  );
+  assert.deepEqual(capturedBody.include_domains, [
+    "engineering.linear.app",
+    "vercel.com"
+  ], `Tavily include_domains parsed: ${JSON.stringify(capturedBody.include_domains)}`);
+  assert.deepEqual(capturedBody.exclude_domains, [
+    "geeksforgeeks.org",
+    "tutorialspoint.com"
+  ], `Tavily exclude_domains parsed: ${JSON.stringify(capturedBody.exclude_domains)}`);
+
+  // ---------- Brave injects site:/-site: operators inline ----------
+  clearSearchEnv();
+  resetFetchCalls();
+  let capturedUrl = null;
+  stubFetch(async (url) => {
+    capturedUrl = url;
+    return jsonResponse({ web: { results: [{ title: "x", url: "https://example.com", description: "y" }] } });
+  });
+  await withEnv(
+    {
+      BRAVE_SEARCH_API_KEY: "x",
+      ADR_SEARCH_INCLUDE_DOMAINS: "linear.app",
+      ADR_SEARCH_EXCLUDE_DOMAINS: "geeksforgeeks.org"
+    },
+    () => searchWithProvider("query")
+  );
+  assert.ok(capturedUrl.includes("site%3Alinear.app"), `Brave URL missing site: operator: ${capturedUrl}`);
+  assert.ok(capturedUrl.includes("-site%3Ageeksforgeeks.org"), `Brave URL missing -site: operator: ${capturedUrl}`);
+
   // ---------- SearXNG ----------
   clearSearchEnv();
   resetFetchCalls();

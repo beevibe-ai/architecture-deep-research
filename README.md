@@ -145,6 +145,7 @@ If no dedicated search key is set but an OpenAI key is, ADR falls back to OpenAI
 - `ADR_MODEL` — override the default model (`gpt-4.1-mini`).
 - `ADR_OPENAI_BASE_URL` — point at a local OpenAI-compatible server (vLLM, LM Studio, llamafile).
 - `ADR_MCP_SERVER_URL` — search a read-only private MCP corpus instead of the public web. Combine with `ADR_PRIVATE_MCP_ONLY=1` to force private-corpus search.
+- `ADR_SEARCH_INCLUDE_DOMAINS` / `ADR_SEARCH_EXCLUDE_DOMAINS` — comma- or whitespace-separated domain lists to bias the evidence pool. Tavily uses them natively (`include_domains` / `exclude_domains`). Brave and Serper inject `site:` / `-site:` operators inline. Useful when an aggregator domain keeps surfacing and crowding out real engineering content. Example: `ADR_SEARCH_INCLUDE_DOMAINS=engineering.linear.app,vercel.com/blog,stripe.com/blog,danluu.com`.
 
 ### LangGraph and Google ADK runtimes
 

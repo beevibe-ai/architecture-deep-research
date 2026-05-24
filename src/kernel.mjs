@@ -689,15 +689,53 @@ async function searchWithOpenAiMcp(query) {
   return [];
 }
 
+// Parse a comma- or whitespace-separated domain list from an env var into
+// an array of bare domains (no protocol, no trailing slash). Empty input
+// returns an empty array. Used by Tavily / Serper to bias the evidence
+// pool toward engineering content and away from aggregators.
+function parseDomainList(envValue) {
+  if (!envValue || typeof envValue !== "string") return [];
+  return envValue
+    .split(/[\s,]+/)
+    .map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, ""))
+    .filter(Boolean)
+    .slice(0, 16); // hard cap so we don't blow query length
+}
+
+function searchDomainFilters() {
+  return {
+    include: parseDomainList(process.env.ADR_SEARCH_INCLUDE_DOMAINS),
+    exclude: parseDomainList(process.env.ADR_SEARCH_EXCLUDE_DOMAINS)
+  };
+}
+
+// Apply `site:` / `-site:` operators inline for providers (Brave) that
+// don't have native include/exclude fields. Caps to a handful so the
+// query stays under URL limits.
+function injectSiteOperators(query, { include, exclude }) {
+  const parts = [query];
+  for (const d of include.slice(0, 4)) parts.push(`site:${d}`);
+  for (const d of exclude.slice(0, 6)) parts.push(`-site:${d}`);
+  return parts.join(" ");
+}
+
 async function searchWithProvider(query) {
   if (shouldPreferMcpSearch()) {
     const mcpResults = await searchWithOpenAiMcp(query);
     if (mcpResults) return mcpResults;
   }
 
+  const domainFilters = searchDomainFilters();
+
   if (process.env.BRAVE_SEARCH_API_KEY) {
+    // Brave has no include/exclude_domains param. Inject site: operators
+    // directly into the query when filters are configured.
+    const effectiveQuery =
+      domainFilters.include.length || domainFilters.exclude.length
+        ? injectSiteOperators(query, domainFilters)
+        : query;
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
-    url.searchParams.set("q", query);
+    url.searchParams.set("q", effectiveQuery);
     url.searchParams.set("count", "8");
     const response = await fetch(url, {
       headers: { "x-subscription-token": process.env.BRAVE_SEARCH_API_KEY },
@@ -714,13 +752,19 @@ async function searchWithProvider(query) {
   }
 
   if (process.env.SERPER_API_KEY) {
+    // Serper does not document a native exclude_domains field; inline
+    // site: operators are the supported path. Same for include.
+    const effectiveQuery =
+      domainFilters.include.length || domainFilters.exclude.length
+        ? injectSiteOperators(query, domainFilters)
+        : query;
     const response = await fetch("https://google.serper.dev/search", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-api-key": process.env.SERPER_API_KEY
       },
-      body: JSON.stringify({ q: query, num: 8 }),
+      body: JSON.stringify({ q: effectiveQuery, num: 8 }),
       signal: AbortSignal.timeout(25_000)
     });
     if (!response.ok) throw new Error(`Serper search failed: ${response.status}`);
@@ -734,20 +778,26 @@ async function searchWithProvider(query) {
   }
 
   if (process.env.TAVILY_API_KEY) {
+    // Tavily supports include_domains / exclude_domains natively as arrays
+    // in the request body. Use them when set, otherwise fall back to a
+    // raw query.
+    const body = {
+      api_key: process.env.TAVILY_API_KEY,
+      query,
+      max_results: 8,
+      search_depth: "advanced"
+    };
+    if (domainFilters.include.length) body.include_domains = domainFilters.include;
+    if (domainFilters.exclude.length) body.exclude_domains = domainFilters.exclude;
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        api_key: process.env.TAVILY_API_KEY,
-        query,
-        max_results: 8,
-        search_depth: "advanced"
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(25_000)
     });
     if (!response.ok) throw new Error(`Tavily search failed: ${response.status}`);
-    const body = await response.json();
-    return (body.results || []).map((item) => ({
+    const respBody = await response.json();
+    return (respBody.results || []).map((item) => ({
       title: item.title,
       url: item.url,
       snippet: item.content || "",
@@ -1383,9 +1433,17 @@ async function persistSourceSnapshot({ outDir, url, title, sourceType, fetchStat
   };
 }
 
+// Aggregator / SEO-content domains worth recognizing as such. Matched
+// BEFORE engineering_writeup so the generic /blog|engineering/ regex
+// doesn't accidentally promote listicles to "engineering writeup" quality.
+// Curated narrowly — adding sites here drops their score below the
+// promotion gate. Bias toward false negatives.
+const AGGREGATOR_DOMAIN_RE = /\b(geeksforgeeks\.org|tutorialspoint\.com|javatpoint\.com|journaldev\.com|simplilearn\.com|educative\.io|byjus\.com|netsuite\.com\/insights|btsta(?:gregator|ggregator)\.com|wisp\.(?:cms|app)|baeldung\.com|topcoder\.com)/i;
+
 function classifySource(url) {
   if (!url) return "unknown";
   if (/^mcp:\/\//i.test(url)) return "private_corpus";
+  if (AGGREGATOR_DOMAIN_RE.test(url)) return "aggregator";
   if (/docs\.|microsoft\.github\.io|langchain|llamaindex|neo4j\.com|cloud\.google|openai\.com\/docs/i.test(url)) {
     return "official_docs";
   }
@@ -1405,6 +1463,7 @@ function sourceQuality(sourceType) {
     private_corpus: 0.8,
     engineering_writeup: 0.78,
     general_web: 0.45,
+    aggregator: 0.15,
     unknown: 0.25
   }[sourceType] || 0.35;
 }
@@ -1436,10 +1495,15 @@ function scoreEvidence({ sourceType, excerpt, context, task, claims }) {
       ? 0
       : claims.reduce((sum, claim) => sum + clampNumber(claim.confidence, { fallback: 0 }), 0) /
         claims.length;
+  // Source quality is the dominant signal. Keyword overlap is noisy (an
+  // aggregator listicle can hit 12 keywords just by listing them in a TOC
+  // without saying anything substantive) so weight it less. One Notion or
+  // Linear postmortem is genuinely worth more than 50 aggregator hits, and
+  // the score should reflect that.
   const score =
-    sourceQuality(sourceType) * 0.45 +
-    Math.min(keywordHits.length / 12, 1) * 0.25 +
-    Math.min(claims.length / 4, 1) * 0.15 +
+    sourceQuality(sourceType) * 0.55 +
+    Math.min(keywordHits.length / 12, 1) * 0.20 +
+    Math.min(claims.length / 4, 1) * 0.10 +
     claimConfidence * 0.15;
   return {
     keyword_hits: keywordHits,

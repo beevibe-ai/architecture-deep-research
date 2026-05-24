@@ -12,6 +12,7 @@ import {
   buildGuardrails,
   buildKnowledgeMap,
   buildStrategicContext,
+  classifySource,
   deriveComparisonAxes,
   discoverPatterns,
   extractClaims,
@@ -1306,6 +1307,30 @@ try {
   assert.ok(!guardrailsMd.includes("*(recommended)*"));
 
   setLlmJsonProvider(null);
+}
+
+// ---------------------------------------------------------------------------
+// classifySource: aggregator domains must NOT be promoted to engineering_writeup
+// just because their URL contains "blog" or "engineering".
+// ---------------------------------------------------------------------------
+
+{
+  // Aggregators caught even when /blog/ is in the path:
+  assert.equal(classifySource("https://www.geeksforgeeks.org/blog/system-design"), "aggregator");
+  assert.equal(classifySource("https://www.tutorialspoint.com/engineering"), "aggregator");
+  assert.equal(classifySource("https://www.javatpoint.com/auth-providers-blog"), "aggregator");
+
+  // Real engineering blogs still classify correctly:
+  assert.equal(classifySource("https://engineering.linear.app/architecture-decisions"), "engineering_writeup");
+  assert.equal(classifySource("https://stripe.com/blog/the-payment-graph"), "engineering_writeup");
+
+  // Official docs / OSS / papers unaffected:
+  assert.equal(classifySource("https://docs.clerk.com/quickstart"), "official_docs");
+  assert.equal(classifySource("https://github.com/supertokens/supertokens-core"), "mature_oss");
+  assert.equal(classifySource("https://arxiv.org/abs/2402.12345"), "paper_or_benchmark");
+
+  // Falls through to general_web when nothing matches:
+  assert.equal(classifySource("https://random-corp.example.com/posts"), "general_web");
 }
 
 console.log("kernel regression tests ok");
