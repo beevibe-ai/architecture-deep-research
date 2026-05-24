@@ -373,6 +373,7 @@ const schemaByFilename = {
   "evidence.json": "../docs/schemas/evidence.schema.json",
   "execution-handoff.json": "../docs/schemas/execution-handoff.schema.json",
   "knowledge-map.json": "../docs/schemas/knowledge-map.schema.json",
+  "peers.json": "../docs/schemas/peers.schema.json",
   "research-plan.json": "../docs/schemas/research-plan.schema.json",
   "strategic-context.json": "../docs/schemas/strategic-context.schema.json",
   "supersedes.json": "../docs/schemas/supersedes.schema.json"
@@ -3897,17 +3898,78 @@ async function prepareRun({ inputPath, flags, chained = false }) {
   };
 }
 
+// Build research tasks targeting peer products from peers.json (when present).
+// Real users picking architectures look at 3-5 similar products to see what
+// they did. One task per peer, narrowly scoped to how that peer handles the
+// SPECIFIC decision (not their entire architecture). Sources are the peer's
+// GitHub repo + docs + engineering blog when known.
+async function buildPeerResearchTasks({ context, outDir }) {
+  let peersArtifact;
+  try {
+    peersArtifact = JSON.parse(await readFile(path.join(outDir, "peers.json"), "utf8"));
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    return [];
+  }
+  const peers = toArray(peersArtifact?.peers);
+  if (peers.length === 0) return [];
+
+  return peers.map((peer, index) => {
+    const sources = [
+      peer.github_url,
+      peer.docs_url,
+      peer.engineering_blog_url,
+      peer.homepage_url
+    ]
+      .map((s) => String(s || "").trim())
+      .filter(Boolean);
+    const label = peer.label || peer.name;
+    return {
+      id: `peer_${slugify(peer.name)}_${index + 1}`,
+      title: `Peer architecture: how ${label} handles ${context.decision}`,
+      objective: `Find evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles the specific decision aspect: ${context.decision}. Look at their public repo, ARCHITECTURE.md, docs, and engineering blog. Extract their specific choice (e.g. pgvector vs Pinecone, BullMQ vs Trigger.dev) with the citation pointing at the file or URL where they made that choice.`,
+      search_queries: [
+        `${label} ${context.decision} architecture`,
+        `${label} ${context.decision} site:github.com`,
+        peer.engineering_blog_url
+          ? `${label} ${context.decision} blog`
+          : `${label} how they built ${context.decision}`
+      ],
+      source_targets: sources,
+      success_criteria: [
+        `Identify the specific ${context.decision} ${label} uses, with a citation to ${peer.github_url || peer.docs_url || "their public docs"}.`,
+        `Capture quantitative signals (scale, version, deployment shape) when ${label}'s sources expose them.`
+      ],
+      peer_target: peer.name
+    };
+  });
+}
+
 async function planResearchPhase({ context, content, outDir, flags }) {
   const plan = await buildResearchPlan(context, content);
+
+  // Peer-targeted tasks land BEFORE the LLM-generated tasks so the bounded
+  // slice always preserves at least one task per peer. Without this,
+  // max_cycles=1 with many peers could drop most peer tasks.
+  const peerTasks = await buildPeerResearchTasks({ context, outDir });
+  if (peerTasks.length > 0) {
+    await appendEvent(outDir, "peer_research_tasks_added", {
+      peer_task_count: peerTasks.length,
+      peers: peerTasks.map((t) => t.peer_target)
+    });
+  }
+
+  const allTasks = [...peerTasks, ...toArray(plan.tasks)];
   const maxCycles = Number(flags["max-cycles"] || 2);
   const boundedPlan = {
     ...plan,
     max_cycles: maxCycles,
-    tasks: (plan.tasks || []).slice(0, Math.max(1, maxCycles) * MAX_PARALLEL_RESEARCH_AGENTS)
+    tasks: allTasks.slice(0, Math.max(1, maxCycles) * MAX_PARALLEL_RESEARCH_AGENTS)
   };
   await writeJson(path.join(outDir, "research-plan.json"), boundedPlan);
   await appendEvent(outDir, "research_plan_created", {
     task_count: boundedPlan.tasks.length,
+    peer_task_count: peerTasks.length,
     max_cycles: maxCycles
   });
   return boundedPlan;
@@ -5553,11 +5615,13 @@ export {
   filterPromotedByRelevance,
   openUrl,
   getLlmJsonProvider,
+  githubApi,
   injectDiscoveredEvidence,
   inspectGithubRepo,
   isGithubRepoUrl,
   isPaperUrl,
   nowIso,
+  parseGithubRepoUrl,
   planResearchPhase,
   prepareRun,
   research,

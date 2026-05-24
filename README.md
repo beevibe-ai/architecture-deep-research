@@ -103,6 +103,24 @@ A `recommendation` is added only when one option clearly dominates (strong on mu
 
 Coding agents downstream pick one option, then honor the matching block in `agent-guardrails.md` (per-option contract). The handoff JSON's `options[]` is the machine-readable equivalent.
 
+## Peer Products (Similar / Competitor Research)
+
+Real users picking architectures don't reason in the abstract — they look at 3-5 already-shipped similar products and ask "what did they do, and does it apply to us?" ADR can do that automatically via `--include-peers`.
+
+```bash
+adr deep-research --discover-first --include-peers \
+  --domain "agent-native OS" --decision "vector store" \
+  --out .adr-runs/beevibe-vectors
+```
+
+What happens:
+
+1. **Discover names 3-5 peers** in the same product space (with their GitHub URLs when open-source). LLM-named, then ranked by stars + recency. Dead repos (no commits in 18 months) are dropped. Closed-source peers survive (researched via their docs/blog).
+2. **Deep-research adds one targeted task per peer** — *"how does Linear handle `<decision>`?"* — hitting the peer's GitHub repo, ARCHITECTURE.md, docs, and engineering blog.
+3. **Peer findings flow into the evidence pool** as regular citations. A peer using pgvector becomes evidence backing pgvector. The comparison matrix and synthesis treat peer evidence like any other source.
+
+Useful when you want concrete grounding ("WorkOS, Cal.com, and Onyx all use Postgres for tenancy") instead of abstract comparisons. The peer list is written to `peers.json` — you can edit it between runs to add/remove products. CLI knobs: `--include-peers`, `--max-peers <N>` (default 5), `--seed <name>` (anchor peer-finding to a specific seed).
+
 ## Decision Kind: Family vs Concrete
 
 ADR distinguishes two kinds of decisions and adapts accordingly:

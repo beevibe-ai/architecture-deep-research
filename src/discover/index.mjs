@@ -13,6 +13,7 @@ import { scanRepo } from "./repo-scan.mjs";
 import { extractPrinciples } from "./principle-extractor.mjs";
 import { extractConstraints } from "./constraint-extractor.mjs";
 import { draftPrd } from "./prd-drafter.mjs";
+import { findPeers, DEFAULT_MAX_PEERS } from "./peer-finder.mjs";
 
 function assertDiscoverRuntime() {
   // discover does not need a web-search provider — it only reads the local
@@ -139,10 +140,49 @@ async function discoverPatterns({ inputPath, flags = {}, chained = false } = {})
     bytes: Buffer.byteLength(markdown, "utf8")
   });
 
+  // STEP 5 (optional) — find similar / peer products and write peers.json.
+  // Opt-in via --include-peers because the LLM call costs a few cents and
+  // the GitHub signal fetch can take a few seconds per peer. When set,
+  // deep-research will automatically detect peers.json in outDir and add
+  // one targeted research task per peer for the specific decision aspect.
+  let peerCount = 0;
+  if (flags["include-peers"]) {
+    const maxPeers = Number(flags["max-peers"] || DEFAULT_MAX_PEERS);
+    try {
+      const peersArtifact = await findPeers({
+        decision,
+        domain: flags.domain || "(unspecified)",
+        decisionKind: flags["decision-kind"],
+        seed: flags.seed || flags["peer-seed"] || null,
+        prd: markdown,
+        issueBody,
+        repoDigest: scan,
+        flags,
+        maxPeers
+      });
+      await writeJson(path.join(outDir, "peers.json"), peersArtifact);
+      peerCount = peersArtifact.peers.length;
+      await appendEvent(outDir, "peers_found", {
+        peer_count: peerCount,
+        peers: peersArtifact.peers.map((p) => ({
+          name: p.name,
+          label: p.label,
+          github_url: p.github_url || null,
+          stars: p.signal?.stars || null
+        }))
+      });
+    } catch (error) {
+      await appendEvent(outDir, "peers_extraction_failed", {
+        error: String(error?.message || error)
+      });
+    }
+  }
+
   await appendEvent(outDir, "discover_completed", {
     pattern_count: principles.patterns.length,
     antipattern_count: principles.antipatterns.length,
-    draft_path: draftPath
+    draft_path: draftPath,
+    peer_count: peerCount
   });
 
   return {
@@ -151,6 +191,7 @@ async function discoverPatterns({ inputPath, flags = {}, chained = false } = {})
     principles,
     constraints,
     draftPath,
+    peerCount,
     handoffBoundary: "discover_stops_at_pdr_draft"
   };
 }

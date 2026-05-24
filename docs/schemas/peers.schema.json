@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/peers.schema.json",
+  "title": "Beevibe Architecture Deep Research Peer Products",
+  "description": "Similar / comparable products the discover stage identified. The deep-research stage picks up this file when present and adds one research task per peer that targets how that peer handles the specific decision aspect. Evidence flows into the candidate pool with source_type derived from the peer's domain (mature_oss when GitHub, engineering_writeup when their blog).",
+  "type": "object",
+  "required": ["version", "peers"],
+  "properties": {
+    "version": { "type": "string" },
+    "decision": { "type": "string" },
+    "domain": { "type": "string" },
+    "seed": {
+      "type": "string",
+      "description": "Optional seed product the user named (e.g. their own repo). When omitted, the finder infers from the PRD."
+    },
+    "extracted_at": { "type": "string" },
+    "peers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "label", "why_comparable"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "kebab-case slug for the peer (used as task_id seed and stable reference)."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable name (e.g., 'Linear', 'Cal.com')."
+          },
+          "github_url": {
+            "type": "string",
+            "description": "Canonical GitHub repo URL when the peer is open-source. Empty when the peer is closed-source — deep-research still researches via their docs / blog."
+          },
+          "homepage_url": {
+            "type": "string"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "engineering_blog_url": {
+            "type": "string"
+          },
+          "why_comparable": {
+            "type": "string",
+            "description": "One sentence explaining why this peer is comparable for the decision being made."
+          },
+          "signal": {
+            "type": "object",
+            "description": "GitHub-derived momentum signal. Used to rank + drop dead repos. Missing for closed-source peers.",
+            "properties": {
+              "stars": { "type": "integer", "minimum": 0 },
+              "contributors": { "type": "integer", "minimum": 0 },
+              "last_commit_at": { "type": "string" },
+              "first_commit_at": { "type": "string" },
+              "primary_language": { "type": "string" },
+              "open_issue_count": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

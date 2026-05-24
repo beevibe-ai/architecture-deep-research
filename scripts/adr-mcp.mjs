@@ -65,6 +65,20 @@ const tools = [
           type: "string",
           description:
             "Optional. Literal GitHub issue body (or a path to a file) to seed the draft PRD. Useful when a bot is responding to an /adr comment on an issue."
+        },
+        include_peers: {
+          type: "boolean",
+          description:
+            "Optional. When true, the discover stage names 3-5 similar/competitor products and writes peers.json. If you then call adr_deep_research with the same out_dir, deep-research auto-detects peers.json and adds one targeted research task per peer for the specific decision aspect."
+        },
+        max_peers: {
+          type: "integer",
+          description: "Optional. Cap the number of peer products to find. Default 5."
+        },
+        seed: {
+          type: "string",
+          description:
+            "Optional. Seed product to anchor peer-finding (e.g., the user's own product name). When omitted, the finder infers from the PRD."
         }
       },
       required: ["decision", "out_dir"]
@@ -130,6 +144,20 @@ const tools = [
           type: "boolean",
           description:
             "Skip the clarification gate entirely and accept a lower-confidence run. Use only when the caller has already decided that the current PRD context is enough — clarification is blocking by default in the new flow."
+        },
+        include_peers: {
+          type: "boolean",
+          description:
+            "Optional. When true + discover_first=true, the discover stage finds 3-5 similar/competitor products and writes peers.json. Deep-research then adds one targeted research task per peer. When passed without discover_first, the planner still picks up an existing peers.json from out_dir."
+        },
+        max_peers: {
+          type: "integer",
+          description: "Optional. Cap the number of peer products to find. Default 5."
+        },
+        seed: {
+          type: "string",
+          description:
+            "Optional. Seed product to anchor peer-finding (e.g., the user's own product name). When omitted, inferred from the PRD."
         }
       },
       required: ["domain", "decision", "out_dir"]
@@ -189,6 +217,9 @@ async function handleDiscover(args) {
     out: args.out_dir
   };
   if (args.issue_body) flags["issue-body"] = args.issue_body;
+  if (args.include_peers) flags["include-peers"] = true;
+  if (typeof args.max_peers === "number") flags["max-peers"] = String(args.max_peers);
+  if (args.seed) flags.seed = args.seed;
 
   const result = await discoverPatterns({ flags });
   return textResult({
@@ -196,9 +227,10 @@ async function handleDiscover(args) {
     repo_path: result.repoPath,
     pattern_count: result.principles.patterns.length,
     antipattern_count: result.principles.antipatterns.length,
+    peer_count: result.peerCount || 0,
     pdr_draft_path: result.draftPath,
     handoff_boundary: result.handoffBoundary,
-    next_step: `Review ${result.draftPath} (especially the "Open questions" section), then call adr_deep_research with input_path set to that path, or call adr_deep_research again with discover_first: true.`
+    next_step: `Review ${result.draftPath} (especially the "Open questions" section), then call adr_deep_research with input_path set to that path, or call adr_deep_research again with discover_first: true.${result.peerCount ? ` peers.json contains ${result.peerCount} peer products that deep-research will research per-peer.` : ""}`
   });
 }
 
@@ -216,6 +248,9 @@ async function handleDeepResearch(args) {
   if (args.decision_kind) flags["decision-kind"] = args.decision_kind;
   if (args.clarification_answers) flags["clarification-answers"] = args.clarification_answers;
   if (args.no_clarify) flags["no-clarify"] = true;
+  if (args.include_peers) flags["include-peers"] = true;
+  if (typeof args.max_peers === "number") flags["max-peers"] = String(args.max_peers);
+  if (args.seed) flags.seed = args.seed;
 
   const drResult = await deepResearch({ inputPath: args.input_path || null, flags });
 

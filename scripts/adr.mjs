@@ -81,6 +81,17 @@ Required runtime:
 	the evidence pool as private_corpus items, and anti-patterns become
 	additional axes in the comparison matrix.
 
+	Peer products (similar/competitor research):
+	  --include-peers              find 3-5 similar products and research how each handles this decision
+	  --max-peers <N>              cap peer count (default 5)
+	  --seed <name>                seed product to anchor peer-finding (defaults to repo name when omitted)
+
+	  When set on `discover`, writes peers.json. When set on `deep-research`
+	  (with or without --discover-first), the deep-research planner picks up
+	  peers.json automatically and adds one targeted research task per peer
+	  hitting their GitHub repo + docs + engineering blog. Peer findings flow
+	  into the evidence pool as regular citations.
+
 	Decision kind:
 	  --decision-kind family|concrete   override the auto-detection
 

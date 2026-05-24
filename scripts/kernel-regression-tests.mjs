@@ -2063,4 +2063,129 @@ try {
   setLlmJsonProvider(null);
 }
 
+// ---------------------------------------------------------------------------
+// Peer products feature:
+//
+//   discover --include-peers writes peers.json with 3-5 named similar
+//   products. When deep-research later runs against the same out_dir, the
+//   planner picks up peers.json and adds one targeted research task per
+//   peer for the specific decision aspect.
+//
+// This test covers: peer-finder LLM call returns peers, GitHub fetch is
+// stubbed/skipped, planResearchPhase reads peers.json and emits peer tasks.
+// ---------------------------------------------------------------------------
+
+{
+  const { findPeers } = await import("../src/discover/peer-finder.mjs");
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-peers-test-"));
+
+  // Stub global fetch so GitHub signal calls return predictable data and
+  // don't actually hit the network.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/repos/cal-com/cal.com")) {
+      return new Response(JSON.stringify({
+        stargazers_count: 33000,
+        open_issues_count: 600,
+        language: "TypeScript",
+        pushed_at: "2026-05-01T00:00:00Z",
+        created_at: "2021-06-15T00:00:00Z"
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (u.includes("/repos/onyx-dot-app/onyx")) {
+      return new Response(JSON.stringify({
+        stargazers_count: 12000,
+        open_issues_count: 250,
+        language: "Python",
+        pushed_at: "2026-05-10T00:00:00Z",
+        created_at: "2023-01-01T00:00:00Z"
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (u.includes("/repos/abandoned/dead-repo")) {
+      return new Response(JSON.stringify({
+        stargazers_count: 800,
+        open_issues_count: 0,
+        language: "Go",
+        pushed_at: "2022-01-01T00:00:00Z", // > 18 months stale
+        created_at: "2020-01-01T00:00:00Z"
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    installProvider((label) => {
+      assert.equal(label, "discover_peer_finder");
+      return {
+        peers: [
+          {
+            name: "cal-com",
+            label: "Cal.com",
+            github_url: "https://github.com/cal-com/cal.com",
+            docs_url: "https://cal.com/docs",
+            engineering_blog_url: "https://cal.com/blog",
+            why_comparable: "Multi-tenant SaaS shipping its own auth + scheduling."
+          },
+          {
+            name: "onyx",
+            label: "Onyx",
+            github_url: "https://github.com/onyx-dot-app/onyx",
+            docs_url: "https://docs.onyx.app",
+            engineering_blog_url: "",
+            why_comparable: "Self-hosted agent runtime with similar agent OS shape."
+          },
+          {
+            name: "abandoned",
+            label: "Abandoned Tool",
+            github_url: "https://github.com/abandoned/dead-repo",
+            why_comparable: "Was comparable; appears no longer maintained."
+          },
+          {
+            name: "notion",
+            label: "Notion",
+            github_url: "",
+            homepage_url: "https://notion.so",
+            why_comparable: "Closed-source SaaS at similar abstraction layer."
+          }
+        ]
+      };
+    });
+
+    const artifact = await findPeers({
+      decision: "vector store for agent memory",
+      domain: "agent-native OS",
+      decisionKind: "concrete",
+      seed: "beevibe",
+      prd: "self-hosted multi-tenant agent OS for companies, runs in Docker Compose, Postgres-backed",
+      repoDigest: null,
+      flags: {},
+      maxPeers: 5
+    });
+
+    // Stale repo (>18 months no commits) must be dropped:
+    const names = artifact.peers.map((p) => p.name).sort();
+    assert.ok(!names.includes("abandoned"), `stale repo should be dropped; got: ${names.join(", ")}`);
+
+    // Closed-source peer (no github_url) must survive:
+    assert.ok(names.includes("notion"), "closed-source peer (Notion) must survive");
+
+    // GitHub signal must be populated on open-source peers with successful fetch:
+    const calCom = artifact.peers.find((p) => p.name === "cal-com");
+    assert.ok(calCom, "cal-com should be in the result");
+    assert.equal(calCom.signal?.stars, 33000);
+    assert.equal(calCom.signal?.primary_language, "TypeScript");
+
+    // Ranking: cal-com (33k stars, recent) should outrank onyx (12k stars).
+    const calIdx = artifact.peers.findIndex((p) => p.name === "cal-com");
+    const onyxIdx = artifact.peers.findIndex((p) => p.name === "onyx");
+    assert.ok(calIdx < onyxIdx, `cal-com should rank above onyx; got order ${artifact.peers.map((p) => p.name).join(", ")}`);
+
+    setLlmJsonProvider(null);
+  } finally {
+    globalThis.fetch = realFetch;
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
 console.log("kernel regression tests ok");

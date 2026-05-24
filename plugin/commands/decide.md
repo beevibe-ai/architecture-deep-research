@@ -35,6 +35,18 @@ Capture as `<KIND>` (either `family` or `concrete`).
 
 If the user picks **concrete** but the run is going to be expensive, briefly tell them: "Concrete mode adds vendor-grade axes (pricing, lock-in, SDK quality, on-prem, ecosystem health). The matrix will be wider; the synthesis will commit to a specific product."
 
+## Step 1.5 — Ask whether to include peer products
+
+Most architects looking at a real decision want to see 3-5 similar products and how they handle the same aspect ("what does Linear use for vector storage?" beats reading abstract benchmarks). Ask:
+
+> Question: "Should ADR also research 3-5 similar / competitor products and how each one handles `<DECISION>`?"
+>
+> Options:
+> - **Yes — include peers (recommended)** — Discover finds 3-5 comparable products. Deep-research adds one targeted task per peer hitting their GitHub repo, docs, and engineering blog for this specific decision aspect. Adds 30-60s + a few cents to the run.
+> - **No — skip peers** — Standard pipeline only.
+
+Capture as `<INCLUDE_PEERS>` (boolean). If yes, you'll pass `--include-peers` on the deep-research invocation below.
+
 ## Step 2 — Confirm the env is ready
 
 ```bash
@@ -66,6 +78,8 @@ npx -y --package=github:beevibe-ai/architecture-deep-research adr \
   --out .adr-runs/<SLUG>
 ```
 
+When `<INCLUDE_PEERS>` is true, append `--include-peers` to the command (and optionally `--max-peers <N>` if the user asked for a different cap, default is 5).
+
 Tell the user something like: *"Kicked off — typical run is 3–6 minutes. I'll surface each stage as it happens."*
 
 ## Step 5 — Tail the event log in the background
@@ -89,6 +103,9 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `principles_extracted` | ✓  Discovered `N` patterns + `M` anti-patterns from the repo |
 | `constraints_extracted` | ✓  Extracted stack + `K` compliance signals |
 | `pdr_drafted` | ✓  Drafted PRD — moving to live research |
+| `peers_found` | 🤝  Found `N` peer products: `peers[].label` |
+| `peers_extraction_failed` | ⚠  Peer finder failed — proceeding without peers |
+| `peer_research_tasks_added` | 🎯  Added `peer_task_count` peer-targeted research tasks (`peers`) |
 | `discover_completed` | ✓  Discover stage complete |
 | `run_started` | 🚀  Deep-research started — `<domain>`: `<decision>` |
 | `strategic_context_created` | ✓  Strategic context: `N` entities, `M` query shapes |

@@ -19,6 +19,7 @@ const schemaByFilename = {
   "evidence.json": "docs/schemas/evidence.schema.json",
   "execution-handoff.json": "docs/schemas/execution-handoff.schema.json",
   "knowledge-map.json": "docs/schemas/knowledge-map.schema.json",
+  "peers.json": "docs/schemas/peers.schema.json",
   "research-plan.json": "docs/schemas/research-plan.schema.json",
   "strategic-context.json": "docs/schemas/strategic-context.schema.json",
   "supersedes.json": "docs/schemas/supersedes.schema.json"
