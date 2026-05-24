@@ -22,13 +22,7 @@ Run the doctor first. It's cheap, prints what's missing, and tells the user what
 npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
 ```
 
-If the doctor exits non-zero (missing search provider or LLM provider), tell the user to run:
-
-```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor setup
-```
-
-…and wait for them to come back. Do NOT proceed to deep-research with a broken environment.
+If the doctor exits non-zero (missing search provider or LLM provider), invoke `/adr:doctor` to set up the missing keys interactively in chat. Do NOT proceed to deep-research with a broken environment.
 
 ## Step 3 — Run discover-first deep-research via the MCP server
 
@@ -90,7 +84,7 @@ If the user says "implement," read `<out_dir>/execution-handoff.json` and treat 
 
 ## Failure modes
 
-- **doctor reports missing keys**: the user runs `npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor setup`. Do not try to deep-research without them.
-- **MCP tool returns `isError`**: read the error text. Most common cause is rate-limited search provider — switch via the doctor setup command above to a different one.
+- **doctor reports missing keys**: invoke `/adr:doctor` to set them up. Do not try to deep-research without them.
+- **MCP tool returns `isError`**: read the error text. Most common cause is rate-limited search provider — re-run `/adr:doctor` to swap in a different provider.
 - **`recommend_human_review: true`**: do NOT proceed to implement automatically. Show the borderline first.
 - **Run exceeded 10 minutes**: the kernel almost certainly failed but kept retrying. Inspect `<out_dir>/events.jsonl` for the last events and ask the user how to proceed.

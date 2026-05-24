@@ -196,7 +196,92 @@ async function loadConfigIntoEnv() {
   return { loaded: count, path: CONFIG_PATH };
 }
 
-export { loadConfigIntoEnv, audit, CONFIG_PATH };
+// Allowed keys for the non-interactive `set` command. We refuse to write
+// arbitrary keys to ~/.adr/config.json — only the env vars the kernel
+// actually reads.
+const KNOWN_KEYS = new Set([
+  ...SEARCH_PROVIDERS.map((p) => p.key),
+  ...LLM_PROVIDERS.map((p) => p.key),
+  ...OPTIONAL.map((p) => p.key),
+  "ADR_OPENAI_BASE_URL",
+  "ADR_MCP_SERVER_URL",
+  "ADR_SEARCH_PROVIDER",
+  "ADR_PRIVATE_MCP_ONLY",
+  "ADR_ADK_MODEL",
+  "GEMINI_API_KEY",
+  "GOOGLE_GENAI_API_KEY",
+  "GOOGLE_API_KEY"
+]);
+
+// Non-interactive `set` mode for slash commands and scripts.
+//
+// Two forms:
+//   adr-doctor set KEY VALUE         set a single key
+//   adr-doctor set --json '{...}'    set many keys at once from a JSON blob
+//
+// Always writes ~/.adr/config.json with mode 0600.
+async function setKeys(argv) {
+  const config = await loadConfigFile();
+  let updates = {};
+
+  if (argv[0] === "--json") {
+    if (!argv[1]) {
+      throw new Error("adr-doctor set --json requires a JSON object as the second argument.");
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(argv[1]);
+    } catch (error) {
+      throw new Error(`adr-doctor set --json: argument is not valid JSON: ${error.message}`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("adr-doctor set --json: argument must be a JSON object of {KEY: VALUE} pairs.");
+    }
+    updates = parsed;
+  } else if (argv.length === 2) {
+    updates = { [argv[0]]: argv[1] };
+  } else {
+    throw new Error(
+      "Usage:\n  adr-doctor set KEY VALUE\n  adr-doctor set --json '{\"KEY\":\"VALUE\",...}'"
+    );
+  }
+
+  const accepted = [];
+  const rejected = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (!KNOWN_KEYS.has(key)) {
+      rejected.push({ key, reason: "unknown key (refuse to write arbitrary env to config)" });
+      continue;
+    }
+    if (value === null || value === undefined || value === "") {
+      delete config[key];
+      accepted.push({ key, action: "deleted" });
+    } else if (typeof value !== "string") {
+      rejected.push({ key, reason: "value must be a string" });
+    } else {
+      config[key] = value;
+      accepted.push({ key, action: "set", masked: maskedValue(value) });
+    }
+  }
+
+  await mkdir(CONFIG_DIR, { recursive: true });
+  await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+
+  console.log(`Wrote ${CONFIG_PATH}`);
+  for (const a of accepted) {
+    console.log(`  ${a.action.padEnd(8)} ${a.key}${a.masked ? "  " + a.masked : ""}`);
+  }
+  for (const r of rejected) {
+    console.log(`  rejected ${r.key}  (${r.reason})`);
+  }
+
+  // Re-audit so the caller sees the post-set state.
+  const { ready, output } = await audit();
+  console.log("\n" + output);
+  if (!ready) process.exitCode = 1;
+}
+
+export { loadConfigIntoEnv, audit, setKeys, CONFIG_PATH, KNOWN_KEYS };
 
 // CLI detection that works for both direct invocation (`node adr-doctor.mjs`)
 // and global-bin invocation (npm symlinks `adr-doctor` to this file via the
@@ -210,13 +295,41 @@ function isCliInvocation() {
   }
 }
 
+function usage() {
+  return [
+    "Usage:",
+    "  adr-doctor               audit env + ~/.adr/config.json, exits non-zero if not ready",
+    "  adr-doctor setup         interactive prompt (terminal only — requires a TTY)",
+    "  adr-doctor set KEY VAL   non-interactive: write a single key to ~/.adr/config.json",
+    "  adr-doctor set --json '{\"KEY\":\"VAL\",...}'   non-interactive: write many keys at once"
+  ].join("\n");
+}
+
 if (isCliInvocation()) {
   const mode = process.argv[2] || "audit";
   if (mode === "setup") {
-    await setup();
-  } else {
+    if (!process.stdin.isTTY) {
+      console.error(
+        "adr-doctor setup is interactive and requires a TTY. " +
+          "You're piping stdin (e.g. from Claude Code's Bash tool), so prompts cannot be answered.\n\n" +
+          "Use the non-interactive form instead:\n" +
+          "  adr-doctor set BRAVE_SEARCH_API_KEY <value>\n" +
+          "  adr-doctor set --json '{\"BRAVE_SEARCH_API_KEY\":\"...\",\"ADR_OPENAI_API_KEY\":\"...\"}'"
+      );
+      process.exitCode = 2;
+    } else {
+      await setup();
+    }
+  } else if (mode === "set") {
+    await setKeys(process.argv.slice(3));
+  } else if (mode === "audit" || mode === undefined) {
     const { ready, output } = await audit();
     console.log(output);
     process.exitCode = ready ? 0 : 1;
+  } else if (mode === "--help" || mode === "-h" || mode === "help") {
+    console.log(usage());
+  } else {
+    console.error(`adr-doctor: unknown subcommand "${mode}"\n\n${usage()}`);
+    process.exitCode = 2;
   }
 }
