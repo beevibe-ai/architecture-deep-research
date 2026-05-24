@@ -47,6 +47,7 @@ function usage() {
   adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir>
   adr deep-research --discover-first --repo <path> --domain <domain> --decision <decision> --out <dir>
   adr discover --repo <path> --decision <decision> --out <dir> [--issue-body <path-or-text>]
+  adr resume <out_dir>
   adr supersede <previous-output-dir> --with <product-context.md> --domain <domain> --decision <decision> --out <dir>
 
 Required runtime:
@@ -113,7 +114,14 @@ Required runtime:
 	  guaranteed-low-confidence run.
 
 	  --clarification-answers <text-or-path>   provide answers as a string or a path to a file
+	  --clarification-profile <id>             pick a pre-built profile instead of writing answers.
+	                                           Profiles: pre_pmf_solo, first_paying_customers,
+	                                           scaling_team_post_seed, enterprise_regulated.
 	  --no-clarify                              skip the gate; accept a lower-confidence run
+
+	Cost / budget flags:
+	  --dry-run                     print the plan + cost estimate, do not run the expensive stages.
+	                                Writes cost-estimate.json + research-plan.json and exits.
 
 	Quality flags:
 	  --no-enforce-critique          do not auto-downgrade high-severity critique
@@ -122,7 +130,8 @@ Required runtime:
 	  --skip-resynthesis            do not re-synthesize after critique even if high-severity issues exist
 	  --skip-relevance-filter       do not drop off-topic candidates from the promoted pool
 	  --skip-constraint-extraction  do not extract hard constraints from the PRD
-	  --skip-constraint-filter      do not eliminate candidates that fail must_have constraints`;
+	  --skip-constraint-filter      do not eliminate candidates that fail must_have constraints
+	  --skip-concrete-validation    do not demote pattern-shaped candidates in concrete mode`;
 }
 
 async function main() {
@@ -130,6 +139,39 @@ async function main() {
 
   if (command === "deep-research") {
     await deepResearch({ inputPath, flags });
+    return;
+  }
+
+  // `adr resume <out_dir>` — replay the prior run's flags with --resume,
+  // which skips the expensive research stage (evidence.json gets loaded
+  // from disk) and re-runs synthesis + critique + audits + handoff.
+  // Reads run-config.json from the out_dir to reconstruct the original
+  // flags + inputPath.
+  if (command === "resume") {
+    if (!inputPath) {
+      console.error("Usage: adr resume <out_dir>");
+      process.exitCode = 1;
+      return;
+    }
+    const { readFile } = await import("node:fs/promises");
+    const path = (await import("node:path")).default;
+    const configPath = path.join(path.resolve(inputPath), "run-config.json");
+    let config;
+    try {
+      config = JSON.parse(await readFile(configPath, "utf8"));
+    } catch {
+      console.error(
+        `No run-config.json at ${configPath}. The prior run was either incomplete or pre-dates the resume feature. ` +
+          `Re-invoke with the original flags + --resume to reuse evidence.json.`
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const replayFlags = { ...config.flags, resume: true };
+    await deepResearch({
+      inputPath: config.input_path || null,
+      flags: replayFlags
+    });
     return;
   }
 

@@ -40,6 +40,14 @@
           "category": {
             "type": "string",
             "description": "Optional grouping (e.g., 'deployment', 'compliance', 'cost', 'integration')."
+          },
+          "decision_scope_relevant": {
+            "type": "boolean",
+            "description": "Whether the candidates for this decision can plausibly satisfy or violate this constraint. App-layer requirements (e.g. 'must support agent identities' for a vector-store decision) are NOT decision-scope-relevant — they apply to the application as a whole, not to candidates at this decision layer. When false, the constraint is NOT used to filter candidates even if severity=must_have; it stays in the file for transparency and may inform scoring."
+          },
+          "decision_scope_reason": {
+            "type": "string",
+            "description": "One-sentence justification for decision_scope_relevant."
           }
         },
         "additionalProperties": true

@@ -483,6 +483,33 @@ function estimatePhaseUsd({ model, input_tokens, output_tokens, cached_input_tok
   return Number(usd.toFixed(6));
 }
 
+// Rough cost estimate before research runs. Empirical values from a few
+// dozen sample runs against the openai-compatible / gpt-4.1-mini backend.
+// Reality varies ±30% depending on PRD size, source page length, and how
+// many cycles the adaptive/adversarial loops trigger. Good enough for
+// budget sanity-checking.
+const COST_PROFILE_USD = {
+  base_overhead: 0.020,        // planner + matrix + synthesis + critique + audits + handoff
+  per_research_task: 0.012,    // search + ~5 sources × (extractClaims + judge)
+  per_peer_task: 0.012,        // same shape as research_task
+  per_adversarial_task: 0.010,
+  per_resynthesis: 0.015,      // conditional, fires when critique high-severity
+  per_discover: 0.010          // discover_first add-on
+};
+
+function estimateRunCostUsd({ task_count = 6, peer_task_count = 0, include_discover = false, include_peers = false } = {}) {
+  let total = COST_PROFILE_USD.base_overhead;
+  total += task_count * COST_PROFILE_USD.per_research_task;
+  total += peer_task_count * COST_PROFILE_USD.per_peer_task;
+  total += task_count * 0.5 * COST_PROFILE_USD.per_adversarial_task; // not every task gets adversarial
+  if (include_discover) total += COST_PROFILE_USD.per_discover;
+  // Re-synthesis fires ~30% of runs (when critique flags high-severity).
+  total += 0.3 * COST_PROFILE_USD.per_resynthesis;
+  // peer-finding LLM call when --include-peers is on
+  if (include_peers) total += 0.005;
+  return Number(total.toFixed(4));
+}
+
 function summarizeLlmCost() {
   const phases = [...llmCostState.byPhase.values()].map((p) => ({
     ...p,
@@ -3838,13 +3865,71 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     }
   }
 
+  // `--clarification-profile <id>` lets solo founders pick a pre-built
+  // profile (pre_pmf_solo, first_paying_customers, scaling_team_post_seed,
+  // enterprise_regulated) instead of answering 6 free-form questions.
+  // Same effect as --clarification-answers but uses a curated answer block
+  // shipped with the package.
+  const profileFlag = flags["clarification-profile"];
+  if (typeof profileFlag === "string" && profileFlag.length > 0 && !clarificationAnswers) {
+    const { profileById, profileAnswersAsText } = await import("./clarification-profiles.mjs");
+    const profile = profileById(profileFlag);
+    if (profile) {
+      const profileText = profileAnswersAsText(profile);
+      clarificationAnswers = profileText;
+      content = `${content}\n\n${profileText}\n`;
+    } else {
+      console.warn(`[adr] --clarification-profile "${profileFlag}" is not a known profile; ignoring.`);
+    }
+  }
+
   await mkdir(outDir, { recursive: true });
-  if (!chained) {
+  if (!chained && !flags.resume) {
     // Fresh run — truncate events.jsonl and reset cost tracking. When chained
     // from --discover-first, the upstream discover stage already initialized
-    // both, and we want to preserve its events on the same log.
+    // both, and we want to preserve its events on the same log. When
+    // --resume, keep the existing events.jsonl so the resume picks up where
+    // the prior run died.
     await writeFile(path.join(outDir, "events.jsonl"), "");
     resetLlmCost();
+  } else if (flags.resume) {
+    await appendEvent(outDir, "run_resumed", {
+      out_dir: outDir,
+      decision: flags.decision,
+      domain: flags.domain
+    });
+  }
+
+  // Persist run-config.json so `adr resume <out_dir>` can re-invoke with
+  // the original flag set. Only write on a fresh run (resume re-reads it).
+  if (!flags.resume) {
+    try {
+      const runConfig = {
+        version: VERSION,
+        started_at: nowIso(),
+        input_path: inputPath || null,
+        flags: {
+          domain: flags.domain,
+          decision: flags.decision,
+          out: flags.out,
+          repo: flags.repo,
+          "decision-kind": flags["decision-kind"],
+          "discover-first": flags["discover-first"],
+          "include-peers": flags["include-peers"],
+          "max-peers": flags["max-peers"],
+          seed: flags.seed,
+          "max-cycles": flags["max-cycles"],
+          "max-sources": flags["max-sources"]
+        }
+      };
+      await writeFile(
+        path.join(outDir, "run-config.json"),
+        JSON.stringify(runConfig, null, 2)
+      );
+    } catch {
+      // run-config write failures are non-fatal — resume just won't work
+      // without it, but the current run will still complete.
+    }
   }
   await appendEvent(outDir, "run_started", {
     command: "deep-research",
@@ -3870,7 +3955,7 @@ async function prepareRun({ inputPath, flags, chained = false }) {
   // event that the first run did. The categorical check is also less
   // meaningful after answers were threaded in.
   const rawClarification = assessClarification(context, content);
-  const clarification = clarificationAnswers
+  let clarification = clarificationAnswers
     ? {
         ...rawClarification,
         needs_clarification: false,
@@ -3878,6 +3963,52 @@ async function prepareRun({ inputPath, flags, chained = false }) {
         action: "Clarification answers were provided on this run; gate suppressed."
       }
     : rawClarification;
+
+  // Suggest matching pre-built profiles when the gate fires. Reads
+  // discover-side signals (contributor count, codebase age, compliance
+  // signals) when present and picks 1-3 profiles. The user can then
+  // pass --clarification-profile <id> instead of writing free-form
+  // answers.
+  if (clarification.needs_clarification && !clarificationAnswers) {
+    try {
+      const { suggestProfiles } = await import("./clarification-profiles.mjs");
+      let signals = { discoveredConstraints: null, complianceSignals: [], contributorCount: 0, codebaseAgeDays: 0 };
+      try {
+        const discoveredConstraints = JSON.parse(
+          await readFile(path.join(outDir, "discovered-constraints.json"), "utf8")
+        );
+        signals.complianceSignals = toArray(discoveredConstraints?.compliance_signals);
+      } catch {
+        // No discover step ran — that's fine.
+      }
+      try {
+        const discoveredPrinciples = JSON.parse(
+          await readFile(path.join(outDir, "discovered-principles.json"), "utf8")
+        );
+        const summary = discoveredPrinciples?.scan_summary || {};
+        signals.contributorCount = Number(summary.contributors_count || 0);
+        signals.codebaseAgeDays = Number(summary.codebase_age_days || 0);
+      } catch {
+        // ditto
+      }
+      const profiles = suggestProfiles(signals);
+      if (profiles.length > 0) {
+        clarification = {
+          ...clarification,
+          suggested_profiles: profiles.map((p) => ({
+            id: p.id,
+            label: p.label,
+            description: p.description
+          })),
+          action:
+            "Answer with --clarification-answers '<text>', OR pick a profile with --clarification-profile <id>, OR --no-clarify to force a low-confidence run."
+        };
+      }
+    } catch {
+      // Profile-suggestion failures should never block the run.
+    }
+  }
+
   await writeJson(path.join(outDir, "strategic-context.json"), context);
   await writeJson(path.join(outDir, "clarification.json"), clarification);
   await appendEvent(outDir, "strategic_context_created", {
@@ -4152,6 +4283,23 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
         "    rather'.",
         "  - nice_to_have: stated interest with no commitment.",
         "",
+        "DECISION SCOPE — does this constraint apply at THIS decision layer?",
+        "Add `decision_scope_relevant: boolean` to every constraint. Ask:",
+        "'Can candidates for this specific decision plausibly satisfy or violate",
+        `this constraint?' For a "${context.decision}" decision:`,
+        "  ✓ decision_scope_relevant: true — constraints the candidate options",
+        "    can themselves choose to satisfy. Vector store decision: 'self-",
+        "    hosted only', 'fits Docker Compose', 'integrates with Postgres'.",
+        "  ✗ decision_scope_relevant: false — application-layer requirements",
+        "    that span the whole system, not just this layer. Vector store",
+        "    decision: 'must support persistent agent identities', 'must",
+        "    enable human-in-the-loop workflows', 'must integrate with our",
+        "    React frontend' — none of these are vector-store concerns even",
+        "    if the user wrote them as 'must'.",
+        "When in doubt, mark decision_scope_relevant: false and let the",
+        "synthesis stage use it as scoring input rather than as a hard filter.",
+        "Add a short `decision_scope_reason` explaining the verdict.",
+        "",
         "For each constraint, also produce a yes/no check_question that ADR",
         "will ask of each candidate during filtering. Example:",
         "  statement: 'Self-hosted is the primary deploy model.'",
@@ -4169,7 +4317,7 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
         "downgrade most to preferred. Real architectural decisions rarely have",
         "more than 3-4 genuine structural constraints.",
         "",
-        "Output JSON: { constraints: [{id, statement, severity, check_question, evidence_from_input, category}] }."
+        "Output JSON: { constraints: [{id, statement, severity, check_question, evidence_from_input, category, decision_scope_relevant, decision_scope_reason}] }."
       ].join("\n"),
       user: JSON.stringify({
         domain: context.domain,
@@ -4193,13 +4341,20 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
       const statement = String(c.statement || "").trim();
       const check = String(c.check_question || "").trim();
       if (!statement || !check) return null;
+      // Default: assume the LLM extractor was thoughtful and scope-flagged
+      // when relevant. If unset, default to true (don't silently weaken
+      // every constraint).
+      const scopeRelevant =
+        typeof c.decision_scope_relevant === "boolean" ? c.decision_scope_relevant : true;
       return {
         id: slugify(String(c.id || statement).slice(0, 64)) || `constraint_${i + 1}`,
         statement,
         severity,
         check_question: check,
         evidence_from_input: String(c.evidence_from_input || "").trim(),
-        category: String(c.category || "").trim()
+        category: String(c.category || "").trim(),
+        decision_scope_relevant: scopeRelevant,
+        decision_scope_reason: String(c.decision_scope_reason || "").trim()
       };
     })
     .filter(Boolean)
@@ -4241,7 +4396,24 @@ async function applyConstraintFilter({ context, knowledgeMap, constraints, outDi
   if (flags && flags["skip-constraint-filter"]) {
     return { knowledgeMap, eliminated: [], skipped: true };
   }
-  const mustHaves = toArray(constraints?.constraints).filter((c) => c.severity === "must_have");
+  // Filter only on must_have constraints that ALSO pass the decision-scope
+  // check. App-layer requirements ("must support agent identities") that
+  // the extractor flagged decision_scope_relevant: false don't eliminate
+  // candidates — they stay in constraints.json for transparency and feed
+  // the synthesis stage as scoring inputs.
+  const allMustHaves = toArray(constraints?.constraints).filter((c) => c.severity === "must_have");
+  const mustHaves = allMustHaves.filter((c) => c.decision_scope_relevant !== false);
+  const outOfScopeMustHaves = allMustHaves.filter((c) => c.decision_scope_relevant === false);
+  if (outOfScopeMustHaves.length > 0) {
+    await appendEvent(outDir, "constraints_out_of_scope_skipped", {
+      out_of_scope_count: outOfScopeMustHaves.length,
+      out_of_scope: outOfScopeMustHaves.map((c) => ({
+        id: c.id,
+        statement: c.statement,
+        reason: c.decision_scope_reason || "marked out-of-scope by extractor"
+      }))
+    });
+  }
   const promoted = toArray(knowledgeMap?.promoted_candidates);
   if (mustHaves.length === 0 || promoted.length === 0) {
     return { knowledgeMap, eliminated: [], skipped: false };
@@ -4414,6 +4586,147 @@ async function applyConstraintFilter({ context, knowledgeMap, constraints, outDi
 // One LLM JSON call against all promoted candidates at once. Off-topic
 // candidates are demoted out of promoted_candidates (they keep their
 // evidence but no longer count as viable options).
+// Concrete-mode candidate validation.
+//
+// When the user asked for a product/vendor decision (--decision-kind concrete),
+// the candidate pool should contain NAMED PRODUCTS, not architecture
+// patterns. But the extractor sometimes leaks pattern-shaped names through:
+// `vector_rag`, `postgres_centric_storage`, `token_based_auth`. Those are
+// the wrong shape of answer — the user asked "which auth provider?" and got
+// "token-based auth" back as if it were one.
+//
+// This stage runs only in concrete mode. One LLM batched call labels each
+// candidate as product | pattern | unsure. Pattern-shaped names get demoted
+// to insufficient_evidence with reason "non_product_in_concrete_mode".
+async function validateConcreteCandidates({ context, knowledgeMap, outDir, flags }) {
+  if ((context.decision_kind || "family") !== "concrete") {
+    return { knowledgeMap, demoted: [], skipped: true };
+  }
+  if (flags && flags["skip-concrete-validation"]) {
+    return { knowledgeMap, demoted: [], skipped: true };
+  }
+  const promoted = toArray(knowledgeMap?.promoted_candidates);
+  if (promoted.length === 0) {
+    return { knowledgeMap, demoted: [], skipped: false };
+  }
+
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "concrete_candidate_validator",
+      system: [
+        "You are the concrete-mode candidate validator for Architecture Deep Research.",
+        "",
+        `The user is making a concrete decision: "${context.decision}" (kind: concrete).`,
+        "Concrete means they want a NAMED PRODUCT / VENDOR / LIBRARY / SERVICE,",
+        "not an architecture pattern.",
+        "",
+        "For each candidate below, label it:",
+        "  - product:   a specific named product, vendor, library, or service",
+        "               (e.g., 'Clerk', 'Auth0', 'pgvector', 'BullMQ', 'Pinecone',",
+        "               'WorkOS', 'Stripe', 'SuperTokens')",
+        "  - pattern:   an architecture family / topology / generic pattern",
+        "               (e.g., 'vector_rag', 'token_based_auth', 'postgres_centric_storage',",
+        "               'graph_retrieval', 'serverless_functions')",
+        "  - unsure:    you can't tell from the name alone",
+        "",
+        "Signals of pattern-shaped names: ends in _rag, _storage, _search, _retrieval,",
+        "_centric_*, _native_*, _based, _topology, _architecture, _design. Multi-word",
+        "snake_case descriptive phrases are usually patterns.",
+        "",
+        "Signals of product-shaped names: short, brand-like, capitalizable, has a",
+        "github_url or vendor homepage. Lowercase with no underscores often product",
+        "(pgvector, redis, kafka).",
+        "",
+        "'unsure' is kept (we bias toward keeping). Only 'pattern' demotes.",
+        "",
+        "Output JSON: { verdicts: [{ name, verdict, reason }] }."
+      ].join("\n"),
+      user: JSON.stringify({
+        decision: context.decision,
+        candidates: promoted.map((c) => ({
+          name: c.name,
+          label: c.label,
+          top_claims: (c.support || []).slice(0, 2).map((s) => s.claim)
+        }))
+      })
+    });
+  } catch (error) {
+    await appendEvent(outDir, "concrete_validation_failed", {
+      error: String(error?.message || error)
+    });
+    return { knowledgeMap, demoted: [], skipped: false };
+  }
+
+  const verdicts = new Map();
+  for (const v of toArray(raw.verdicts)) {
+    if (!v || typeof v !== "object") continue;
+    const name = slugify(String(v.name || ""));
+    if (!name) continue;
+    const verdict = String(v.verdict || "").trim().toLowerCase();
+    if (!["product", "pattern", "unsure"].includes(verdict)) continue;
+    verdicts.set(name, { verdict, reason: String(v.reason || "") });
+  }
+
+  const demoted = [];
+  const kept = [];
+  for (const candidate of promoted) {
+    const slug = slugify(candidate.name);
+    const v = verdicts.get(slug);
+    if (v && v.verdict === "pattern") {
+      demoted.push({ name: candidate.name, label: candidate.label, reason: v.reason });
+      continue;
+    }
+    kept.push(candidate);
+  }
+
+  if (demoted.length === 0) {
+    await appendEvent(outDir, "concrete_validation_completed", {
+      candidates_kept: kept.length,
+      candidates_demoted: 0
+    });
+    return { knowledgeMap, demoted: [], skipped: false };
+  }
+
+  // Safety net: if validation would empty the pool, abort like the
+  // constraint filter does. Keeps the original pool and lets synthesis
+  // see the verdicts as advisory.
+  if (kept.length === 0) {
+    await appendEvent(outDir, "concrete_validation_aborted_empty_pool", {
+      would_have_demoted: demoted.map((d) => d.name),
+      reason: "Every promoted candidate is pattern-shaped, not product-shaped. The decision is concrete-mode but no real products surfaced. Consider re-running with --decision-kind family, or sharpen the PRD to name specific products."
+    });
+    return { knowledgeMap, demoted: [], skipped: false, aborted_empty: true };
+  }
+
+  const demotedSet = new Set(demoted.map((d) => slugify(d.name)));
+  const movedToInsufficient = promoted
+    .filter((c) => demotedSet.has(slugify(c.name)))
+    .map((c) => ({
+      ...c,
+      promotion_status: "non_product_in_concrete_mode",
+      validation_reason:
+        demoted.find((d) => slugify(d.name) === slugify(c.name))?.reason || ""
+    }));
+
+  const updated = {
+    ...knowledgeMap,
+    promoted_candidates: kept,
+    insufficient_evidence_candidates: [
+      ...toArray(knowledgeMap.insufficient_evidence_candidates),
+      ...movedToInsufficient
+    ]
+  };
+
+  await appendEvent(outDir, "concrete_validation_completed", {
+    candidates_kept: kept.length,
+    candidates_demoted: demoted.length,
+    demoted: demoted.map((d) => ({ name: d.name, reason: d.reason }))
+  });
+
+  return { knowledgeMap: updated, demoted, skipped: false };
+}
+
 async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags }) {
   if (flags && flags["skip-relevance-filter"]) {
     return { knowledgeMap, dropped: [], skipped: true };
@@ -4533,6 +4846,46 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
 }
 
 async function executeResearchPhase({ plan, context, outDir, flags }) {
+  // --resume: skip the expensive research phase when a prior run already
+  // produced evidence.json. The matrix / synthesis / critique stages all
+  // re-run (cheap relative to web search + per-source claim extraction).
+  // This is the biggest cost-saver in the resume flow — a typical run
+  // does 60-80% of its LLM calls during research.
+  if (flags && flags.resume) {
+    try {
+      const cachedEvidence = JSON.parse(
+        await readFile(path.join(outDir, "evidence.json"), "utf8")
+      );
+      if (Array.isArray(cachedEvidence) && cachedEvidence.length > 0) {
+        const knowledgeMap = buildKnowledgeMap(cachedEvidence);
+        await writeJson(path.join(outDir, "knowledge-map.json"), knowledgeMap);
+        await appendEvent(outDir, "research_resumed_from_cache", {
+          evidence_count: cachedEvidence.length,
+          promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+          reason: "Skipping research phase — evidence.json already present from prior run."
+        });
+        // Synthesize stub researchResults so downstream stages that read
+        // .report don't break. Reports get re-generated by the matrix +
+        // adversarial stages anyway.
+        const researchResults = (plan.tasks || []).map((task) => ({
+          task,
+          evidence: [],
+          report: `(resumed) Evidence loaded from cache; see evidence.json.`,
+          rounds: 0,
+          completionReason: "resumed_from_cache"
+        }));
+        return {
+          researchResults,
+          evidenceItems: cachedEvidence,
+          knowledgeMap,
+          adaptiveCycle: 0
+        };
+      }
+    } catch {
+      // No cached evidence — fall through and run research normally.
+    }
+  }
+
   let researchResults = await runResearchAgents({ plan, context, flags, outDir });
   let evidenceItems = assignCitations(
     researchResults.flatMap((result) => result.evidence)
@@ -4610,6 +4963,15 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
     path.join(outDir, "intermediate-reports.md"),
     researchResults.map((result) => result.report).join("\n")
   );
+  // Running cost tally — after the expensive research phase the operator
+  // can see "we've spent ~$X so far, with synthesis + audits still ahead".
+  const costSoFar = summarizeLlmCost();
+  await appendEvent(outDir, "cost_progress", {
+    stage: "research_completed",
+    usd_so_far: costSoFar.totals.estimated_usd,
+    calls_so_far: costSoFar.totals.calls
+  });
+
   await appendEvent(outDir, "evidence_collected", {
     evidence_count: evidenceItems.length,
     promoted_candidate_count: knowledgeMap.promoted_candidates.length,
@@ -5471,6 +5833,67 @@ async function _deepResearchImpl({ inputPath, flags }) {
     flags
   });
 
+  // Cost estimate after the plan is fixed. Writes cost-estimate.json next
+  // to research-plan.json so the operator can read it before letting the
+  // expensive stages run. Emits a cost_estimated event so streaming UIs
+  // can surface "this run will cost ~$0.12".
+  const peerTaskCount = toArray(plan.tasks).filter((t) => t.peer_target).length;
+  const nonPeerTaskCount = toArray(plan.tasks).length - peerTaskCount;
+  const estimateUsd = estimateRunCostUsd({
+    task_count: nonPeerTaskCount,
+    peer_task_count: peerTaskCount,
+    include_discover: chainedFromDiscover,
+    include_peers: Boolean(flags["include-peers"])
+  });
+  await writeFile(
+    path.join(prepared.outDir, "cost-estimate.json"),
+    JSON.stringify(
+      {
+        version: VERSION,
+        estimated_at: nowIso(),
+        task_count: toArray(plan.tasks).length,
+        peer_task_count: peerTaskCount,
+        estimated_usd: estimateUsd,
+        confidence: "rough — actual ±30% based on PRD size, source pages, cycle count",
+        profile: COST_PROFILE_USD
+      },
+      null,
+      2
+    )
+  );
+  await appendEvent(prepared.outDir, "cost_estimated", {
+    task_count: toArray(plan.tasks).length,
+    peer_task_count: peerTaskCount,
+    estimated_usd: estimateUsd
+  });
+
+  // --dry-run short-circuit: print plan + estimate, do not spend tokens
+  // on the expensive stages. Useful for budget sanity-check.
+  if (flags["dry-run"]) {
+    await writeJson(path.join(prepared.outDir, "state.json"), {
+      version: VERSION,
+      status: "dry_run_complete",
+      completed_at: nowIso(),
+      task_count: toArray(plan.tasks).length,
+      estimated_usd: estimateUsd
+    });
+    await appendEvent(prepared.outDir, "dry_run_complete", {
+      task_count: toArray(plan.tasks).length,
+      estimated_usd: estimateUsd
+    });
+    console.log("");
+    console.log(`Dry run: ${toArray(plan.tasks).length} tasks planned (${peerTaskCount} peer-targeted).`);
+    console.log(`Estimated cost: ~$${estimateUsd.toFixed(4)} (rough, ±30%).`);
+    console.log(`Plan written to ${path.join(prepared.outDir, "research-plan.json")}.`);
+    console.log("Run without --dry-run to execute the research stages.");
+    return {
+      status: "dry_run_complete",
+      out_dir: prepared.outDir,
+      task_count: toArray(plan.tasks).length,
+      estimated_usd: estimateUsd
+    };
+  }
+
   const executeResult = await executeResearchPhase({
     plan,
     context: prepared.context,
@@ -5521,6 +5944,21 @@ async function _deepResearchImpl({ inputPath, flags }) {
   });
   if (constraintResult.eliminated.length > 0) {
     knowledgeMap = constraintResult.knowledgeMap;
+    await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
+  }
+
+  // Concrete-mode candidate validator — when the user asked for a product
+  // (concrete) but the extractor leaked patterns (vector_rag,
+  // postgres_centric_storage), demote the pattern-shaped names. Family
+  // mode is a no-op.
+  const concreteValidation = await validateConcreteCandidates({
+    context: prepared.context,
+    knowledgeMap,
+    outDir: prepared.outDir,
+    flags
+  });
+  if (concreteValidation.demoted.length > 0) {
+    knowledgeMap = concreteValidation.knowledgeMap;
     await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
   }
 
@@ -5582,6 +6020,13 @@ async function _deepResearchImpl({ inputPath, flags }) {
     weak_axes: toArray(o.weak_axes).slice(0, 4),
     when_to_pick: toArray(o.when_to_pick).slice(0, 2).map((s) => String(s).slice(0, 160))
   }));
+  const synthCost = summarizeLlmCost();
+  await appendEvent(prepared.outDir, "cost_progress", {
+    stage: "synthesis_completed",
+    usd_so_far: synthCost.totals.estimated_usd,
+    calls_so_far: synthCost.totals.calls
+  });
+
   await appendEvent(prepared.outDir, "synthesis_completed", {
     mode: rawSpec.decision?.mode,
     ranked_options_count: synthOptions.length,
@@ -5841,6 +6286,7 @@ export {
   discoverPatterns,
   executeResearchPhase,
   applyConstraintFilter,
+  validateConcreteCandidates,
   extractClaims,
   extractHardConstraints,
   filterPromotedByRelevance,

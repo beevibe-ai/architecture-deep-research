@@ -15,6 +15,7 @@ import {
   applyConstraintFilter,
   buildAdversarialResearchPlan,
   classifySource,
+  validateConcreteCandidates,
   deriveComparisonAxes,
   discoverPatterns,
   extractClaims,
@@ -2186,6 +2187,103 @@ try {
     globalThis.fetch = realFetch;
     await rm(tmpDir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Batch B: concrete-mode validator drops pattern-shaped candidates
+// ---------------------------------------------------------------------------
+
+{
+  installProvider((label) => {
+    assert.equal(label, "concrete_candidate_validator");
+    return {
+      verdicts: [
+        { name: "pgvector", verdict: "product", reason: "Named open-source Postgres extension." },
+        { name: "pinecone", verdict: "product", reason: "Named managed vector database." },
+        { name: "vector_rag", verdict: "pattern", reason: "Architecture pattern, not a specific product." },
+        { name: "postgres_centric_storage", verdict: "pattern", reason: "Storage approach, not a named product." }
+      ]
+    };
+  });
+  const km = {
+    promotion_rule: "test",
+    promoted_candidates: [
+      { name: "pgvector", label: "pgvector", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
+      { name: "pinecone", label: "Pinecone", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
+      { name: "vector_rag", label: "Vector RAG", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [3], score: 0.7 },
+      { name: "postgres_centric_storage", label: "Postgres-centric storage", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [4], score: 0.7 }
+    ],
+    insufficient_evidence_candidates: []
+  };
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-concrete-test-"));
+  try {
+    const result = await validateConcreteCandidates({
+      context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
+      knowledgeMap: km,
+      outDir: tmpDir,
+      flags: {}
+    });
+    assert.equal(result.demoted.length, 2, `expected 2 patterns demoted, got: ${JSON.stringify(result.demoted)}`);
+    const keptNames = result.knowledgeMap.promoted_candidates.map((c) => c.name).sort();
+    assert.deepEqual(keptNames, ["pgvector", "pinecone"]);
+    // Demoted candidates moved to insufficient with non_product_in_concrete_mode:
+    const moved = result.knowledgeMap.insufficient_evidence_candidates.filter(
+      (c) => c.promotion_status === "non_product_in_concrete_mode"
+    );
+    assert.equal(moved.length, 2);
+    assert.ok(moved.some((m) => m.name === "vector_rag"));
+    assert.ok(moved.some((m) => m.name === "postgres_centric_storage"));
+  } finally {
+    setLlmJsonProvider(null);
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+
+  // Family mode = no-op
+  const familyResult = await validateConcreteCandidates({
+    context: { domain: "saas", decision: "retrieval topology", decision_kind: "family" },
+    knowledgeMap: km,
+    outDir: ".",
+    flags: {}
+  });
+  assert.equal(familyResult.skipped, true);
+  assert.equal(familyResult.demoted.length, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Batch B: clarification profiles — suggestProfiles ranks by signals
+// ---------------------------------------------------------------------------
+
+{
+  const { suggestProfiles, profileById, profileAnswersAsText } = await import(
+    "../src/clarification-profiles.mjs"
+  );
+
+  // Solo founder with young codebase → pre_pmf_solo
+  const soloSuggestions = suggestProfiles({
+    contributorCount: 2,
+    codebaseAgeDays: 14,
+    complianceSignals: []
+  });
+  assert.ok(
+    soloSuggestions.length > 0 && soloSuggestions[0].id === "pre_pmf_solo",
+    `expected pre_pmf_solo first; got: ${soloSuggestions.map((p) => p.id).join(", ")}`
+  );
+
+  // Enterprise compliance signals → enterprise_regulated
+  const enterpriseSuggestions = suggestProfiles({
+    contributorCount: 25,
+    codebaseAgeDays: 800,
+    complianceSignals: ["HIPAA", "SOC2", "GDPR"]
+  });
+  assert.ok(enterpriseSuggestions.some((p) => p.id === "enterprise_regulated"));
+
+  // profileById + profileAnswersAsText render correctly
+  const profile = profileById("pre_pmf_solo");
+  assert.ok(profile && profile.label.toLowerCase().includes("pre-pmf"));
+  const text = profileAnswersAsText(profile);
+  assert.ok(text.includes("## Clarification answers"));
+  assert.ok(text.includes("latency"));
+  assert.ok(text.includes("scale"));
 }
 
 console.log("kernel regression tests ok");

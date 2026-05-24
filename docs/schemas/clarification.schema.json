@@ -12,6 +12,20 @@
       "items": { "type": "string" },
       "maxItems": 8
     },
+    "suggested_profiles": {
+      "type": "array",
+      "description": "Pre-built answer profiles that match the discover-stage signals. The user can pick one via --clarification-profile <id> instead of answering free-form questions.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
     "action": { "type": "string" }
   },
   "additionalProperties": true
