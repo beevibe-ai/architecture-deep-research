@@ -1,22 +1,19 @@
-// Pre-built answer profiles for the clarification gate.
+// Pre-built context tag sets for ADR runs.
 //
-// Real users (especially solo founders) don't want to answer six free-form
-// questions about latency / scale / cost / compliance / region / team size.
-// They want to pick the profile that matches their stage and let ADR fill
-// in sensible defaults. Free-form stays as an option — these are just
-// shortcuts when the profile fits.
+// Real users don't want to answer six free-form questions about latency /
+// scale / cost / compliance / region / team size. They want to pick the
+// profile that matches their stage. Each profile carries a flat array of
+// context tags — short strings like "phase:pre_pmf", "deployment:self_hosted"
+// — that ADR threads into decision-context.json as a `tags: [...]` array.
 //
-// Each profile carries a structured answer block + a 1-line description.
-// When the user picks a profile, ADR appends the profile's answers to the
-// PRD content before strategic-context extraction (same code path as
-// --clarification-answers).
+// Tags are CONTEXT, not filters. They are shown in the report header and
+// passed to synthesis as soft annotations. They never narrow the candidate
+// pool.
 //
 // Match hints look at discover-derived signals to suggest 1-2 profiles:
 //   - codebase_age_days: very young (< 30d) → pre-PMF defaults
 //   - team_size_hint: solo / 1-3 → pre-PMF defaults; 3-10 → first-customers;
 //     10+ → scaling-team
-//   - deploy_target.platform: docker-compose / fly.io → small-scale-self-hosted;
-//     vercel / railway → managed-platform
 //   - compliance_signals presence: triggers enterprise / regulated profiles
 
 const PROFILES = [
@@ -25,66 +22,78 @@ const PROFILES = [
     label: "Pre-PMF / solo founder",
     description:
       "Pre-product-market-fit. Solo or 1-3 engineers. Optimizing for time-to-first-customer, not scale. Self-hosted on a single VM or Docker Compose. Budget under $50/mo.",
-    answers: {
-      latency: "No hard SLA. p95 under 1s is fine. Performance is not the bottleneck pre-PMF.",
-      scale: "Under 10 tenants in year 1. Under 100k rows / vectors per tenant.",
-      cost: "Budget under $50/mo for this layer. Free tier preferred if available.",
-      compliance: "No formal compliance requirements yet. Reasonable security hygiene only.",
-      deploy: "Self-hosted, single instance, Docker Compose or a single VM.",
-      team_size: "1-3 engineers. Time-to-ship dominates every other concern.",
-      lifecycle: "Pre-PMF iteration speed matters more than long-term scale-out cost."
-    }
+    tags: [
+      "phase:pre_pmf",
+      "team:1-3",
+      "cost_sensitivity:high",
+      "deployment:self_hosted_preferred",
+      "scale:under_10_tenants",
+      "compliance:none",
+      "lifecycle:iteration_speed_dominates"
+    ]
   },
   {
     id: "first_paying_customers",
     label: "First paying customers",
     description:
       "Post-PMF, early revenue. Small team (3-10). Some customers paying, want SOC2 in 12 months. Managed platform deploy (Railway / Fly / Vercel). Budget $50-500/mo per tenant.",
-    answers: {
-      latency: "p95 under 500ms for user-facing queries. Background work has no SLA.",
-      scale: "10-100 tenants. 100k-1M rows / vectors per tenant. Growing 3-5× this year.",
-      cost: "Budget $50-500/mo per tenant. Predictable per-tenant unit economics required.",
-      compliance: "No formal compliance today; SOC2 Type I planned in 12 months.",
-      deploy: "Managed cloud platform (Railway, Fly.io, Vercel) or single-region cloud.",
-      team_size: "3-10 engineers. Some ops capacity but not dedicated infra team.",
-      lifecycle: "Building durable infrastructure; will not rewrite this layer in 18 months."
-    }
+    tags: [
+      "phase:early_revenue",
+      "team:3-10",
+      "cost_sensitivity:medium",
+      "deployment:managed_cloud",
+      "scale:10-100_tenants",
+      "compliance:soc2_planned",
+      "latency:p95_under_500ms",
+      "lifecycle:durable_layer"
+    ]
   },
   {
     id: "scaling_team_post_seed",
     label: "Scaling team / post-seed",
     description:
       "Funded round, 10-30 engineers. Multiple customers across regions. SOC2 + GDPR required. Multi-region cloud. Budget $500-5000/mo per tenant. p95 latency matters.",
-    answers: {
-      latency: "p95 under 200ms for user-facing queries. p99 under 500ms.",
-      scale: "100+ tenants. 1M+ rows / vectors per tenant. Multi-region read traffic.",
-      cost: "Budget $500-5000/mo per tenant. Margins matter.",
-      compliance: "SOC2 Type II required. GDPR compliant. EU data residency for EU tenants.",
-      deploy: "Multi-region managed cloud or Kubernetes. Dedicated infra team handles deploys.",
-      team_size: "10-30 engineers. Dedicated ops / SRE capacity.",
-      lifecycle: "Building for the next 3-5 years of growth. Migration cost is a real factor."
-    }
+    tags: [
+      "phase:post_seed",
+      "team:10-30",
+      "cost_sensitivity:low",
+      "deployment:multi_region_managed",
+      "scale:100plus_tenants",
+      "compliance:soc2_required",
+      "compliance:gdpr",
+      "compliance:eu_data_residency",
+      "latency:p95_under_200ms",
+      "lifecycle:3_5_year_horizon"
+    ]
   },
   {
     id: "enterprise_regulated",
     label: "Enterprise / regulated industry",
     description:
       "Healthcare, finance, gov, or large enterprise. HIPAA / FedRAMP / SOC2 / GDPR. Self-host option required. Air-gapped or on-prem deploy. Strict latency SLAs.",
-    answers: {
-      latency: "p99 under 100ms for user-facing queries. Strict SLAs in customer contracts.",
-      scale: "1000s of tenants or single-tenant deployments. Multi-region. High availability required.",
-      cost: "Cost less important than control. Per-tenant cost dominated by compliance / audit overhead.",
-      compliance: "HIPAA + SOC2 Type II + GDPR + possibly FedRAMP. Right-to-deletion. Audit logs.",
-      deploy: "Self-hosted option mandatory. On-prem or air-gapped deployments for some customers.",
-      team_size: "30+ engineers. Dedicated security / compliance / ops teams.",
-      lifecycle: "10+ year horizon. Vendor lock-in is a board-level concern."
-    }
+    tags: [
+      "phase:enterprise",
+      "team:30plus",
+      "cost_sensitivity:control_dominates",
+      "deployment:self_host_required",
+      "deployment:on_prem_or_air_gapped",
+      "scale:high_availability",
+      "compliance:hipaa",
+      "compliance:soc2_type_ii",
+      "compliance:gdpr",
+      "compliance:fedramp_possible",
+      "compliance:audit_logs_required",
+      "latency:p99_under_100ms",
+      "lifecycle:10_year_horizon",
+      "lock_in:board_level_concern"
+    ]
   }
 ];
 
 // Suggest 1-3 profiles that match the discover signals. Returns ranked
 // profile IDs (best match first). Empty array if no signals are
-// confident — the user gets free-form questions.
+// confident — the caller falls back to whatever decision-context the PRD
+// itself produces.
 function suggestProfiles({ discoveredConstraints, complianceSignals, contributorCount, codebaseAgeDays }) {
   const suggestions = [];
 
@@ -127,13 +136,15 @@ function profileById(id) {
   return PROFILES.find((p) => p.id === id) || null;
 }
 
-function profileAnswersAsText(profile) {
+// Flatten a profile's tags into a header block that can be appended to
+// content (or rendered for reader visibility).
+function profileTagsAsText(profile) {
   if (!profile) return "";
   return [
-    `## Clarification answers (profile: ${profile.label})`,
+    `## Context tags (profile: ${profile.label})`,
     "",
-    ...Object.entries(profile.answers).map(([k, v]) => `- ${k.replace(/_/g, " ")}: ${v}`)
+    ...profile.tags.map((tag) => `- ${tag}`)
   ].join("\n");
 }
 
-export { PROFILES, suggestProfiles, profileById, profileAnswersAsText };
+export { PROFILES, suggestProfiles, profileById, profileTagsAsText };

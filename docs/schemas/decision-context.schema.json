@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/decision-context.schema.json",
+  "title": "Beevibe Architecture Deep Research Decision Context",
+  "description": "Context notes extracted from the PRD + any pre-built profile tags. These are ANNOTATIONS on the option space, NEVER filters. They are shown alongside the ranked options to help the reader weigh tradeoffs; ADR does not drop any candidate based on them.",
+  "type": "object",
+  "required": ["version", "notes"],
+  "properties": {
+    "version": { "type": "string" },
+    "decision": { "type": "string" },
+    "domain": { "type": "string" },
+    "extracted_at": { "type": "string" },
+    "tags": {
+      "type": "array",
+      "description": "Flat array of short context tags (e.g. 'phase:pre_pmf', 'deployment:self_hosted'). Sourced from clarification profiles when one was selected. Tags are shown in the report header and passed to synthesis as soft annotations.",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable slug for this note (e.g., 'self_hosted_preferred', 'eu_data_residency')."
+          },
+          "category": {
+            "type": "string",
+            "description": "Optional grouping: deployment | compliance | cost | region | integration | data | team | phase."
+          },
+          "statement": {
+            "type": "string",
+            "description": "The context note in plain language as the user expressed it."
+          },
+          "evidence_from_input": {
+            "type": "string",
+            "description": "Quoted text from the PRD or clarification answers that established this note."
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
