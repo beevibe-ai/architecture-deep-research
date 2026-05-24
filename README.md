@@ -13,11 +13,11 @@ Architecture is the last bastion of human judgment in software, and right now it
 
 ### After the decision, the loop never closes back
 
+- **AI agents rebuild the wheel and neglect existing decisions.** When the architecture lives in someone's head or in `docs/adr/`, agents re-derive solutions from scratch — they don't read your team's existing patterns, don't know you already migrated off Kafka, don't know you already standardized on pgvector. Infrastructure gets duplicated; antipatterns sneak in.
 - **Design-implement drift.** The architecture gets settled. Code gets written. A week later nobody knows which parts of the original spec are still true — the drift is real but unmapped.
-- **AI introduces antipatterns the team already rejected.** Claude / Cursor write fast and don't know your team explicitly migrated off Kafka in 2024. The decision is in `docs/adr/0003.md`; the AI never read it.
-- **Stateless PR reviews.** The team lead becomes the only living memory of the architecture. Every PR re-derives context from scratch. Review burden compounds with team growth.
+- **Education + PR review don't scale to AI-coding speed.** Teams onboard to DDD / clean architecture / SOLID in learning series that cost weeks of senior time. Then every PR still takes 1+ hour of review for 10+ violations — because AI agents don't sit in the learning series, new hires keep arriving, and the patterns slip even for the people who attended. The team lead becomes both educator and enforcer, and that workload scales linearly with team size.
 
-Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the flagship feature, fully shipped — automates the decision-time research a senior architect would do by hand.** Three additional capabilities feed back to keep the decision honest as code lands.
+Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the flagship feature, fully shipped — automates the decision-time research a senior architect would do by hand.** Three additional capabilities feed back to keep the decision honest as code lands — turning a periodic learning series + 1-hour PR review into continuous enforcement the coding agent itself respects at write time.
 
 ```text
        ┌──────────────────────────────────────────────────────────────┐
