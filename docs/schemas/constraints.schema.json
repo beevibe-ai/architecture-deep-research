@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/constraints.schema.json",
+  "title": "Beevibe Architecture Deep Research Hard Constraints",
+  "description": "Structured constraint list extracted from the PRD + clarification answers. must_have constraints filter the candidate pool before the comparison matrix is built — candidates that fail any must_have are eliminated, not just penalized. preferred + nice_to_have inform scoring without filtering.",
+  "type": "object",
+  "required": ["version", "constraints"],
+  "properties": {
+    "version": { "type": "string" },
+    "decision": { "type": "string" },
+    "domain": { "type": "string" },
+    "extracted_at": { "type": "string" },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "severity", "check_question"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable slug for this constraint (e.g., 'self_hosted_only', 'fits_docker_compose')."
+          },
+          "statement": {
+            "type": "string",
+            "description": "The constraint in plain language as the user expressed it."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["must_have", "preferred", "nice_to_have"],
+            "description": "must_have eliminates candidates; preferred / nice_to_have are scoring inputs."
+          },
+          "check_question": {
+            "type": "string",
+            "description": "The yes/no question to ask of each candidate to verify compliance."
+          },
+          "evidence_from_input": {
+            "type": "string",
+            "description": "Quoted text from the PRD or clarification answers that established this constraint."
+          },
+          "category": {
+            "type": "string",
+            "description": "Optional grouping (e.g., 'deployment', 'compliance', 'cost', 'integration')."
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

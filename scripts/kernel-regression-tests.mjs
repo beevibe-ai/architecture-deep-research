@@ -12,10 +12,13 @@ import {
   buildGuardrails,
   buildKnowledgeMap,
   buildStrategicContext,
+  applyConstraintFilter,
+  buildAdversarialResearchPlan,
   classifySource,
   deriveComparisonAxes,
   discoverPatterns,
   extractClaims,
+  extractHardConstraints,
   filterPromotedByRelevance,
   inferDecisionKind,
   injectDiscoveredEvidence,
@@ -1676,6 +1679,388 @@ try {
 
   setLlmJsonProvider(null);
   await rm(tmpDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Hard-constraint extraction + filter:
+//
+// The user's stated constraints ("self-hosted only", "fits Docker Compose")
+// should structurally eliminate candidates that violate them, not decorate
+// them as "weak on X". This was the central diagnosis from the live run:
+// ADR kept Pinecone in ranked_options even though the user said cloud-only
+// providers are out.
+// ---------------------------------------------------------------------------
+
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-constraints-test-"));
+
+  // Sub-test 1: extractHardConstraints persists constraints.json and
+  // labels severities correctly.
+  installProvider((label) => {
+    assert.equal(label, "hard_constraint_extractor");
+    return {
+      constraints: [
+        {
+          id: "self_hosted_only",
+          statement: "Self-hosted deployment is the primary model.",
+          severity: "must_have",
+          check_question: "Does <CANDIDATE> support self-hosted deployment?",
+          evidence_from_input: "self-hosted is the primary deploy model",
+          category: "deployment"
+        },
+        {
+          id: "fits_docker_compose",
+          statement: "Must fit inside the existing Docker Compose stack.",
+          severity: "must_have",
+          check_question: "Does <CANDIDATE> run as part of Docker Compose?",
+          evidence_from_input: "fits the existing Docker Compose",
+          category: "deployment"
+        },
+        {
+          id: "low_cost",
+          statement: "Prefer low cost at low scale.",
+          severity: "preferred",
+          check_question: "Does <CANDIDATE> have low per-tenant cost?",
+          evidence_from_input: "budget-sensitive at early stage",
+          category: "cost"
+        }
+      ]
+    };
+  });
+  const constraints = await extractHardConstraints({
+    context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
+    content: "PRD: self-hosted is the primary deploy model. fits the existing Docker Compose. budget-sensitive at early stage.",
+    outDir: tmpDir,
+    flags: {}
+  });
+  assert.equal(constraints.constraints.length, 3);
+  assert.equal(constraints.constraints.filter((c) => c.severity === "must_have").length, 2);
+  // File written so a re-run picks it up unchanged:
+  const persisted = JSON.parse(await readFile(path.join(tmpDir, "constraints.json"), "utf8"));
+  assert.equal(persisted.constraints[0].id, "self_hosted_only");
+  setLlmJsonProvider(null);
+
+  // Second extract should load from disk, not call LLM:
+  installProvider(() => {
+    throw new Error("LLM should NOT be called when constraints.json exists");
+  });
+  const cached = await extractHardConstraints({
+    context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
+    content: "irrelevant",
+    outDir: tmpDir,
+    flags: {}
+  });
+  assert.equal(cached.constraints.length, 3, "cached load should return persisted constraints");
+  setLlmJsonProvider(null);
+
+  // Sub-test 2: applyConstraintFilter drops candidates that fail any must_have.
+  installProvider((label) => {
+    assert.equal(label, "hard_constraint_filter");
+    return {
+      verdicts: [
+        // pgvector passes both must-haves
+        { candidate_name: "pgvector", constraint_id: "self_hosted_only", verdict: "pass", reason: "Postgres extension, self-hostable anywhere." },
+        { candidate_name: "pgvector", constraint_id: "fits_docker_compose", verdict: "pass", reason: "Runs inside existing Postgres container." },
+        // pinecone fails self-hosted (cloud-only)
+        { candidate_name: "pinecone", constraint_id: "self_hosted_only", verdict: "fail", reason: "Cloud-only managed service." },
+        { candidate_name: "pinecone", constraint_id: "fits_docker_compose", verdict: "fail", reason: "Not a service you can run locally." },
+        // weaviate passes self-hosted, unsure on Docker Compose (kept)
+        { candidate_name: "weaviate", constraint_id: "self_hosted_only", verdict: "pass", reason: "Has self-hosted distribution." },
+        { candidate_name: "weaviate", constraint_id: "fits_docker_compose", verdict: "unsure", reason: "Requires its own container — depends on user intent." }
+      ]
+    };
+  });
+  const knowledgeMap = {
+    promotion_rule: "test",
+    promoted_candidates: [
+      { name: "pgvector", label: "pgvector", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
+      { name: "pinecone", label: "Pinecone", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
+      { name: "weaviate", label: "Weaviate", evidence_count: 2, source_types: ["mature_oss"], support: [], citations: [3], score: 0.8 }
+    ],
+    insufficient_evidence_candidates: []
+  };
+  const result = await applyConstraintFilter({
+    context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
+    knowledgeMap,
+    constraints,
+    outDir: tmpDir,
+    flags: {}
+  });
+  assert.equal(result.eliminated.length, 1, `expected 1 eliminated, got: ${JSON.stringify(result.eliminated)}`);
+  assert.equal(result.eliminated[0].name, "pinecone");
+  // Failure reasons attached so the user can see WHY:
+  assert.ok(result.eliminated[0].failures.length >= 1);
+  assert.ok(result.eliminated[0].failures[0].reason.toLowerCase().includes("cloud"));
+  // Survivors include both pgvector and weaviate (unsure is kept):
+  const keptNames = result.knowledgeMap.promoted_candidates.map((c) => c.name).sort();
+  assert.deepEqual(keptNames, ["pgvector", "weaviate"]);
+  // Eliminated candidates moved into insufficient_evidence_candidates with
+  // the eliminated_by_hard_constraint marker:
+  const moved = result.knowledgeMap.insufficient_evidence_candidates.filter(
+    (c) => c.promotion_status === "eliminated_by_hard_constraint"
+  );
+  assert.equal(moved.length, 1);
+  assert.equal(moved[0].name, "pinecone");
+  assert.ok(moved[0].constraint_failures.length >= 1);
+
+  setLlmJsonProvider(null);
+
+  // Sub-test 3: --skip-constraint-filter bypasses the filter entirely.
+  const skipResult = await applyConstraintFilter({
+    context: { domain: "saas", decision: "vector store" },
+    knowledgeMap,
+    constraints,
+    outDir: tmpDir,
+    flags: { "skip-constraint-filter": true }
+  });
+  assert.equal(skipResult.skipped, true);
+  assert.equal(skipResult.eliminated.length, 0);
+
+  // Sub-test 4: no must_have constraints = no-op even with preferred ones.
+  const preferredOnly = {
+    version: "0.2.0",
+    constraints: [
+      { id: "low_cost", statement: "Prefer low cost.", severity: "preferred", check_question: "?" }
+    ]
+  };
+  const noopResult = await applyConstraintFilter({
+    context: { domain: "saas", decision: "vector store" },
+    knowledgeMap,
+    constraints: preferredOnly,
+    outDir: tmpDir,
+    flags: {}
+  });
+  assert.equal(noopResult.eliminated.length, 0);
+  assert.equal(noopResult.skipped, false);
+
+  await rm(tmpDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Commitment threshold:
+//
+// The synthesizer prompt is told to commit when the surviving field is
+// narrow, but LLMs over-default to hedging. Deterministic post-processing
+// forces mode=recommended when:
+//   - Only 1 option survived constraint filtering
+//   - 2 options survived AND one has net strong_axes lead >= 2
+// ---------------------------------------------------------------------------
+
+{
+  // Sub-test 1: single survivor → forced recommendation
+  installProvider(() => ({
+    decision: {
+      id: "x",
+      title: "y",
+      status: "selected",
+      mode: "ranked_options",
+      ranked_options: [
+        {
+          name: "pgvector",
+          label: "pgvector",
+          summary: "ok",
+          strong_axes: ["fits_existing_stack"],
+          weak_axes: [],
+          evidence_citations: [1],
+          confidence: 0.9
+        }
+      ],
+      recommendation: null
+    },
+    domain_model: {},
+    evidence_summary: {}
+  }));
+
+  const km1 = {
+    promotion_rule: "test",
+    promoted_candidates: [{ name: "pgvector", label: "pgvector", citations: [1] }],
+    insufficient_evidence_candidates: []
+  };
+  const spec1 = await synthesizeDecisionPhase({
+    context: { domain: "x", decision: "vector store", decision_kind: "concrete", domain_entities: [], bounded_contexts: [], query_shapes: [], operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" }, compliance_constraints: [], risk_invariants: [] },
+    knowledgeMap: km1,
+    evidenceItems: [{ citation_id: 1, title: "x", url: "https://x", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" }],
+    comparisonMatrix: null
+  });
+  assert.equal(spec1.decision.mode, "recommended", "single survivor must be forced to recommended");
+  assert.equal(spec1.decision.recommendation.name, "pgvector");
+  assert.ok(spec1.decision.recommendation.why.toLowerCase().includes("only viable"));
+  setLlmJsonProvider(null);
+
+  // Sub-test 2: 2 survivors with clear lead → forced recommendation for the leader
+  installProvider(() => ({
+    decision: {
+      id: "x",
+      title: "y",
+      status: "selected",
+      mode: "ranked_options",
+      ranked_options: [
+        {
+          name: "pgvector",
+          label: "pgvector",
+          summary: "ok",
+          strong_axes: ["a", "b", "c", "d"],
+          weak_axes: ["e"],
+          evidence_citations: [1],
+          confidence: 0.9
+        },
+        {
+          name: "weaviate",
+          label: "Weaviate",
+          summary: "ok",
+          strong_axes: ["a"],
+          weak_axes: ["b", "c", "d"],
+          evidence_citations: [2],
+          confidence: 0.7
+        }
+      ],
+      recommendation: null
+    },
+    domain_model: {},
+    evidence_summary: {}
+  }));
+
+  const km2 = {
+    promotion_rule: "test",
+    promoted_candidates: [
+      { name: "pgvector", label: "pgvector", citations: [1] },
+      { name: "weaviate", label: "Weaviate", citations: [2] }
+    ],
+    insufficient_evidence_candidates: []
+  };
+  const spec2 = await synthesizeDecisionPhase({
+    context: { domain: "x", decision: "vector store", decision_kind: "concrete", domain_entities: [], bounded_contexts: [], query_shapes: [], operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" }, compliance_constraints: [], risk_invariants: [] },
+    knowledgeMap: km2,
+    evidenceItems: [
+      { citation_id: 1, title: "x", url: "https://x", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" },
+      { citation_id: 2, title: "y", url: "https://y", source_type: "official_docs", score: 0.8, excerpt: "y", claims: [], relevance: "y" }
+    ],
+    comparisonMatrix: null
+  });
+  // pgvector net = 4 - 1 = 3; weaviate net = 1 - 3 = -2; lead = 5 → recommend pgvector
+  assert.equal(spec2.decision.mode, "recommended");
+  assert.equal(spec2.decision.recommendation.name, "pgvector");
+  setLlmJsonProvider(null);
+
+  // Sub-test 3: 2 survivors with close score → stays ranked_options
+  installProvider(() => ({
+    decision: {
+      id: "x",
+      title: "y",
+      status: "proposed",
+      mode: "ranked_options",
+      ranked_options: [
+        {
+          name: "pgvector",
+          label: "pgvector",
+          summary: "ok",
+          strong_axes: ["a", "b"],
+          weak_axes: ["c"],
+          evidence_citations: [1],
+          confidence: 0.7
+        },
+        {
+          name: "weaviate",
+          label: "Weaviate",
+          summary: "ok",
+          strong_axes: ["c", "d"],
+          weak_axes: ["a"],
+          evidence_citations: [2],
+          confidence: 0.7
+        }
+      ],
+      recommendation: null
+    },
+    domain_model: {},
+    evidence_summary: {}
+  }));
+
+  const spec3 = await synthesizeDecisionPhase({
+    context: { domain: "x", decision: "vector store", decision_kind: "concrete", domain_entities: [], bounded_contexts: [], query_shapes: [], operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" }, compliance_constraints: [], risk_invariants: [] },
+    knowledgeMap: km2,
+    evidenceItems: [
+      { citation_id: 1, title: "x", url: "https://x", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" },
+      { citation_id: 2, title: "y", url: "https://y", source_type: "official_docs", score: 0.8, excerpt: "y", claims: [], relevance: "y" }
+    ],
+    comparisonMatrix: null
+  });
+  // pgvector net = 2-1 = 1; weaviate net = 2-1 = 1; lead = 0 → stays ranked_options
+  assert.equal(spec3.decision.mode, "ranked_options");
+  assert.equal(spec3.decision.recommendation, null);
+  setLlmJsonProvider(null);
+}
+
+// ---------------------------------------------------------------------------
+// Adversarial round-robin: every promoted candidate must get exactly one
+// adversarial probe. When the LLM skips candidates, the kernel pads with
+// fallback probes so no candidate looks artificially clean by absence.
+// ---------------------------------------------------------------------------
+
+{
+  installProvider((label) => {
+    assert.equal(label, "adversarial_research_planner");
+    // Simulate a buggy LLM that only generates probes for 2 of 5 candidates,
+    // disproportionately focused on pgvector. The balancer must compensate.
+    return {
+      tasks: [
+        {
+          id: "X1",
+          title: "pgvector failure modes",
+          objective: "Find pgvector limitations.",
+          search_queries: ["pgvector limitations"],
+          target_candidate: "pgvector"
+        },
+        {
+          id: "X2",
+          title: "pgvector p95 latency cases",
+          objective: "Find pgvector latency issues.",
+          search_queries: ["pgvector slow"],
+          target_candidate: "pgvector"
+        },
+        {
+          id: "X3",
+          title: "weaviate scaling limits",
+          objective: "Find weaviate scaling issues.",
+          search_queries: ["weaviate scaling"],
+          target_candidate: "weaviate"
+        }
+        // milvus, pinecone, faiss — completely missing from LLM output
+      ]
+    };
+  });
+
+  const matrix = {
+    candidates: [
+      { name: "pgvector", label: "pgvector", promotion_status: "evidence_backed_candidate" },
+      { name: "weaviate", label: "Weaviate", promotion_status: "evidence_backed_candidate" },
+      { name: "milvus", label: "Milvus", promotion_status: "evidence_backed_candidate" },
+      { name: "pinecone", label: "Pinecone", promotion_status: "evidence_backed_candidate" },
+      { name: "faiss", label: "Faiss", promotion_status: "evidence_backed_candidate" }
+    ],
+    axes: [],
+    empty_cells: []
+  };
+
+  const plan = await buildAdversarialResearchPlan({
+    context: { domain: "saas", decision: "vector store" },
+    matrix,
+    evidenceItems: []
+  });
+
+  // Every promoted candidate must get exactly 1 task — no exceptions.
+  assert.equal(plan.tasks.length, 5, `expected 5 balanced tasks, got: ${plan.tasks.map((t) => t.target_candidate).join(", ")}`);
+  const counts = plan.tasks.reduce((m, t) => {
+    m[t.target_candidate] = (m[t.target_candidate] || 0) + 1;
+    return m;
+  }, {});
+  for (const candidate of ["pgvector", "weaviate", "milvus", "pinecone", "faiss"]) {
+    assert.equal(counts[candidate], 1, `${candidate} should get exactly 1 probe, got ${counts[candidate]}`);
+  }
+  // Three candidates were padded (milvus, pinecone, faiss).
+  assert.equal(plan.balancing.padded_for_skipped_candidates, 3);
+  assert.equal(plan.balancing.llm_emitted, 3);
+
+  setLlmJsonProvider(null);
 }
 
 console.log("kernel regression tests ok");

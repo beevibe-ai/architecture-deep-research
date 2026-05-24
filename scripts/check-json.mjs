@@ -10,6 +10,7 @@ const schemaByFilename = {
   "claim-audit.json": "docs/schemas/claim-audit.schema.json",
   "citation-audit.json": "docs/schemas/citation-audit.schema.json",
   "clarification.json": "docs/schemas/clarification.schema.json",
+  "constraints.json": "docs/schemas/constraints.schema.json",
   "comparison-matrix.json": "docs/schemas/comparison-matrix.schema.json",
   "critique.json": "docs/schemas/critique.schema.json",
   "discovered-constraints.json": "docs/schemas/discovered-constraints.schema.json",

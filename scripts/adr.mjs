@@ -109,7 +109,9 @@ Required runtime:
 	  --no-enforce-citation-audit   do not auto-downgrade unsupported selected citations
 	  --skip-claim-audit            do not scan generated artifacts for uncited material claims
 	  --skip-resynthesis            do not re-synthesize after critique even if high-severity issues exist
-	  --skip-relevance-filter       do not drop off-topic candidates from the promoted pool`;
+	  --skip-relevance-filter       do not drop off-topic candidates from the promoted pool
+	  --skip-constraint-extraction  do not extract hard constraints from the PRD
+	  --skip-constraint-filter      do not eliminate candidates that fail must_have constraints`;
 }
 
 async function main() {

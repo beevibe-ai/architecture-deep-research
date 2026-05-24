@@ -364,6 +364,7 @@ const schemaByFilename = {
   "claim-audit.json": "../docs/schemas/claim-audit.schema.json",
   "citation-audit.json": "../docs/schemas/citation-audit.schema.json",
   "clarification.json": "../docs/schemas/clarification.schema.json",
+  "constraints.json": "../docs/schemas/constraints.schema.json",
   "comparison-matrix.json": "../docs/schemas/comparison-matrix.schema.json",
   "critique.json": "../docs/schemas/critique.schema.json",
   "discovered-constraints.json": "../docs/schemas/discovered-constraints.schema.json",
@@ -2121,40 +2122,45 @@ function deriveComparisonAxes(context, options = {}) {
     }
   ];
 
-  const shapeNames = toArray(context.query_shapes).map((shape) => shape.name);
-  if (shapeNames.includes("multi_hop_relational")) {
+  // Every query_shape becomes an axis automatically. The previous static
+  // list (multi_hop_relational, audit_traceability, ...) silently dropped
+  // user-specific shapes like `tenant_filtered_vector_search` or
+  // `tenant_hard_delete`. If the strategic context surfaced it as a query
+  // shape, it matters enough to score against.
+  const seenShapeAxes = new Set();
+  for (const shape of toArray(context.query_shapes)) {
+    if (!shape || typeof shape !== "object") continue;
+    const name = String(shape.name || "").trim();
+    if (!name) continue;
+    const slug = slugify(name);
+    if (!slug || seenShapeAxes.has(slug)) continue;
+    seenShapeAxes.add(slug);
+    const evidenceLine = toArray(shape.evidence).map(String).filter(Boolean).join(", ");
     axes.push({
-      id: "multi_hop_accuracy",
-      label: "Multi-hop accuracy",
-      rationale: "Domain has multi-hop relational queries."
+      id: `query_shape_${slug}`,
+      label: `Query shape: ${name}`,
+      rationale: evidenceLine
+        ? `Strategic context: ${evidenceLine}`
+        : `Strategic context surfaced "${name}" as a query shape the architecture must support.`
     });
   }
-  if (shapeNames.includes("audit_traceability")) {
+
+  // Every risk_invariant becomes an axis. Things like "tenants must hard-
+  // delete agent memory" only become matrix columns when each candidate is
+  // scored against the invariant explicitly. Otherwise the synthesis
+  // compares candidates on things the user didn't ask about and misses
+  // things they did.
+  const seenInvariantAxes = new Set();
+  for (const invariant of toArray(context.risk_invariants)) {
+    const text = typeof invariant === "string" ? invariant.trim() : "";
+    if (!text) continue;
+    const slug = slugify(text.slice(0, 64));
+    if (!slug || seenInvariantAxes.has(slug)) continue;
+    seenInvariantAxes.add(slug);
     axes.push({
-      id: "lineage_support",
-      label: "Source lineage support",
-      rationale: "Domain demands citation-grade lineage on every answer."
-    });
-  }
-  if (shapeNames.includes("exploratory_research")) {
-    axes.push({
-      id: "exploration_support",
-      label: "Exploration support",
-      rationale: "Domain includes open-ended exploratory queries."
-    });
-  }
-  if (shapeNames.includes("self_contained_lookup")) {
-    axes.push({
-      id: "self_contained_lookup_accuracy",
-      label: "Self-contained lookup accuracy",
-      rationale: "Domain includes self-contained docs/FAQ-style lookups."
-    });
-  }
-  if (shapeNames.includes("transactional_state")) {
-    axes.push({
-      id: "transactional_integrity",
-      label: "Transactional integrity",
-      rationale: "Domain requires state-mutation safety."
+      id: `risk_invariant_${slug}`,
+      label: `Risk invariant: ${text.length > 80 ? text.slice(0, 77) + "..." : text}`,
+      rationale: text
     });
   }
 
@@ -2229,6 +2235,24 @@ function deriveComparisonAxes(context, options = {}) {
     );
   }
 
+  // Discovered stack from `adr discover` becomes a first-class axis. If the
+  // user's repo already runs Postgres, a candidate that builds on Postgres
+  // (pgvector) gets credit for "fits the existing stack"; a candidate that
+  // requires a new managed service (Pinecone) gets a hit. This makes
+  // "what's already installed" a real scoring factor, not flavor text.
+  const discoveredStack = toArray(options.discoveredStack)
+    .map((s) => (typeof s === "string" ? s : s?.name || ""))
+    .map((s) => String(s).trim())
+    .filter(Boolean);
+  if (discoveredStack.length > 0) {
+    axes.push({
+      id: "fits_existing_stack",
+      label: "Fits existing stack",
+      rationale: `Repo scan surfaced existing stack: ${discoveredStack.join(", ")}. Candidates that extend this stack score 'strong'; those requiring new infrastructure score 'weak'.`,
+      discovered_stack: discoveredStack
+    });
+  }
+
   // Discovered anti-patterns from `adr discover` become first-class axes so
   // the comparison matrix can score candidates against the team's explicit
   // rejections. Cells filled by the LLM with the synthetic private_corpus
@@ -2297,11 +2321,48 @@ async function fillComparisonMatrixCells({
     label: "comparison_matrix_filler",
     system: [
       "You build a candidate × axis comparison matrix for an architecture decision.",
-      "For each (candidate, axis) cell, return a verdict and a one-sentence summary.",
-      "verdict is one of: 'strong' | 'mixed' | 'weak' | 'no_evidence'.",
-      "Cite specific evidence_ids that justify the cell. If no evidence supports a verdict, return 'no_evidence' with empty evidence_citations.",
-      "Be conservative: only mark 'strong' or 'weak' when claims are clearly supportive or rejecting; otherwise 'mixed' or 'no_evidence'.",
-      "Do not invent evidence. Do not cite an evidence_id that does not appear in the supplied pool.",
+      "For each (candidate, axis) cell, return a verdict and a summary.",
+      "",
+      "VERDICTS: 'strong' | 'mixed' | 'weak' | 'no_evidence'.",
+      "Cite specific evidence_ids that justify the cell. If no evidence",
+      "supports a verdict, return 'no_evidence' with empty evidence_citations.",
+      "Be conservative: only mark 'strong' or 'weak' when claims are clearly",
+      "supportive or rejecting; otherwise 'mixed' or 'no_evidence'.",
+      "Do not invent evidence. Do not cite an evidence_id that does not",
+      "appear in the supplied pool.",
+      "",
+      "QUANTITATIVE CELL CONTENT — the most important rule:",
+      "When a cited claim or excerpt contains numbers, KEEP THE NUMBERS in",
+      "the cell summary verbatim. Do NOT collapse to vague prose. Examples:",
+      "  WRONG: 'pgvector achieves sub-100ms p95 latency for production use'",
+      "  RIGHT: 'pgvector HNSW index: ~25ms p95 on 1M 768-dim vectors,",
+      "         IVFFlat: ~80ms p95. Source: pgvector benchmark notes [12].'",
+      "",
+      "  WRONG: 'Pinecone scales well for large vector workloads'",
+      "  RIGHT: 'Pinecone p2 pod: 1000 QPS at <10ms p95 / 5M vectors per pod;",
+      "         $70-$120/mo per pod tier. Hard limits: 40k metadata fields,",
+      "         128k vectors per namespace. [4][7]'",
+      "",
+      "Keep these where the source provides them:",
+      "  - latency numbers (p50, p95, p99) and the load profile that produced",
+      "    them (QPS, dataset size, dimensions, index type, hardware)",
+      "  - cost figures (per-month, per-tier, per-query) and which tier",
+      "  - scale limits (max vectors, max QPS, max metadata, max collections)",
+      "  - version + maturity signals (release year, commit cadence, contributors)",
+      "  - RPS quotas, rate limits, retry semantics",
+      "",
+      "Cells without numbers when the cited source contains them are wrong.",
+      "If the source is genuinely qualitative (a design philosophy post),",
+      "say so explicitly: 'Qualitative — no benchmarks in cited source.'",
+      "",
+      "AXIS-SPECIFIC GUIDANCE:",
+      "  fits_existing_stack: use the user's stack list (provided in axis",
+      "    rationale) to give a 'strong' verdict if the candidate extends",
+      "    that stack and 'weak' if it requires new infra. This axis is",
+      "    deterministic when you can name the stack overlap.",
+      "  query_shape_* and risk_invariant_*: directly answer whether the",
+      "    candidate supports that specific shape / preserves that invariant.",
+      "",
       "Output JSON with {cells:[{candidate,axis,verdict,summary,evidence_citations:[number]}]}."
     ].join("\n"),
     user: JSON.stringify({
@@ -2376,9 +2437,10 @@ async function buildComparisonMatrix({
   context,
   knowledgeMap,
   evidenceItems,
-  discoveredAntipatterns = []
+  discoveredAntipatterns = [],
+  discoveredStack = []
 }) {
-  const axes = deriveComparisonAxes(context, { discoveredAntipatterns });
+  const axes = deriveComparisonAxes(context, { discoveredAntipatterns, discoveredStack });
   const candidates = candidatesFromKnowledgeMap(knowledgeMap);
   if (candidates.length === 0 || axes.length === 0) {
     return {
@@ -2416,20 +2478,53 @@ async function buildAdversarialResearchPlan({
     return { tasks: [] };
   }
 
+  const promotedCandidates = toArray(matrix.candidates).filter(
+    (c) => c.promotion_status === "evidence_backed_candidate"
+  );
+  const promotedNames = promotedCandidates.map((c) => c.name);
+
+  // Round-robin balance: every promoted candidate gets EXACTLY one
+  // adversarial task. This stops the "Milvus looks clean by absence of
+  // adversarial probing" failure mode. The LLM is told the exact target
+  // distribution; post-processing enforces it by padding any candidate the
+  // LLM skipped with a generic per-candidate fallback probe.
+  const targetTasksPerCandidate = 1;
+
   const result = await callLlmJson({
     label: "adversarial_research_planner",
     system: [
       "You are the adversarial research planner for Architecture Deep Research.",
-      "For each candidate architecture family, generate 1 task that hunts for the strongest case AGAINST the candidate:",
-      "production failure stories, latency or scale incidents, lineage/audit limitations, ops complexity, ecosystem decline.",
-      "If a comparison-matrix cell is empty (verdict 'no_evidence' or no citations), include one task that specifically targets that gap.",
-      "Each task needs {id,title,objective,search_queries:[string],source_targets:[string],target_candidate,target_axis?}.",
+      "",
+      "Distribute probes EVENLY across candidates. Each promoted candidate",
+      `must get exactly ${targetTasksPerCandidate} adversarial task.`,
+      "An underprobed candidate looks artificially clean in the comparison",
+      "matrix because no one looked for its weaknesses — never let that",
+      "happen.",
+      "",
+      "For each candidate, generate one task that hunts for the strongest",
+      "case AGAINST it: production failure stories, latency or scale",
+      "incidents, lineage / audit limitations, ops complexity, ecosystem",
+      "decline, recent outages, deprecation signals.",
+      "",
+      "If a candidate has many empty cells in the matrix (verdict",
+      "'no_evidence'), aim the task at the most empty axis for that",
+      "candidate so the cycle fills the matrix, not just adversarial gaps.",
+      "",
+      "Each task needs {id, title, objective, search_queries:[string],",
+      "source_targets:[string], target_candidate, target_axis?}.",
+      "target_candidate MUST be one of the candidate names below.",
+      "",
       "Output JSON with {tasks:[...]}."
     ].join("\n"),
     user: JSON.stringify({
       domain: context.domain,
       decision: context.decision,
-      candidates: matrix.candidates.map((candidate) => ({
+      candidate_distribution_target: {
+        tasks_per_candidate: targetTasksPerCandidate,
+        candidates: promotedNames,
+        total_tasks: promotedNames.length * targetTasksPerCandidate
+      },
+      candidates: promotedCandidates.map((candidate) => ({
         name: candidate.name,
         label: candidate.label,
         promotion_status: candidate.promotion_status
@@ -2443,23 +2538,84 @@ async function buildAdversarialResearchPlan({
     })
   });
 
+  // Parse the LLM output and group by target_candidate.
+  const parsed = toArray(result.tasks).map((task, index) => ({
+    id: task.id || `X${index + 1}`,
+    title: String(task.title || `Adversarial task ${index + 1}`),
+    objective: String(task.objective || ""),
+    search_queries: toArray(task.search_queries).map(String).slice(0, 4),
+    source_targets: toArray(task.source_targets).map(String).slice(0, 5),
+    success_criteria: toArray(task.success_criteria).map(String).slice(0, 5),
+    target_candidate: String(task.target_candidate || "").trim() || null,
+    target_axis: String(task.target_axis || "").trim() || null
+  })).filter((task) => task.search_queries.length > 0);
+
+  // Round-robin enforcement: distribute parsed tasks so each candidate
+  // gets at most targetTasksPerCandidate. Drop overflow tasks targeting
+  // already-covered candidates. Pad missing candidates with a synthesized
+  // fallback probe — "find production failure modes of <X>" — using the
+  // candidate's label.
+  const tasksByCandidate = new Map();
+  const orphanTasks = [];
+  for (const task of parsed) {
+    const slug = slugify(task.target_candidate || "");
+    if (!slug || !promotedNames.map(slugify).includes(slug)) {
+      orphanTasks.push(task);
+      continue;
+    }
+    const existing = tasksByCandidate.get(slug) || [];
+    if (existing.length < targetTasksPerCandidate) {
+      existing.push(task);
+      tasksByCandidate.set(slug, existing);
+    }
+  }
+  // Pad missing.
+  for (const candidate of promotedCandidates) {
+    const slug = slugify(candidate.name);
+    if ((tasksByCandidate.get(slug) || []).length >= targetTasksPerCandidate) continue;
+    tasksByCandidate.set(slug, [
+      ...(tasksByCandidate.get(slug) || []),
+      {
+        id: `X_pad_${slug}`,
+        title: `Adversarial probe for ${candidate.label || candidate.name}`,
+        objective: `Find the strongest case AGAINST ${candidate.label || candidate.name}: production failures, scale or latency incidents, deprecation signals, ecosystem decline.`,
+        search_queries: [
+          `${candidate.label || candidate.name} production failures site:news.ycombinator.com`,
+          `${candidate.label || candidate.name} outage postmortem`,
+          `${candidate.label || candidate.name} limitations github issues`
+        ],
+        source_targets: ["news.ycombinator.com", "github.com"],
+        success_criteria: [`Find a real-world failure mode of ${candidate.name}`],
+        target_candidate: candidate.name,
+        target_axis: null,
+        balancer_padded: true
+      }
+    ]);
+  }
+
+  // Interleave by candidate so the parallel agent pool runs the round-robin
+  // order (one probe per candidate concurrently, then the next round).
+  const balancedTasks = [];
+  for (let round = 0; round < targetTasksPerCandidate; round += 1) {
+    for (const candidate of promotedCandidates) {
+      const slug = slugify(candidate.name);
+      const group = tasksByCandidate.get(slug) || [];
+      if (group[round]) balancedTasks.push(group[round]);
+    }
+  }
+
   return {
     version: VERSION,
     architecture: "adversarial_per_candidate",
     max_parallel_research_agents: MAX_PARALLEL_RESEARCH_AGENTS,
-    tasks: toArray(result.tasks)
-      .slice(0, 6)
-      .map((task, index) => ({
-        id: task.id || `X${index + 1}`,
-        title: String(task.title || `Adversarial task ${index + 1}`),
-        objective: String(task.objective || ""),
-        search_queries: toArray(task.search_queries).map(String).slice(0, 4),
-        source_targets: toArray(task.source_targets).map(String).slice(0, 5),
-        success_criteria: toArray(task.success_criteria).map(String).slice(0, 5),
-        target_candidate: String(task.target_candidate || "").trim() || null,
-        target_axis: String(task.target_axis || "").trim() || null
-      }))
-      .filter((task) => task.search_queries.length > 0)
+    balancing: {
+      target_tasks_per_candidate: targetTasksPerCandidate,
+      candidates_probed: balancedTasks.length,
+      llm_emitted: parsed.length,
+      orphan_dropped: orphanTasks.length,
+      padded_for_skipped_candidates: balancedTasks.filter((t) => t.balancer_padded).length
+    },
+    tasks: balancedTasks
   };
 }
 
@@ -2525,15 +2681,28 @@ async function synthesizeArchitectureSpec({
       "  option from ranked_options.",
       "- \"ranked_options\": multiple options are viable with genuine",
       "  tradeoffs. No single option dominates. Set recommendation = null.",
-      "  THIS IS THE CORRECT DEFAULT. Do not invent a recommendation to seem",
-      "  decisive — most architecture decisions land here, and the user is",
-      "  better served by an honest tradeoff than a fake winner.",
+      "  Do NOT invent a recommendation to seem decisive.",
       "- \"deferred\": no candidates cleared the promotion gate. Set",
       "  ranked_options = [] and recommendation = null. This run did not",
       "  produce enough evidence to identify viable options.",
       "",
+      "COMMITMENT RULE — hedging is dishonest when the field narrows:",
+      "The user already had their constraints applied via the hard-constraint",
+      "filter BEFORE you saw this candidate pool. Every option here passed",
+      "their must-haves. So:",
+      "  - If only 1 option survived, you MUST recommend it. There is",
+      "    nothing else to hedge against.",
+      "  - If 2 options survived and one dominates on the axes the user",
+      "    actually cares about, recommend it. \"Both have tradeoffs\" is the",
+      "    wrong answer when the user told you which tradeoffs they accept.",
+      "  - Only fall to \"ranked_options\" when 3+ options survive AND the",
+      "    dominance pattern is genuinely ambiguous across multiple axes.",
+      "",
+      "Refusing to recommend in a narrow field rewards intellectual hedging",
+      "over making the call the evidence supports. Don't do that.",
+      "",
       promotedNames.length > 0
-        ? `Promoted candidates available for ranked_options: [${promotedNames.map((n) => `"${n}"`).join(", ")}].`
+        ? `Promoted candidates available for ranked_options: [${promotedNames.map((n) => `"${n}"`).join(", ")}]. (Already filtered against hard constraints — every option here passed the user's must-haves.)`
         : "NO candidates cleared the promotion gate. mode MUST be \"deferred\".",
       "",
       "EVIDENCE GROUNDING:",
@@ -2658,6 +2827,43 @@ async function synthesizeArchitectureSpec({
     mode = "recommended";
   } else {
     mode = "ranked_options";
+  }
+
+  // Commitment safety net: when the field genuinely narrows (after hard-
+  // constraint filtering), refusing to recommend is dishonest. The synthesizer
+  // prompt is told this, but it still over-defaults to "ranked_options" some
+  // fraction of the time. Deterministic post-processing forces commitment when:
+  //   1. Only 1 option survived — always recommend it. There is nothing to
+  //      hedge against; the user's constraints already narrowed the field.
+  //   2. 2 options survived AND one has a clear lead on net strong_axes
+  //      (strong_axes.length - weak_axes.length differs by >=2) — recommend
+  //      the leader. Close 2-way ties stay as ranked_options.
+  if (mode === "ranked_options") {
+    if (rankedOptions.length === 1) {
+      const only = rankedOptions[0];
+      mode = "recommended";
+      recommendation = {
+        name: only.name,
+        why: `Only viable option after constraint filtering. Hedging would be dishonest here — every other promoted candidate failed at least one must-have constraint or did not survive critique.`,
+        when_this_breaks: [
+          "If you relax a must-have constraint in constraints.json and re-run, additional options may surface."
+        ]
+      };
+    } else if (rankedOptions.length === 2) {
+      const score = (o) => toArray(o.strong_axes).length - toArray(o.weak_axes).length;
+      const sorted = [...rankedOptions].sort((a, b) => score(b) - score(a));
+      const lead = score(sorted[0]) - score(sorted[1]);
+      if (lead >= 2) {
+        mode = "recommended";
+        recommendation = {
+          name: sorted[0].name,
+          why: `Of the two surviving options, ${sorted[0].label || sorted[0].name} leads on ${score(sorted[0])} net strong axes vs ${sorted[1].label || sorted[1].name}'s ${score(sorted[1])}.`,
+          when_this_breaks: [
+            `If ${sorted[1].label || sorted[1].name}'s weak axes (${toArray(sorted[1].weak_axes).join(", ") || "none recorded"}) turn out not to matter for your case, the gap closes.`
+          ]
+        };
+      }
+    }
   }
 
   // Back-compat: selected_topology. New code reads decision.mode +
@@ -3137,6 +3343,27 @@ Promotion rule: ${knowledgeMap.promotion_rule}
 Promoted candidates:
 ${knowledgeMap.promoted_candidates.map((item) => `- ${item.label}: citations ${item.citations.map((id) => `[${id}]`).join(", ")}`).join("\n") || "- No candidate passed promotion gates."}
 
+${(() => {
+  const eliminatedByConstraint = toArray(knowledgeMap.insufficient_evidence_candidates).filter(
+    (c) => c.promotion_status === "eliminated_by_hard_constraint"
+  );
+  if (eliminatedByConstraint.length === 0) return "";
+  const lines = eliminatedByConstraint
+    .map((c) => {
+      const failures = toArray(c.constraint_failures)
+        .map((f) => `  - **${f.constraint_statement}** — ${f.reason}`)
+        .join("\n");
+      return `### ${c.label || titleCase(c.name)}\n\nFailed must-have constraints:\n${failures || "  - (no failure detail recorded)"}`;
+    })
+    .join("\n\n");
+  return `## Eliminated by hard constraints
+
+These cleared the evidence promotion gate but failed at least one must_have constraint from \`constraints.json\`. They were removed from the candidate pool before the comparison matrix was built — not included as "weak options" — because the user's stated constraints rule them out structurally. Relax the corresponding constraint and re-run to reconsider.
+
+${lines}
+`;
+})()}
+
 ${rejected.length > 0 ? `## Candidates considered but not surfaced as options
 
 These cleared the evidence promotion gate but the synthesizer did not surface them as a tradeoff-worthy option (often because their axes were too weak to differentiate from one of the kept options, or they failed a critique pass).
@@ -3416,10 +3643,27 @@ async function injectDiscoveredEvidence({ outDir, evidenceItems }) {
         evidenceItems,
         syntheticEvidenceItems: [],
         discoveredAntipatterns: [],
+        discoveredStack: [],
         injected: false
       };
     }
     throw error;
+  }
+
+  // Pick up the discovered stack from discovered-constraints.json (separate
+  // file produced by the same discover stage). When present, it drives the
+  // `fits_existing_stack` matrix axis so candidates that build on top of the
+  // user's existing infra get credit.
+  let discoveredStack = [];
+  try {
+    const constraintsRaw = JSON.parse(
+      await readFile(path.join(outDir, "discovered-constraints.json"), "utf8")
+    );
+    discoveredStack = toArray(constraintsRaw.stack)
+      .map((s) => (typeof s === "string" ? s : s?.name || ""))
+      .filter(Boolean);
+  } catch {
+    // Missing / malformed constraints file — proceed without the stack axis.
   }
 
   // Lazy-import the discover helper to avoid a circular module load.
@@ -3432,6 +3676,7 @@ async function injectDiscoveredEvidence({ outDir, evidenceItems }) {
     syntheticEvidenceItems: synthetic,
     discoveredAntipatterns: Array.isArray(raw.antipatterns) ? raw.antipatterns : [],
     discoveredPatterns: Array.isArray(raw.patterns) ? raw.patterns : [],
+    discoveredStack,
     injected: synthetic.length > 0
   };
 }
@@ -3522,7 +3767,27 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     await appendEvent(outDir, "run_waiting_for_clarification", {
       questions: clarification.questions
     });
+    return {
+      runtime,
+      outDir,
+      content,
+      context,
+      clarification,
+      needsClarification,
+      constraints: null
+    };
   }
+
+  // Hard constraints — extracted ONCE per outDir (file-cached). After this
+  // returns, deep-research uses constraints.constraints[].severity to filter
+  // the candidate pool. The user can edit constraints.json between runs and
+  // the file will be picked up unchanged on re-invocation.
+  const constraints = await extractHardConstraints({
+    context,
+    content,
+    outDir,
+    flags
+  });
 
   return {
     runtime,
@@ -3530,7 +3795,8 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     content,
     context,
     clarification,
-    needsClarification
+    needsClarification,
+    constraints
   };
 }
 
@@ -3593,6 +3859,272 @@ async function buildAdaptiveResearchPlan({ context, knowledgeMap, evidenceItems 
       }))
       .filter((task) => task.search_queries.length > 0)
   };
+}
+
+// Extract structured hard constraints from the PRD + clarification answers.
+//
+// Today, "self-hosted only" lands in the PRD as English prose and the
+// synthesizer treats it as a soft preference. It should be a structural
+// filter — Pinecone (cloud-only) must never appear in ranked_options if the
+// user said self-hosted is the deploy model. This stage parses the input
+// into structured constraints with severities that the candidate pool can
+// be filtered against before the matrix is built.
+//
+// If constraints.json already exists in outDir (user edited it), it is used
+// as-is — no fresh extraction. This is the same "edit-and-re-run" UX as
+// pdr.draft.md.
+async function extractHardConstraints({ context, content, outDir, flags }) {
+  const constraintsPath = path.join(outDir, "constraints.json");
+  try {
+    const existing = JSON.parse(await readFile(constraintsPath, "utf8"));
+    if (existing && Array.isArray(existing.constraints)) {
+      await appendEvent(outDir, "constraints_loaded_from_disk", {
+        constraint_count: existing.constraints.length,
+        must_have_count: existing.constraints.filter((c) => c.severity === "must_have").length
+      });
+      return existing;
+    }
+  } catch {
+    // File doesn't exist or is corrupt — extract fresh below.
+  }
+
+  if (flags && flags["skip-constraint-extraction"]) {
+    return { version: VERSION, decision: context.decision, domain: context.domain, constraints: [] };
+  }
+
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "hard_constraint_extractor",
+      system: [
+        "You are the hard-constraint extractor for Architecture Deep Research.",
+        "",
+        `Decision: "${context.decision}" (kind: ${context.decision_kind || "family"})`,
+        `Domain: "${context.domain}"`,
+        "",
+        "Read the user's PRD + clarification answers. Extract every constraint",
+        "they expressed, with a severity label:",
+        "  - must_have: explicit non-negotiable. Language signals: \"must\",",
+        "    \"only\", \"required\", \"cannot use X\", \"no Y\", \"the primary deploy",
+        "    model is Z\", \"we need\". These will ELIMINATE candidates from the",
+        "    pool before the matrix gets built. Be conservative — if the user",
+        "    used softer language (\"prefer\", \"ideally\", \"would like\"), it's",
+        "    NOT must_have.",
+        "  - preferred: explicit preference but not a hard rule. Language",
+        "    signals: \"prefer\", \"ideally\", \"would rather\". Influences scoring",
+        "    but does not filter.",
+        "  - nice_to_have: stated interest with no commitment. Lowest weight.",
+        "",
+        "For each constraint, also produce a yes/no check_question that ADR",
+        "will ask of each candidate during filtering. Example:",
+        "  statement: 'Self-hosted is the primary deploy model.'",
+        "  check_question: 'Does <CANDIDATE> support self-hosted deployment?'",
+        "",
+        "Constraint shape:",
+        "  { id (kebab-case slug), statement (the user's words),",
+        "    severity, check_question, evidence_from_input (verbatim quote),",
+        "    category (deployment / compliance / cost / integration / scale / data) }",
+        "",
+        "Quote evidence_from_input verbatim from the PRD or clarification answers.",
+        "Do not invent constraints. If the user said nothing about cost, do not",
+        "extract a cost constraint.",
+        "",
+        "Cap at 6 constraints total. Bias toward fewer-but-real over many-but-soft.",
+        "",
+        "Output JSON: { constraints: [{id, statement, severity, check_question, evidence_from_input, category}] }."
+      ].join("\n"),
+      user: JSON.stringify({
+        domain: context.domain,
+        decision: context.decision,
+        decision_kind: context.decision_kind || "family",
+        prd_content: content.slice(0, 20_000)
+      })
+    });
+  } catch (error) {
+    await appendEvent(outDir, "constraints_extraction_failed", {
+      error: String(error?.message || error)
+    });
+    return { version: VERSION, decision: context.decision, domain: context.domain, constraints: [] };
+  }
+
+  const constraints = toArray(raw.constraints)
+    .map((c, i) => {
+      if (!c || typeof c !== "object") return null;
+      const severity = String(c.severity || "").trim().toLowerCase();
+      if (!["must_have", "preferred", "nice_to_have"].includes(severity)) return null;
+      const statement = String(c.statement || "").trim();
+      const check = String(c.check_question || "").trim();
+      if (!statement || !check) return null;
+      return {
+        id: slugify(String(c.id || statement).slice(0, 64)) || `constraint_${i + 1}`,
+        statement,
+        severity,
+        check_question: check,
+        evidence_from_input: String(c.evidence_from_input || "").trim(),
+        category: String(c.category || "").trim()
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+
+  const out = {
+    version: VERSION,
+    decision: context.decision,
+    domain: context.domain,
+    extracted_at: nowIso(),
+    constraints
+  };
+
+  await writeJson(constraintsPath, out);
+  await appendEvent(outDir, "constraints_extracted", {
+    constraint_count: constraints.length,
+    must_have_count: constraints.filter((c) => c.severity === "must_have").length,
+    preferred_count: constraints.filter((c) => c.severity === "preferred").length
+  });
+  return out;
+}
+
+// Filter the promoted-candidate pool against must_have constraints. Each
+// (candidate × must_have) pair gets one LLM verdict batched together. A
+// candidate that fails ANY must_have is eliminated — not "weak on", out.
+// Their evidence stays in the pool (other candidates may still cite it) but
+// they no longer appear in promoted_candidates or the comparison matrix.
+async function applyConstraintFilter({ context, knowledgeMap, constraints, outDir, flags }) {
+  if (flags && flags["skip-constraint-filter"]) {
+    return { knowledgeMap, eliminated: [], skipped: true };
+  }
+  const mustHaves = toArray(constraints?.constraints).filter((c) => c.severity === "must_have");
+  const promoted = toArray(knowledgeMap?.promoted_candidates);
+  if (mustHaves.length === 0 || promoted.length === 0) {
+    return { knowledgeMap, eliminated: [], skipped: false };
+  }
+
+  // Batch all (candidate × must_have) pairs into a single LLM call.
+  const pairs = [];
+  for (const candidate of promoted) {
+    for (const constraint of mustHaves) {
+      pairs.push({
+        candidate_name: candidate.name,
+        candidate_label: candidate.label,
+        candidate_top_claims: (candidate.support || []).slice(0, 3).map((s) => s.claim),
+        candidate_source_types: candidate.source_types,
+        constraint_id: constraint.id,
+        constraint_statement: constraint.statement,
+        constraint_check: constraint.check_question
+      });
+    }
+  }
+
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "hard_constraint_filter",
+      system: [
+        "You are the hard-constraint filter for Architecture Deep Research.",
+        "",
+        `Decision: "${context.decision}" (kind: ${context.decision_kind || "family"})`,
+        "",
+        "For each (candidate, must_have_constraint) pair below, answer:",
+        "  verdict: 'pass' | 'fail' | 'unsure'",
+        "  reason: one short sentence",
+        "",
+        "Be strict on 'fail' but only when you are confident the candidate",
+        "structurally cannot satisfy the constraint. Examples:",
+        "  candidate 'Pinecone' + constraint 'self-hosted only' → fail",
+        "    (Pinecone is cloud-only — this is not a configuration question)",
+        "  candidate 'pgvector' + constraint 'self-hosted only' → pass",
+        "    (Postgres extension, runs anywhere Postgres runs)",
+        "  candidate 'Weaviate' + constraint 'fits Docker Compose' → unsure",
+        "    (technically yes, but requires its own container; might or might",
+        "    not match the user's intent)",
+        "",
+        "'unsure' is KEPT — bias toward keeping when in doubt. Only 'fail'",
+        "eliminates the candidate.",
+        "",
+        "Return EXACTLY one verdict per input pair, keyed by candidate_name",
+        "AND constraint_id together. Do not omit, merge, or invent pairs.",
+        "",
+        "Output JSON: { verdicts: [{candidate_name, constraint_id, verdict, reason}] }."
+      ].join("\n"),
+      user: JSON.stringify({ pairs })
+    });
+  } catch (error) {
+    await appendEvent(outDir, "constraint_filter_failed", {
+      error: String(error?.message || error)
+    });
+    return { knowledgeMap, eliminated: [], skipped: false };
+  }
+
+  // Index verdicts by `${candidate_name}::${constraint_id}` for lookup.
+  const verdictIndex = new Map();
+  for (const v of toArray(raw.verdicts)) {
+    if (!v || typeof v !== "object") continue;
+    const name = slugify(String(v.candidate_name || ""));
+    const cid = slugify(String(v.constraint_id || ""));
+    if (!name || !cid) continue;
+    const verdict = String(v.verdict || "").trim().toLowerCase();
+    if (!["pass", "fail", "unsure"].includes(verdict)) continue;
+    verdictIndex.set(`${name}::${cid}`, { verdict, reason: String(v.reason || "") });
+  }
+
+  const eliminated = [];
+  const survivors = [];
+  for (const candidate of promoted) {
+    const slug = slugify(candidate.name);
+    const failures = [];
+    for (const constraint of mustHaves) {
+      const v = verdictIndex.get(`${slug}::${slugify(constraint.id)}`);
+      if (v && v.verdict === "fail") {
+        failures.push({
+          constraint_id: constraint.id,
+          constraint_statement: constraint.statement,
+          reason: v.reason
+        });
+      }
+    }
+    if (failures.length > 0) {
+      eliminated.push({ name: candidate.name, label: candidate.label, failures });
+    } else {
+      survivors.push(candidate);
+    }
+  }
+
+  if (eliminated.length === 0) {
+    await appendEvent(outDir, "constraint_filter_completed", {
+      must_have_count: mustHaves.length,
+      candidates_kept: survivors.length,
+      candidates_eliminated: 0
+    });
+    return { knowledgeMap, eliminated: [], skipped: false };
+  }
+
+  const eliminatedSet = new Set(eliminated.map((e) => slugify(e.name)));
+  const movedToEliminated = promoted
+    .filter((c) => eliminatedSet.has(slugify(c.name)))
+    .map((c) => ({
+      ...c,
+      promotion_status: "eliminated_by_hard_constraint",
+      constraint_failures:
+        eliminated.find((e) => slugify(e.name) === slugify(c.name))?.failures || []
+    }));
+
+  const updated = {
+    ...knowledgeMap,
+    promoted_candidates: survivors,
+    insufficient_evidence_candidates: [
+      ...toArray(knowledgeMap.insufficient_evidence_candidates),
+      ...movedToEliminated
+    ]
+  };
+
+  await appendEvent(outDir, "constraint_filter_completed", {
+    must_have_count: mustHaves.length,
+    candidates_kept: survivors.length,
+    candidates_eliminated: eliminated.length,
+    eliminated_names: eliminated.map((e) => e.name)
+  });
+
+  return { knowledgeMap: updated, eliminated, skipped: false };
 }
 
 // Decision-relevance filter on the candidate pool.
@@ -3820,13 +4352,15 @@ async function compareTopologiesPhase({
   outDir,
   flags,
   syntheticEvidenceItems = [],
-  discoveredAntipatterns = []
+  discoveredAntipatterns = [],
+  discoveredStack = []
 }) {
   const initialMatrix = await buildComparisonMatrix({
     context,
     knowledgeMap,
     evidenceItems,
-    discoveredAntipatterns
+    discoveredAntipatterns,
+    discoveredStack
   });
   await writeJson(path.join(outDir, "comparison-matrix.json"), initialMatrix);
   await appendEvent(outDir, "comparison_matrix_built", {
@@ -3905,7 +4439,8 @@ async function compareTopologiesPhase({
       context,
       knowledgeMap: updatedKnowledgeMap,
       evidenceItems: updatedEvidenceItems,
-      discoveredAntipatterns
+      discoveredAntipatterns,
+      discoveredStack
     });
     matrix.adversarial_queries_run = advPlan.tasks.flatMap((task) => task.search_queries);
     await writeJson(path.join(outDir, "comparison-matrix.json"), matrix);
@@ -4564,6 +5099,7 @@ async function deepResearch({ inputPath, flags }) {
   });
   let syntheticEvidenceItems = discoveredInjection.syntheticEvidenceItems;
   const discoveredAntipatterns = discoveredInjection.discoveredAntipatterns;
+  const discoveredStack = toArray(discoveredInjection.discoveredStack);
   if (discoveredInjection.injected) {
     evidenceItems = discoveredInjection.evidenceItems;
     knowledgeMap = buildKnowledgeMap(evidenceItems);
@@ -4575,6 +5111,23 @@ async function deepResearch({ inputPath, flags }) {
       promoted_candidate_count: knowledgeMap.promoted_candidates.length,
       antipattern_axis_count: discoveredAntipatterns.length
     });
+  }
+
+  // Hard-constraint filter — must_have constraints eliminate candidates
+  // structurally, not by adding a "weak" cell. "Self-hosted only" drops
+  // Pinecone before the matrix ever sees it. Eliminated candidates move to
+  // insufficient_evidence_candidates tagged eliminated_by_hard_constraint
+  // with the failed constraint(s) attached.
+  const constraintResult = await applyConstraintFilter({
+    context: prepared.context,
+    knowledgeMap,
+    constraints: prepared.constraints,
+    outDir: prepared.outDir,
+    flags
+  });
+  if (constraintResult.eliminated.length > 0) {
+    knowledgeMap = constraintResult.knowledgeMap;
+    await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
   }
 
   // Decision-relevance filter on the candidate pool — drop families that
@@ -4603,7 +5156,8 @@ async function deepResearch({ inputPath, flags }) {
       outDir: prepared.outDir,
       flags,
       syntheticEvidenceItems,
-      discoveredAntipatterns
+      discoveredAntipatterns,
+      discoveredStack
     });
     comparisonMatrix = compareResult.comparisonMatrix;
     researchResults = compareResult.researchResults;
@@ -4876,7 +5430,9 @@ export {
   digestPaper,
   discoverPatterns,
   executeResearchPhase,
+  applyConstraintFilter,
   extractClaims,
+  extractHardConstraints,
   filterPromotedByRelevance,
   openUrl,
   getLlmJsonProvider,

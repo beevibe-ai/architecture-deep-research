@@ -93,6 +93,11 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `run_started` | 🚀  Deep-research started — `<domain>`: `<decision>` |
 | `strategic_context_created` | ✓  Strategic context: `N` entities, `M` query shapes |
 | `run_waiting_for_clarification` | ❓  Clarification needed — go to **Step 6.5** |
+| `constraints_extracted` | ✓  Extracted `N` constraints (`must_have_count` must_have) |
+| `constraints_loaded_from_disk` | ✓  Constraints loaded from existing `constraints.json` |
+| `constraints_extraction_failed` | ⚠  Constraint extraction failed — proceeding without hard filter |
+| `constraint_filter_completed` | 🚫  Hard-constraint filter: kept `N`, eliminated `K` (`eliminated_names`) |
+| `constraint_filter_failed` | ⚠  Constraint filter failed — keeping all candidates |
 | `research_plan_created` | 🌐  Planned `N` research tasks |
 | `research_batch_started` | 🔎  Dispatching parallel research agents (max `N`) |
 | `research_agent_started` | &nbsp;&nbsp;🔍  task: `<task_title or task_id>` |
