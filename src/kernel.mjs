@@ -897,8 +897,77 @@ function htmlToText(html) {
   );
 }
 
+// Cross-run page cache at ~/.adr/cache/. Iterative ADR runs (the actual user
+// workflow — nobody nails the decision name on the first try) re-fetch the
+// same pages on every run. The cache turns that into a no-op for pages
+// younger than ADR_CACHE_TTL_DAYS (default 7).
+//
+// Keyed on the bare URL (fragment-stripped). Negative results (HTTP errors,
+// empty bodies) are NOT cached — those failures may be transient and
+// re-trying next run is correct.
+function cacheRoot() {
+  if (process.env.ADR_CACHE_DIR) return path.resolve(process.env.ADR_CACHE_DIR);
+  return path.join(os.homedir(), ".adr", "cache");
+}
+
+function cachePathFor(url) {
+  const bare = String(url).split("#")[0];
+  const hash = createHash("sha256").update(bare).digest("hex");
+  return path.join(cacheRoot(), hash.slice(0, 2), `${hash}.json`);
+}
+
+function cacheTtlMs() {
+  const days = Number(process.env.ADR_CACHE_TTL_DAYS || 7);
+  if (!Number.isFinite(days) || days <= 0) return 0;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+function cacheDisabled() {
+  return process.env.ADR_CACHE_DISABLE === "1" || cacheTtlMs() === 0;
+}
+
+async function readUrlCache(url) {
+  if (cacheDisabled()) return null;
+  const filePath = cachePathFor(url);
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const entry = JSON.parse(raw);
+    if (!entry || typeof entry !== "object" || typeof entry.text !== "string") return null;
+    const fetchedAt = Date.parse(entry.fetched_at);
+    if (!Number.isFinite(fetchedAt)) return null;
+    const age = Date.now() - fetchedAt;
+    if (age > cacheTtlMs()) return null;
+    return entry.text;
+  } catch {
+    return null;
+  }
+}
+
+async function writeUrlCache(url, text) {
+  if (cacheDisabled()) return;
+  if (typeof text !== "string" || text.length === 0) return;
+  try {
+    const filePath = cachePathFor(url);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        url: String(url).split("#")[0],
+        fetched_at: nowIso(),
+        text
+      })
+    );
+  } catch {
+    // Cache write failures are non-fatal — we already have the text in
+    // memory and the caller can proceed without persistence.
+  }
+}
+
 async function openUrl(url, flags) {
   if (!/^https?:\/\//i.test(url)) return "";
+
+  const cached = await readUrlCache(url);
+  if (cached !== null) return cached;
 
   const response = await fetch(url, {
     headers: {
@@ -909,7 +978,9 @@ async function openUrl(url, flags) {
   if (!response.ok) return "";
   const contentType = response.headers.get("content-type") || "";
   const text = await response.text();
-  return contentType.includes("html") ? htmlToText(text) : normalizeWhitespace(text);
+  const cleaned = contentType.includes("html") ? htmlToText(text) : normalizeWhitespace(text);
+  await writeUrlCache(url, cleaned);
+  return cleaned;
 }
 
 function parseGithubRepoUrl(url) {
@@ -4489,6 +4560,7 @@ export {
   discoverPatterns,
   executeResearchPhase,
   extractClaims,
+  openUrl,
   getLlmJsonProvider,
   injectDiscoveredEvidence,
   inspectGithubRepo,

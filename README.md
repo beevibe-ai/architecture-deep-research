@@ -146,6 +146,7 @@ If no dedicated search key is set but an OpenAI key is, ADR falls back to OpenAI
 - `ADR_OPENAI_BASE_URL` — point at a local OpenAI-compatible server (vLLM, LM Studio, llamafile).
 - `ADR_MCP_SERVER_URL` — search a read-only private MCP corpus instead of the public web. Combine with `ADR_PRIVATE_MCP_ONLY=1` to force private-corpus search.
 - `ADR_SEARCH_INCLUDE_DOMAINS` / `ADR_SEARCH_EXCLUDE_DOMAINS` — comma- or whitespace-separated domain lists to bias the evidence pool. Tavily uses them natively (`include_domains` / `exclude_domains`). Brave and Serper inject `site:` / `-site:` operators inline. Useful when an aggregator domain keeps surfacing and crowding out real engineering content. Example: `ADR_SEARCH_INCLUDE_DOMAINS=engineering.linear.app,vercel.com/blog,stripe.com/blog,danluu.com`.
+- `ADR_CACHE_DIR` / `ADR_CACHE_TTL_DAYS` / `ADR_CACHE_DISABLE` — cross-run page cache. Default location is `~/.adr/cache/`; default TTL is 7 days. The cache keys on the bare URL (fragment stripped) so iterative re-runs with sharper questions don't re-download HTML they already have. Set `ADR_CACHE_DISABLE=1` to bypass entirely.
 
 ### LangGraph and Google ADK runtimes
 

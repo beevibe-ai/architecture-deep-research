@@ -18,6 +18,7 @@ import {
   extractClaims,
   inferDecisionKind,
   injectDiscoveredEvidence,
+  openUrl,
   prepareRun,
   setLlmJsonProvider,
   synthesizeDecisionPhase,
@@ -1435,6 +1436,95 @@ try {
     antipatterns: []
   });
   assert.equal(dedup.length, 3); // 1 supporting + 2 unique opposing
+}
+
+// ---------------------------------------------------------------------------
+// Source-snapshot cache: openUrl should cache successful fetches to
+// ADR_CACHE_DIR and skip the network on a second call within the TTL.
+// Empty/non-OK responses MUST NOT be cached so transient failures retry.
+// ---------------------------------------------------------------------------
+
+{
+  const cacheDir = await mkdtemp(path.join(os.tmpdir(), "adr-cache-test-"));
+  const priorCacheDir = process.env.ADR_CACHE_DIR;
+  const priorDisable = process.env.ADR_CACHE_DISABLE;
+  process.env.ADR_CACHE_DIR = cacheDir;
+  delete process.env.ADR_CACHE_DISABLE;
+
+  let fetchCount = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return new Response("<html><body><p>Hello world cached.</p></body></html>", {
+      status: 200,
+      headers: { "content-type": "text/html" }
+    });
+  };
+
+  try {
+    const url = "https://example.com/test-page";
+    const first = await openUrl(url, {});
+    assert.ok(first.length > 0, "first openUrl call should return content");
+    assert.equal(fetchCount, 1, "first call should hit network");
+
+    const second = await openUrl(url, {});
+    assert.equal(second, first, "cached result should match first");
+    assert.equal(fetchCount, 1, "second call should NOT hit network");
+
+    // Fragment-stripped: same URL with #section should still hit cache.
+    const third = await openUrl(`${url}#section`, {});
+    assert.equal(third, first, "fragment-stripped URL should hit cache");
+    assert.equal(fetchCount, 1, "fragment call should NOT hit network");
+
+    // Disabling the cache makes the next call hit network again.
+    process.env.ADR_CACHE_DISABLE = "1";
+    const fourth = await openUrl(url, {});
+    assert.ok(fourth.length > 0);
+    assert.equal(fetchCount, 2, "ADR_CACHE_DISABLE=1 must bypass cache");
+  } finally {
+    globalThis.fetch = realFetch;
+    await rm(cacheDir, { recursive: true, force: true });
+    if (priorCacheDir === undefined) delete process.env.ADR_CACHE_DIR;
+    else process.env.ADR_CACHE_DIR = priorCacheDir;
+    if (priorDisable === undefined) delete process.env.ADR_CACHE_DISABLE;
+    else process.env.ADR_CACHE_DISABLE = priorDisable;
+  }
+}
+
+{
+  // Negative result (non-OK fetch) must not be cached.
+  const cacheDir = await mkdtemp(path.join(os.tmpdir(), "adr-cache-neg-test-"));
+  const priorCacheDir = process.env.ADR_CACHE_DIR;
+  process.env.ADR_CACHE_DIR = cacheDir;
+  delete process.env.ADR_CACHE_DISABLE;
+
+  let fetchCount = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    // First call returns 500, second returns 200.
+    if (fetchCount === 1) {
+      return new Response("server error", { status: 500 });
+    }
+    return new Response("<html><body><p>OK now.</p></body></html>", {
+      status: 200,
+      headers: { "content-type": "text/html" }
+    });
+  };
+
+  try {
+    const url = "https://example.com/flaky";
+    const first = await openUrl(url, {});
+    assert.equal(first, "", "non-OK should return empty");
+    const second = await openUrl(url, {});
+    assert.equal(fetchCount, 2, "transient failure should not be cached — retry");
+    assert.ok(second.length > 0);
+  } finally {
+    globalThis.fetch = realFetch;
+    await rm(cacheDir, { recursive: true, force: true });
+    if (priorCacheDir === undefined) delete process.env.ADR_CACHE_DIR;
+    else process.env.ADR_CACHE_DIR = priorCacheDir;
+  }
 }
 
 console.log("kernel regression tests ok");
