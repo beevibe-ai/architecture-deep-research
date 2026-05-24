@@ -28,6 +28,11 @@
     },
     "domain": { "type": "string" },
     "decision": { "type": "string" },
+    "decision_kind": {
+      "type": "string",
+      "enum": ["family", "concrete"],
+      "description": "family = picking an architecture pattern/topology; concrete = picking a specific product/vendor/library/service. Inferred from the decision name when not supplied explicitly."
+    },
     "domain_entities": {
       "type": "array",
       "items": { "type": "string" }

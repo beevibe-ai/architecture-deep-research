@@ -94,6 +94,12 @@ const tools = [
           type: "string",
           description: "Short name for the architecture decision being made."
         },
+        decision_kind: {
+          type: "string",
+          enum: ["family", "concrete"],
+          description:
+            "Optional override for the decision kind. \"family\" = picking an architecture pattern/topology (e.g. 'retrieval topology'). \"concrete\" = picking a specific product/vendor/library/service (e.g. 'auth provider', 'queue library'). When omitted, ADR infers from the decision name. Concrete mode adds vendor-grade axes (pricing, lock-in, SDK quality, on-prem, ecosystem) to the comparison matrix and tells the synthesizer to commit to a specific product rather than a pattern."
+        },
         out_dir: {
           type: "string",
           description: "Output directory for all run artifacts."
@@ -197,6 +203,7 @@ async function handleDeepResearch(args) {
   if (args.issue_body) flags["issue-body"] = args.issue_body;
   if (typeof args.max_cycles === "number") flags["max-cycles"] = String(args.max_cycles);
   if (typeof args.max_sources === "number") flags["max-sources"] = String(args.max_sources);
+  if (args.decision_kind) flags["decision-kind"] = args.decision_kind;
 
   await deepResearch({ inputPath: args.input_path || null, flags });
 

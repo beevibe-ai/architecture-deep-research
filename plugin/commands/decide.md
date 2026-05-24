@@ -8,13 +8,32 @@ Use when the user is making an architecture decision and wants ADR to run the fu
 
 The run takes 3–6 minutes. **You MUST stream progress to the user as events land — silent waiting is bad UX.** This command uses background bash + `tail -F` + the `Monitor` tool to surface each event in chat as it happens, instead of blocking on the MCP tool until completion.
 
-## Step 1 — Confirm the decision name
+## Step 1 — Confirm the decision name AND the decision kind
 
 Ask **one** question (skip if the user already named it):
 
 > What's the architecture decision? (e.g. "event bus topology", "retrieval architecture", "auth provider")
 
 Capture as `<DECISION>`. Derive `<SLUG>` by lowercasing and replacing non-alphanum with `-`. Derive `<DOMAIN>` from the repo's README / package.json — if you can't tell, ask.
+
+Then decide the **decision kind**. There are two:
+
+- **`family`** — the user is picking an architecture pattern / topology (e.g. "retrieval topology", "event bus architecture", "consistency model"). Candidates are patterns.
+- **`concrete`** — the user is picking a specific product / vendor / library / service (e.g. "auth provider", "queue library", "logging service", "OAuth vendor"). Candidates are named products.
+
+Auto-detect from the decision name. ADR's CLI applies the same heuristic when `--decision-kind` is omitted, but you should ask the user to confirm rather than assume — this is the difference between "ADR picks 'token-based auth'" and "ADR picks 'Clerk'", and that mismatch is exactly the failure mode this feature exists to fix.
+
+Use `AskUserQuestion` with the user's `<DECISION>` filled in:
+
+> Question: "For '<DECISION>', do you want to pick an architecture pattern (family) or a specific product/vendor (concrete)?"
+>
+> Options:
+> - **Family — architecture pattern** (e.g. token-based auth, graph retrieval)
+> - **Concrete — specific product** (e.g. Clerk, BullMQ, Stripe)
+
+Capture as `<KIND>` (either `family` or `concrete`).
+
+If the user picks **concrete** but the run is going to be expensive, briefly tell them: "Concrete mode adds vendor-grade axes (pricing, lock-in, SDK quality, on-prem, ecosystem health). The matrix will be wider; the synthesis will commit to a specific product."
 
 ## Step 2 — Confirm the env is ready
 
@@ -43,6 +62,7 @@ npx -y --package=github:beevibe-ai/architecture-deep-research adr \
   --repo . \
   --domain "<DOMAIN>" \
   --decision "<DECISION>" \
+  --decision-kind <KIND> \
   --out .adr-runs/<SLUG>
 ```
 

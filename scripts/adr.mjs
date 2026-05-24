@@ -81,6 +81,19 @@ Required runtime:
 	the evidence pool as private_corpus items, and anti-patterns become
 	additional axes in the comparison matrix.
 
+	Decision kind:
+	  --decision-kind family|concrete   override the auto-detection
+
+	  By default ADR infers the decision kind from the decision name:
+	    "auth provider" / "queue vendor" / "logging library"  → concrete
+	    "retrieval topology" / "event bus architecture"       → family
+
+	  Concrete mode compares specific products/vendors/libraries (Clerk,
+	  Auth0, BullMQ); family mode compares architecture patterns
+	  (token-based-auth, graph-retrieval). Concrete mode also adds
+	  vendor-grade axes (pricing, vendor lock-in, SDK quality, on-prem,
+	  ecosystem health) to the comparison matrix.
+
 	Quality flags:
 	  --no-enforce-critique          do not auto-downgrade high-severity critique
 	  --no-enforce-citation-audit   do not auto-downgrade unsupported selected citations

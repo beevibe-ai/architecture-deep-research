@@ -89,6 +89,25 @@ adr deep-research .adr-runs/discover/pdr.draft.md \
 
 > `npm install -g github:...` installs straight from this GitHub repo — no npm registry account required. A published `@beevibe/architecture-deep-research` package on npmjs.com may follow.
 
+## Decision Kind: Family vs Concrete
+
+ADR distinguishes two kinds of decisions and adapts accordingly:
+
+| Mode | When | Candidates are | Extra matrix axes |
+| --- | --- | --- | --- |
+| `family` | "retrieval topology", "event bus architecture", "consistency model" | architecture patterns ("graph_retrieval", "token_based_auth") | none (default axes only) |
+| `concrete` | "auth provider", "queue library", "logging vendor" | specific products ("Clerk", "BullMQ", "Datadog") | pricing model, vendor lock-in, SDK quality, on-prem availability, ecosystem health |
+
+ADR auto-detects from the decision name: keywords like `provider`, `vendor`, `library`, `service`, `platform`, `tool`, `sdk` switch to `concrete`. Override explicitly via the CLI:
+
+```bash
+adr deep-research --decision-kind concrete --decision "auth provider" ...
+```
+
+The MCP tool takes the same value via the `decision_kind` arg. The `/adr:decide` slash command asks the user to confirm before running.
+
+This was a real bug in earlier versions: asking ADR for an "auth provider" got back "token-based auth" (a pattern) instead of "Clerk" (a product). Decision-kind makes that mismatch impossible — the synthesizer prompt branches on the field and is told explicitly to commit to a product in concrete mode.
+
 ## API Keys
 
 `adr-doctor setup` walks you through these interactively and persists them to `~/.adr/config.json` (mode 0600). Process env always overrides the file.

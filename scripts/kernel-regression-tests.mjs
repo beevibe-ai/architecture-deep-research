@@ -12,6 +12,7 @@ import {
   buildStrategicContext,
   deriveComparisonAxes,
   discoverPatterns,
+  inferDecisionKind,
   injectDiscoveredEvidence,
   setLlmJsonProvider,
   synthesizeDecisionPhase,
@@ -682,6 +683,104 @@ try {
     assert.equal(result.discoveredAntipatterns.length, 0);
   } finally {
     await rm(cleanDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// decision_kind: auto-detection from decision name, override via param,
+// vendor-grade axes appear only in concrete mode.
+// ---------------------------------------------------------------------------
+
+{
+  // Auto-detection.
+  assert.equal(inferDecisionKind("retrieval topology"), "family");
+  assert.equal(inferDecisionKind("event bus architecture"), "family");
+  assert.equal(inferDecisionKind("auth provider"), "concrete");
+  assert.equal(inferDecisionKind("queue library"), "concrete");
+  assert.equal(inferDecisionKind("logging vendor"), "concrete");
+  assert.equal(inferDecisionKind("storage platform"), "concrete");
+  assert.equal(inferDecisionKind("data lake design"), "family");
+  // Edge cases.
+  assert.equal(inferDecisionKind(""), "family");
+  assert.equal(inferDecisionKind(undefined), "family");
+
+  // Override via buildStrategicContext: caller passes decisionKind, the LLM
+  // is called with that value, and the returned context carries it through.
+  installProvider((label) => {
+    if (label !== "strategic_context_extractor") {
+      throw new Error(`decision-kind fixture: unexpected label ${label}`);
+    }
+    return {
+      domain_entities: ["User"],
+      bounded_contexts: ["AuthContext"],
+      query_shapes: [{ name: "login", evidence: ["user logs in"] }],
+      risk_invariants: ["Cross-tenant isolation"],
+      operational_envelope: {
+        latency: "not_specified",
+        cost: "not_specified",
+        scale: "not_specified",
+        availability: "not_specified"
+      },
+      compliance_constraints: []
+    };
+  });
+
+  const concreteCtx = await buildStrategicContext({
+    sourcePath: "fixture.md",
+    content: "Pick an auth provider for our multi-tenant SaaS.",
+    domain: "multi-tenant SaaS",
+    decision: "auth provider"
+  });
+  assert.equal(concreteCtx.decision_kind, "concrete", "decision_kind should auto-detect to concrete for 'auth provider'");
+
+  const familyCtx = await buildStrategicContext({
+    sourcePath: "fixture.md",
+    content: "Pick a retrieval topology for our knowledge base.",
+    domain: "kb",
+    decision: "retrieval topology"
+  });
+  assert.equal(familyCtx.decision_kind, "family", "decision_kind should auto-detect to family for 'retrieval topology'");
+
+  const overrideCtx = await buildStrategicContext({
+    sourcePath: "fixture.md",
+    content: "Pick a strategy.",
+    domain: "x",
+    decision: "auth provider",
+    decisionKind: "family"   // explicit override beats auto-detection
+  });
+  assert.equal(overrideCtx.decision_kind, "family");
+
+  setLlmJsonProvider(null);
+
+  // Axes: concrete-mode adds pricing / lock-in / SDK / on-prem / ecosystem.
+  const familyAxes = deriveComparisonAxes({
+    decision_kind: "family",
+    query_shapes: [],
+    operational_envelope: { latency: "not_specified", cost: "not_specified", scale: "not_specified", availability: "not_specified" },
+    compliance_constraints: []
+  });
+  const concreteAxes = deriveComparisonAxes({
+    decision_kind: "concrete",
+    query_shapes: [],
+    operational_envelope: { latency: "not_specified", cost: "not_specified", scale: "not_specified", availability: "not_specified" },
+    compliance_constraints: []
+  });
+  const vendorAxisIds = new Set([
+    "pricing_model",
+    "vendor_lock_in",
+    "sdk_integration_quality",
+    "on_prem_self_host",
+    "ecosystem_health"
+  ]);
+  for (const id of vendorAxisIds) {
+    assert.ok(
+      concreteAxes.some((a) => a.id === id),
+      `concrete-mode axes should include ${id}, got: ${concreteAxes.map((a) => a.id).join(", ")}`
+    );
+    assert.ok(
+      !familyAxes.some((a) => a.id === id),
+      `family-mode axes should NOT include ${id}, got: ${familyAxes.map((a) => a.id).join(", ")}`
+    );
   }
 }
 

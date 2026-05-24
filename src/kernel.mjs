@@ -27,6 +27,40 @@ function slugify(value) {
     .replace(/^_+|_+$/g, "");
 }
 
+// Two ADR decision modes:
+//   - "family":   choosing an architecture pattern / topology / approach
+//                 (e.g. "retrieval topology", "event bus architecture")
+//   - "concrete": choosing a specific product, vendor, library, service
+//                 (e.g. "auth provider", "logging library", "queue service")
+//
+// The synthesizer's selected_topology means different things in each mode:
+//   family mode   → an architecture family name ("graph_retrieval")
+//   concrete mode → a specific product name        ("Clerk")
+//
+// Inferred from the decision name if not explicitly supplied via the
+// --decision-kind CLI flag or decision_kind MCP arg.
+function inferDecisionKind(decision) {
+  const text = String(decision || "").toLowerCase();
+  // concrete-mode keywords: the decision names a slot to be filled by a
+  // specific product/vendor/library, not a pattern.
+  const concreteKeywords = [
+    "provider", "vendor", "service", "platform", "product", "solution",
+    "library", "sdk", "framework", "tool", "package"
+  ];
+  for (const kw of concreteKeywords) {
+    // word-boundary match so "service" doesn't match "microservice" (which
+    // would be a family-mode hit).
+    if (new RegExp(`\\b${kw}\\b`).test(text)) return "concrete";
+  }
+  return "family";
+}
+
+function normalizeDecisionKind(value, fallback) {
+  const v = String(value || "").toLowerCase().trim();
+  if (v === "family" || v === "concrete") return v;
+  return fallback;
+}
+
 function finiteNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -109,7 +143,8 @@ function toArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-async function buildStrategicContext({ sourcePath, content, domain, decision }) {
+async function buildStrategicContext({ sourcePath, content, domain, decision, decisionKind }) {
+  const resolvedKind = normalizeDecisionKind(decisionKind, inferDecisionKind(decision));
   const raw = await callLlmJson({
     label: "strategic_context_extractor",
     system: [
@@ -117,6 +152,11 @@ async function buildStrategicContext({ sourcePath, content, domain, decision }) 
       "Read the product context document and extract the architectural shape grounded in what the document actually says.",
       "Do not invent entities, contexts, or constraints that are not supported by the text.",
       "Leave a field empty (empty array, or the string \"not_specified\" for operational envelope fields) rather than inferring from prior knowledge of similar domains.",
+      "",
+      `This run's decision_kind is "${resolvedKind}".`,
+      resolvedKind === "concrete"
+        ? "Concrete mode: the user is picking a specific product / vendor / library / service (e.g. 'Clerk' for an auth provider, 'BullMQ' for a queue library). Downstream phases will compare named products. Your job here is only to extract the domain shape and constraints — do not enumerate vendors."
+        : "Family mode: the user is picking an architecture family / topology / pattern (e.g. 'graph_retrieval' for a retrieval topology). Downstream phases will compare patterns.",
       "",
       "Output JSON with:",
       "- domain_entities: array of domain entity or aggregate names mentioned in or strongly implied by the text (PascalCase or as written).",
@@ -129,6 +169,7 @@ async function buildStrategicContext({ sourcePath, content, domain, decision }) 
     user: JSON.stringify({
       domain,
       decision,
+      decision_kind: resolvedKind,
       product_context: content.slice(0, 24_000)
     })
   });
@@ -157,6 +198,7 @@ async function buildStrategicContext({ sourcePath, content, domain, decision }) 
     },
     domain,
     decision,
+    decision_kind: resolvedKind,
     domain_entities: toArray(raw.domain_entities).map(String).filter(Boolean),
     bounded_contexts: toArray(raw.bounded_contexts).map(String).filter(Boolean),
     query_shapes: queryShapes,
@@ -494,6 +536,7 @@ async function callLlmJson({ system, user, label = "llm_json" }) {
 }
 
 async function buildResearchPlan(context, content) {
+  const kind = context.decision_kind || "family";
   const result = await callLlmJson({
     label: "research_plan_agent",
     system: [
@@ -502,11 +545,18 @@ async function buildResearchPlan(context, content) {
       "Do not choose the architecture yet.",
       "Do not rely on a static pattern library.",
       "Prefer official docs, mature OSS, engineering writeups, benchmark papers, and postmortems.",
+      "",
+      `This run's decision_kind is "${kind}".`,
+      kind === "concrete"
+        ? "Concrete mode: candidates are SPECIFIC PRODUCTS / VENDORS / LIBRARIES, not architecture families. Generate tasks that (a) enumerate the 5-8 most credible product options for this decision, (b) investigate each named product's official docs, real-user case studies, pricing model, lock-in risk, and limitations. Search queries should include specific product names. source_targets should include vendor docs, product comparison pages, real engineering writeups about specific products, and postmortems naming specific products. Do NOT generate tasks about generic architecture patterns in this mode — the user already knows the pattern; they want the product."
+        : "Family mode: candidates are ARCHITECTURE FAMILIES / TOPOLOGIES / PATTERNS. Generate tasks that survey patterns, compare topologies, and dig into engineering trade-offs at the family level.",
+      "",
       "Output JSON with: {tasks:[{id,title,objective,search_queries,source_targets,success_criteria}]}."
     ].join("\n"),
     user: JSON.stringify({
       domain: context.domain,
       decision: context.decision,
+      decision_kind: kind,
       strategic_context: context,
       product_context_excerpt: content.slice(0, 16_000)
     })
@@ -1875,6 +1925,40 @@ function deriveComparisonAxes(context, options = {}) {
     });
   }
 
+  // Concrete-mode decisions compare specific products. Add vendor-grade axes
+  // that the LLM cell-filler can score against. These are no-ops in family
+  // mode (family-level evidence rarely speaks to vendor-specific concerns
+  // like pricing or lock-in).
+  if (context.decision_kind === "concrete") {
+    axes.push(
+      {
+        id: "pricing_model",
+        label: "Pricing model + free tier",
+        rationale: "Cost structure, free tier limits, predictability at scale."
+      },
+      {
+        id: "vendor_lock_in",
+        label: "Vendor lock-in risk",
+        rationale: "Data portability, proprietary APIs, exit cost."
+      },
+      {
+        id: "sdk_integration_quality",
+        label: "SDK + integration quality",
+        rationale: "Maturity of official SDKs, integration patterns, developer experience."
+      },
+      {
+        id: "on_prem_self_host",
+        label: "Self-host / on-prem availability",
+        rationale: "Can the product run inside the user's own infrastructure?"
+      },
+      {
+        id: "ecosystem_health",
+        label: "Ecosystem + community health",
+        rationale: "Active maintainers, community size, momentum, recent incidents."
+      }
+    );
+  }
+
   // Discovered anti-patterns from `adr discover` become first-class axes so
   // the comparison matrix can score candidates against the team's explicit
   // rejections. Cells filled by the LLM with the synthetic private_corpus
@@ -2119,15 +2203,23 @@ async function synthesizeArchitectureSpec({
   const promotedSet = new Set(promotedNames);
   const HUMAN_REVIEW = "requires_human_architecture_review";
 
+  const kind = context.decision_kind || "family";
   const result = await callLlmJson({
     label: "architecture_synthesis_agent",
     system: [
       "You are the Architecture Deep Research synthesis agent.",
-      "Choose an architecture family only from evidence-backed research claims.",
+      kind === "concrete"
+        ? "Choose a SPECIFIC PRODUCT / VENDOR / LIBRARY name from evidence-backed research claims. selected_topology in this mode holds a concrete product identifier (e.g. \"Clerk\", \"Auth0\", \"BullMQ\"), not an architecture family."
+        : "Choose an architecture family only from evidence-backed research claims.",
       "Use the comparison_matrix as the primary input: a candidate is only 'strong' on an axis when the matrix says so with cited evidence.",
       "If many cells are no_evidence or weak, prefer requires_human_architecture_review.",
       "Do not use a static pattern library.",
       "Do not implement the product.",
+      "",
+      `This run's decision_kind is "${kind}".`,
+      kind === "concrete"
+        ? "Concrete-mode rules: each promoted_candidate is a specific product. forbidden_topologies should list products to avoid (not patterns). evidence_summary should reference vendor-specific concerns: pricing model, vendor lock-in, SDK quality, on-prem option, community size — alongside the fit-for-purpose axes."
+        : "Family-mode rules: each promoted_candidate is an architecture family. forbidden_topologies should list families/patterns that conflict with required invariants.",
       "",
       `selected_topology MUST be one of the promoted_candidates names below, or the literal string "${HUMAN_REVIEW}". Do not invent a new name. Do not pick from insufficient_evidence_candidates.`,
       promotedNames.length > 0
@@ -2681,7 +2773,8 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     sourcePath: inputPath,
     content,
     domain: flags.domain,
-    decision: flags.decision
+    decision: flags.decision,
+    decisionKind: flags["decision-kind"]
   });
   const clarification = assessClarification(context, content);
   await writeJson(path.join(outDir, "strategic-context.json"), context);
@@ -3691,6 +3784,7 @@ async function discoverPatterns(input) {
 
 export {
   VERSION,
+  inferDecisionKind,
   applyCitationAudit,
   activeLlmProvider,
   activeSearchProviders,
