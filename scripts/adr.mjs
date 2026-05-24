@@ -1,5 +1,10 @@
 #!/usr/bin/env node
+import { loadConfigIntoEnv } from "./adr-doctor.mjs";
 import { deepResearch, discoverPatterns, research, supersedeAdr } from "../src/kernel.mjs";
+
+// Hydrate process.env from ~/.adr/config.json before any kernel call. Keys
+// set in the launching shell still win — this only fills in what's missing.
+await loadConfigIntoEnv();
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;

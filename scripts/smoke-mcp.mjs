@@ -27,9 +27,31 @@ const serverPath = path.join(__dirname, "adr-mcp.mjs");
 const repoDir = await mkdtemp(path.join(os.tmpdir(), "adr-mcp-smoke-"));
 await writeFile(path.join(repoDir, "README.md"), "# smoke test repo\n");
 
+// Isolate the subprocess from the developer's real ~/.adr/config.json. The
+// MCP server hydrates process.env from that file on every tool call, and the
+// LLM-gate assertion below depends on the env being empty. We point HOME at
+// a throwaway dir and scrub the relevant env vars so the subprocess sees a
+// clean slate regardless of the developer's local config.
+const fakeHome = await mkdtemp(path.join(os.tmpdir(), "adr-mcp-smoke-home-"));
+const isolatedEnv = { ...process.env, HOME: fakeHome };
+const KEYS_TO_SCRUB = [
+  "ADR_OPENAI_API_KEY",
+  "OPENAI_API_KEY",
+  "BRAVE_SEARCH_API_KEY",
+  "TAVILY_API_KEY",
+  "SERPER_API_KEY",
+  "SEARXNG_URL",
+  "ADR_MCP_SERVER_URL",
+  "GEMINI_API_KEY",
+  "GOOGLE_GENAI_API_KEY",
+  "GOOGLE_API_KEY"
+];
+for (const key of KEYS_TO_SCRUB) delete isolatedEnv[key];
+
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [serverPath]
+  args: [serverPath],
+  env: isolatedEnv
 });
 const client = new Client(
   { name: "adr-mcp-smoke", version: "1.0.0" },
@@ -85,6 +107,7 @@ try {
 } finally {
   await client.close();
   await rm(repoDir, { recursive: true, force: true });
+  await rm(fakeHome, { recursive: true, force: true });
 }
 
 console.log("mcp smoke ok");

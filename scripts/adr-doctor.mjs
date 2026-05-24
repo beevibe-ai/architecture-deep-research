@@ -179,21 +179,55 @@ async function setup() {
 
 // Helper exported for the MCP server: hydrates process.env from ~/.adr/config.json
 // so child kernel calls see the keys without the user exporting anything.
+//
+// Safe to call repeatedly. On the first call we snapshot which keys were
+// already present in process.env (from the shell that launched us) — those
+// always win on subsequent reloads. On every call we re-read the config
+// file and apply changes for any key that did NOT come from the shell.
+//
+// This is what lets `adr-doctor set ...` propagate to a long-running MCP
+// server without a restart: the next tool handler calls loadConfigIntoEnv()
+// at the top and picks up the new keys.
+const _initialShellEnv = new Set();
+let _initialSnapshotTaken = false;
+
+function _snapshotShellEnv() {
+  if (_initialSnapshotTaken) return;
+  // We can only snapshot keys we know about. Unknown vars are out of scope.
+  // (KNOWN_KEYS is defined below; reference it lazily via a getter.)
+  for (const key of _knownKeysOrAll()) {
+    if (process.env[key]) _initialShellEnv.add(key);
+  }
+  _initialSnapshotTaken = true;
+}
+
+// Lazy reference because KNOWN_KEYS is defined later in this file.
+function _knownKeysOrAll() {
+  if (typeof KNOWN_KEYS !== "undefined" && KNOWN_KEYS instanceof Set) {
+    return KNOWN_KEYS;
+  }
+  // First call before KNOWN_KEYS is initialized: snapshot every env var.
+  return Object.keys(process.env);
+}
+
 async function loadConfigIntoEnv() {
+  _snapshotShellEnv();
   let config;
   try {
     config = JSON.parse(await readFile(CONFIG_PATH, "utf8"));
   } catch {
     return { loaded: 0, path: CONFIG_PATH };
   }
-  let count = 0;
+  let updated = 0;
   for (const [key, value] of Object.entries(config)) {
-    if (typeof value === "string" && value.trim() && !process.env[key]) {
-      process.env[key] = value;
-      count += 1;
-    }
+    if (typeof value !== "string" || !value.trim()) continue;
+    // Keys that were set in the launching shell always win.
+    if (_initialShellEnv.has(key)) continue;
+    if (process.env[key] === value) continue;
+    process.env[key] = value;
+    updated += 1;
   }
-  return { loaded: count, path: CONFIG_PATH };
+  return { loaded: updated, path: CONFIG_PATH };
 }
 
 // Allowed keys for the non-interactive `set` command. We refuse to write

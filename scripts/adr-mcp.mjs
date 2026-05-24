@@ -244,6 +244,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const name = request.params?.name;
   const args = request.params?.arguments || {};
 
+  // Re-read ~/.adr/config.json on every tool call. The user may have run
+  // `adr-doctor set ...` since the server booted (e.g. through the /adr:doctor
+  // slash command), and we want the new keys to take effect on the next call
+  // without requiring a Claude Code restart. Process env from the launching
+  // shell always wins — see loadConfigIntoEnv() in adr-doctor.mjs.
+  await loadConfigIntoEnv();
+
   try {
     if (name === "adr_discover") return await handleDiscover(args);
     if (name === "adr_deep_research") return await handleDeepResearch(args);
