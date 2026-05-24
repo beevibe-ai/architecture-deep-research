@@ -16,6 +16,7 @@ import {
   deriveComparisonAxes,
   discoverPatterns,
   extractClaims,
+  filterPromotedByRelevance,
   inferDecisionKind,
   injectDiscoveredEvidence,
   openUrl,
@@ -1525,6 +1526,76 @@ try {
     if (priorCacheDir === undefined) delete process.env.ADR_CACHE_DIR;
     else process.env.ADR_CACHE_DIR = priorCacheDir;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Decision-relevance filter: drops candidates that cleared the evidence gate
+// but are not plausible answers to the decision (the discover-phase
+// contamination case — nextjs/postgres end up in the auth-provider pool).
+// ---------------------------------------------------------------------------
+
+{
+  const tmpOutDir = await mkdtemp(path.join(os.tmpdir(), "adr-relevance-test-"));
+
+  installProvider((label) => {
+    assert.equal(label, "candidate_relevance_filter");
+    return {
+      verdicts: [
+        { name: "clerk", verdict: "relevant", reason: "Named auth provider." },
+        { name: "auth0", verdict: "relevant", reason: "Named auth provider." },
+        { name: "nextjs", verdict: "off_topic", reason: "Framework, not an auth provider." },
+        { name: "postgres_centric_storage", verdict: "off_topic", reason: "Storage choice, not auth." },
+        { name: "supertokens", verdict: "unsure", reason: "Possibly relevant." }
+      ]
+    };
+  });
+
+  const knowledgeMap = {
+    promotion_rule: "test",
+    promoted_candidates: [
+      { name: "clerk", label: "Clerk", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
+      { name: "auth0", label: "Auth0", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
+      { name: "nextjs", label: "Next.js", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [3], score: 0.6 },
+      { name: "postgres_centric_storage", label: "Postgres", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [4], score: 0.6 },
+      { name: "supertokens", label: "SuperTokens", evidence_count: 2, source_types: ["mature_oss"], support: [], citations: [5], score: 0.8 }
+    ],
+    insufficient_evidence_candidates: []
+  };
+
+  const result = await filterPromotedByRelevance({
+    context: { decision: "auth provider", decision_kind: "concrete", domain: "saas" },
+    knowledgeMap,
+    outDir: tmpOutDir,
+    flags: {}
+  });
+
+  // off_topic candidates dropped. unsure + relevant survive.
+  assert.equal(result.dropped.length, 2, `expected 2 dropped, got: ${JSON.stringify(result.dropped)}`);
+  const droppedNames = result.dropped.map((d) => d.name).sort();
+  assert.deepEqual(droppedNames, ["nextjs", "postgres_centric_storage"]);
+  const keptNames = result.knowledgeMap.promoted_candidates.map((c) => c.name).sort();
+  assert.deepEqual(keptNames, ["auth0", "clerk", "supertokens"]);
+  // Dropped candidates moved into insufficient_evidence_candidates with the
+  // off_topic_for_decision marker.
+  const moved = result.knowledgeMap.insufficient_evidence_candidates.filter(
+    (c) => c.promotion_status === "off_topic_for_decision"
+  );
+  assert.equal(moved.length, 2);
+  assert.ok(moved.some((c) => c.off_topic_reason.includes("Framework")));
+
+  setLlmJsonProvider(null);
+
+  // --skip-relevance-filter passes the knowledge map through unchanged.
+  const skipResult = await filterPromotedByRelevance({
+    context: { decision: "auth provider", decision_kind: "concrete", domain: "saas" },
+    knowledgeMap,
+    outDir: tmpOutDir,
+    flags: { "skip-relevance-filter": true }
+  });
+  assert.equal(skipResult.skipped, true);
+  assert.equal(skipResult.knowledgeMap, knowledgeMap);
+
+  await rm(tmpOutDir, { recursive: true, force: true });
 }
 
 console.log("kernel regression tests ok");

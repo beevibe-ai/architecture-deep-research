@@ -3467,6 +3467,136 @@ async function buildAdaptiveResearchPlan({ context, knowledgeMap, evidenceItems 
   };
 }
 
+// Decision-relevance filter on the candidate pool.
+//
+// The promotion gate keys off evidence_count + source_type. It does not ask
+// whether each architecture_family is a plausible ANSWER to the decision
+// being made. So a discover phase that tags the project's existing nextjs /
+// postgres / rest_api stack as private_corpus evidence contaminates the
+// candidate pool when the decision is "auth provider" — nextjs isn't an auth
+// provider, but it cleared the gate because it had cited evidence.
+//
+// One LLM JSON call against all promoted candidates at once. Off-topic
+// candidates are demoted out of promoted_candidates (they keep their
+// evidence but no longer count as viable options).
+async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags }) {
+  if (flags && flags["skip-relevance-filter"]) {
+    return { knowledgeMap, dropped: [], skipped: true };
+  }
+  const promoted = toArray(knowledgeMap?.promoted_candidates);
+  if (promoted.length === 0) {
+    return { knowledgeMap, dropped: [], skipped: false };
+  }
+
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "candidate_relevance_filter",
+      system: [
+        "You are the candidate-relevance filter for Architecture Deep Research.",
+        "",
+        `The decision being made is: "${context.decision}" (decision_kind: ${context.decision_kind || "family"}).`,
+        `Domain: "${context.domain}".`,
+        "",
+        "You receive a list of architecture-family candidates that cleared the",
+        "evidence promotion gate (they have cited support). For each candidate,",
+        "decide whether it is a plausible ANSWER to the decision being made.",
+        "",
+        "Examples of off_topic candidates (drop):",
+        "  - decision: 'auth provider', candidate: 'nextjs'    → off_topic (nextjs is a framework, not an auth provider)",
+        "  - decision: 'auth provider', candidate: 'postgres_centric_storage'  → off_topic (storage choice, not auth)",
+        "  - decision: 'retrieval topology', candidate: 'kubernetes'  → off_topic (compute platform, not retrieval)",
+        "",
+        "Examples of relevant candidates (keep):",
+        "  - decision: 'auth provider', candidate: 'clerk' or 'auth0' or 'token_based_auth'",
+        "  - decision: 'retrieval topology', candidate: 'graphrag' or 'vector_rag' or 'hybrid_rag'",
+        "",
+        "Be strict but not paranoid: if a candidate is a genuine alternative the",
+        "decision could land on, keep it. If the candidate is from a different",
+        "decision space entirely (the architecture pool contaminated by discover),",
+        "drop it.",
+        "",
+        "Output JSON: { verdicts: [{ name: string, verdict: 'relevant'|'off_topic'|'unsure', reason: string }] }.",
+        "",
+        "Return EXACTLY one verdict per candidate received. Do not invent new",
+        "candidate names. 'unsure' is kept (we bias toward keeping)."
+      ].join("\n"),
+      user: JSON.stringify({
+        decision: context.decision,
+        decision_kind: context.decision_kind || "family",
+        domain: context.domain,
+        candidates: promoted.map((c) => ({
+          name: c.name,
+          label: c.label,
+          evidence_count: c.evidence_count,
+          source_types: c.source_types,
+          top_claims: (c.support || []).slice(0, 3).map((r) => r.claim)
+        }))
+      })
+    });
+  } catch (error) {
+    // If the LLM call fails, do NOT drop candidates — bias toward letting
+    // through. Log the failure as an event.
+    await appendEvent(outDir, "candidate_relevance_filter_failed", {
+      error: String(error?.message || error)
+    });
+    return { knowledgeMap, dropped: [], skipped: false };
+  }
+
+  const verdicts = new Map();
+  for (const v of toArray(raw.verdicts)) {
+    if (!v || typeof v !== "object") continue;
+    const name = slugify(String(v.name || ""));
+    if (!name) continue;
+    const verdict = String(v.verdict || "").trim().toLowerCase();
+    if (!["relevant", "off_topic", "unsure"].includes(verdict)) continue;
+    verdicts.set(name, { verdict, reason: String(v.reason || "") });
+  }
+
+  const dropped = [];
+  const keptPromoted = [];
+  for (const candidate of promoted) {
+    const slug = slugify(candidate.name);
+    const v = verdicts.get(slug);
+    if (v && v.verdict === "off_topic") {
+      dropped.push({ name: candidate.name, reason: v.reason });
+      // Move to insufficient_evidence_candidates with an explicit reason.
+      continue;
+    }
+    keptPromoted.push(candidate);
+  }
+
+  if (dropped.length === 0) {
+    return { knowledgeMap, dropped: [], skipped: false };
+  }
+
+  const droppedSet = new Set(dropped.map((d) => slugify(d.name)));
+  const movedToInsufficient = promoted
+    .filter((c) => droppedSet.has(slugify(c.name)))
+    .map((c) => ({
+      ...c,
+      promotion_status: "off_topic_for_decision",
+      off_topic_reason: dropped.find((d) => slugify(d.name) === slugify(c.name))?.reason || ""
+    }));
+
+  const updated = {
+    ...knowledgeMap,
+    promoted_candidates: keptPromoted,
+    insufficient_evidence_candidates: [
+      ...toArray(knowledgeMap.insufficient_evidence_candidates),
+      ...movedToInsufficient
+    ]
+  };
+
+  await appendEvent(outDir, "candidate_relevance_filter_completed", {
+    candidates_kept: keptPromoted.length,
+    candidates_dropped: dropped.length,
+    dropped_names: dropped.map((d) => d.name)
+  });
+
+  return { knowledgeMap: updated, dropped, skipped: false };
+}
+
 async function executeResearchPhase({ plan, context, outDir, flags }) {
   let researchResults = await runResearchAgents({ plan, context, flags, outDir });
   let evidenceItems = assignCitations(
@@ -4288,6 +4418,21 @@ async function deepResearch({ inputPath, flags }) {
     });
   }
 
+  // Decision-relevance filter on the candidate pool — drop families that
+  // cleared the evidence gate but are not plausible answers to the decision.
+  // This catches the discover-phase contamination class of bug (nextjs ends
+  // up in the auth-provider candidate pool because the repo uses Next.js).
+  const relevanceResult = await filterPromotedByRelevance({
+    context: prepared.context,
+    knowledgeMap,
+    outDir: prepared.outDir,
+    flags
+  });
+  if (relevanceResult.dropped.length > 0) {
+    knowledgeMap = relevanceResult.knowledgeMap;
+    await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
+  }
+
   let comparisonMatrix = null;
   let adversarialCycles = 0;
   if (!flags["skip-comparison-matrix"]) {
@@ -4560,6 +4705,7 @@ export {
   discoverPatterns,
   executeResearchPhase,
   extractClaims,
+  filterPromotedByRelevance,
   openUrl,
   getLlmJsonProvider,
   injectDiscoveredEvidence,

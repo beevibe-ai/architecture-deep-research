@@ -108,7 +108,8 @@ Required runtime:
 	  --no-enforce-critique          do not auto-downgrade high-severity critique
 	  --no-enforce-citation-audit   do not auto-downgrade unsupported selected citations
 	  --skip-claim-audit            do not scan generated artifacts for uncited material claims
-	  --skip-resynthesis            do not re-synthesize after critique even if high-severity issues exist`;
+	  --skip-resynthesis            do not re-synthesize after critique even if high-severity issues exist
+	  --skip-relevance-filter       do not drop off-topic candidates from the promoted pool`;
 }
 
 async function main() {

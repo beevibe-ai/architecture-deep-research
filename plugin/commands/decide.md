@@ -102,6 +102,8 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `research_agent_finished` | &nbsp;&nbsp;✓  task done (`N` evidence) |
 | `evidence_collected` | ✓  Evidence pool: `N` items, `K` promoted candidates |
 | `private_corpus_evidence_injected` | 🧠  Injected `N` private_corpus items from discover; `K` antipattern axes added |
+| `candidate_relevance_filter_completed` | 🎯  Dropped `N` off-topic candidates from promoted pool (`dropped_names`) |
+| `candidate_relevance_filter_failed` | ⚠  Relevance filter failed — keeping all candidates (LLM error) |
 | `comparison_matrix_built` | 📊  Matrix: `C` candidates × `A` axes (`E` empty cells) |
 | `adaptive_research_cycle_started` | 🔁  Adaptive cycle `N`: filling evidence gaps |
 | `adaptive_research_cycle_completed` | ✓  Adaptive cycle `N` complete (`K` promoted candidates now) |
