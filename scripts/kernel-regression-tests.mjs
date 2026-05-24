@@ -1690,7 +1690,8 @@ try {
             github_url: "https://github.com/cal-com/cal.com",
             docs_url: "https://cal.com/docs",
             engineering_blog_url: "https://cal.com/blog",
-            why_comparable: "Multi-tenant SaaS shipping its own auth + scheduling."
+            why_comparable: "Multi-tenant SaaS shipping its own auth + scheduling.",
+            evidence_strategy: "architecture"
           },
           {
             name: "onyx",
@@ -1698,20 +1699,31 @@ try {
             github_url: "https://github.com/onyx-dot-app/onyx",
             docs_url: "https://docs.onyx.app",
             engineering_blog_url: "",
-            why_comparable: "Self-hosted agent runtime with similar agent OS shape."
+            why_comparable: "Self-hosted agent runtime with similar agent OS shape.",
+            evidence_strategy: "both"
           },
           {
             name: "abandoned",
             label: "Abandoned Tool",
             github_url: "https://github.com/abandoned/dead-repo",
             why_comparable: "Was comparable; appears no longer maintained."
+            // no evidence_strategy → defaults to "architecture"
           },
           {
             name: "notion",
             label: "Notion",
             github_url: "",
             homepage_url: "https://notion.so",
-            why_comparable: "Closed-source SaaS at similar abstraction layer."
+            why_comparable: "Closed-source SaaS at similar abstraction layer.",
+            evidence_strategy: "adoption"
+          },
+          {
+            name: "bogus-strategy",
+            label: "Bogus Strategy Peer",
+            github_url: "",
+            homepage_url: "https://example.invalid",
+            why_comparable: "Verifies that an unknown evidence_strategy value defaults to architecture.",
+            evidence_strategy: "made_up_value"
           }
         ]
       };
@@ -1746,11 +1758,340 @@ try {
     const onyxIdx = artifact.peers.findIndex((p) => p.name === "onyx");
     assert.ok(calIdx < onyxIdx, `cal-com should rank above onyx; got order ${artifact.peers.map((p) => p.name).join(", ")}`);
 
+    // evidence_strategy lands on each peer. Unknown / missing values default
+    // to "architecture" — they must never strand the peer in an undefined
+    // strategy state.
+    const byName = Object.fromEntries(artifact.peers.map((p) => [p.name, p]));
+    if (byName["cal-com"]) assert.equal(byName["cal-com"].evidence_strategy, "architecture");
+    if (byName.onyx) assert.equal(byName.onyx.evidence_strategy, "both");
+    if (byName.notion) assert.equal(byName.notion.evidence_strategy, "adoption");
+    if (byName["bogus-strategy"]) {
+      assert.equal(
+        byName["bogus-strategy"].evidence_strategy,
+        "architecture",
+        "unknown evidence_strategy must default to architecture"
+      );
+    }
+
     setLlmJsonProvider(null);
   } finally {
     globalThis.fetch = realFetch;
     await rm(tmpDir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Adoption-strategy peers: when a peer's evidence_strategy is "adoption" or
+// "both", buildPeerResearchTasks calls the adoption_research_planner LLM
+// label to generate community-targeted queries (Reddit, HN, Twitter,
+// migration write-ups) instead of architecture-targeted ones. Architecture-
+// strategy peers keep today's behavior and skip the LLM call entirely.
+// ---------------------------------------------------------------------------
+
+{
+  const { buildPeerResearchTasks } = await import("../src/kernel.mjs");
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-peer-strategy-test-"));
+
+  try {
+    await writeJson(path.join(tmpDir, "peers.json"), {
+      version: "0.2.0",
+      decision: "knowledge store",
+      domain: "PKM",
+      peers: [
+        {
+          name: "neo4j",
+          label: "Neo4j",
+          github_url: "https://github.com/neo4j/neo4j",
+          docs_url: "https://neo4j.com/docs",
+          engineering_blog_url: "https://neo4j.com/blog",
+          why_comparable: "Mature graph DB peer.",
+          evidence_strategy: "architecture"
+        },
+        {
+          name: "obsidian",
+          label: "Obsidian",
+          github_url: "",
+          homepage_url: "https://obsidian.md",
+          why_comparable: "Closed-source PKM with huge adoption signal.",
+          evidence_strategy: "adoption"
+        },
+        {
+          name: "logseq",
+          label: "Logseq",
+          github_url: "https://github.com/logseq/logseq",
+          why_comparable: "Open-core PKM with both architecture docs and adoption community.",
+          evidence_strategy: "both"
+        }
+      ]
+    });
+
+    let adoptionCalls = 0;
+    installProvider((label) => {
+      if (label === "adoption_research_planner") {
+        adoptionCalls += 1;
+        return {
+          queries: [
+            "fixture: peer reddit users architecture experience knowledge store",
+            "fixture: peer hacker news comments knowledge store",
+            "fixture: site:reddit.com peer pkm"
+          ]
+        };
+      }
+      throw new Error(`unexpected label ${label}`);
+    });
+
+    const result = await buildPeerResearchTasks({
+      context: { decision: "knowledge store", domain: "PKM" },
+      outDir: tmpDir
+    });
+    assert.equal(result.status, "ok");
+    assert.equal(result.tasks.length, 3);
+
+    const tasksByPeer = Object.fromEntries(result.tasks.map((t) => [t.peer_target, t]));
+    // Architecture peer keeps today's behavior — no LLM call, queries hit
+    // github + blog.
+    const neoQs = tasksByPeer.neo4j.search_queries.join(" | ");
+    assert.ok(neoQs.includes("site:github.com"), `neo4j should keep architecture queries: ${neoQs}`);
+    assert.ok(!neoQs.includes("fixture:"), "architecture peer must not call adoption planner");
+    assert.equal(tasksByPeer.neo4j.evidence_strategy, "architecture");
+
+    // Adoption peer routes to the LLM planner — queries come from the fixture.
+    const obsQs = tasksByPeer.obsidian.search_queries.join(" | ");
+    assert.ok(obsQs.includes("fixture:"), `obsidian must use adoption queries: ${obsQs}`);
+    assert.equal(tasksByPeer.obsidian.evidence_strategy, "adoption");
+    assert.ok(
+      tasksByPeer.obsidian.title.toLowerCase().includes("adoption"),
+      "adoption peer's task title should reflect adoption framing"
+    );
+
+    // "both" peer gets architecture queries first, then adoption queries,
+    // capped at PEER_TASK_MAX_QUERIES (5).
+    const logseqQs = tasksByPeer.logseq.search_queries;
+    assert.ok(logseqQs.length <= 5, `both-strategy peer capped at 5 queries; got ${logseqQs.length}`);
+    assert.ok(
+      logseqQs.some((q) => q.includes("site:github.com")),
+      "both-strategy peer must include architecture queries"
+    );
+    assert.ok(
+      logseqQs.some((q) => q.includes("fixture:")),
+      "both-strategy peer must include adoption queries"
+    );
+    assert.equal(tasksByPeer.logseq.evidence_strategy, "both");
+
+    // The adoption planner fired exactly twice — once for adoption, once for
+    // both. The architecture peer must not have invoked it.
+    assert.equal(adoptionCalls, 2, `expected 2 adoption_research_planner calls, got ${adoptionCalls}`);
+
+    setLlmJsonProvider(null);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// classifySource: community_discussion class with platform tagging.
+//   reddit.com/r/<sub> → community_discussion + platform: "reddit"
+//   news.ycombinator.com/item?id=N → community_discussion + platform: "hackernews"
+//   twitter.com / x.com → community_discussion + platform: "twitter"
+//   stackoverflow.com / stackexchange.com → community_discussion + platform: "stackexchange"
+// ---------------------------------------------------------------------------
+
+{
+  const { classifyCommunityPlatform, extractCommunityPlatformDetails } = await import(
+    "../src/kernel.mjs"
+  );
+
+  assert.equal(
+    classifySource("https://www.reddit.com/r/LocalLLaMA/comments/abc/"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifyCommunityPlatform("https://www.reddit.com/r/LocalLLaMA/comments/abc/"),
+    "reddit"
+  );
+  assert.equal(
+    extractCommunityPlatformDetails("https://www.reddit.com/r/LocalLLaMA/comments/abc/", "reddit")
+      .subreddit,
+    "LocalLLaMA"
+  );
+
+  assert.equal(
+    classifySource("https://news.ycombinator.com/item?id=12345"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifyCommunityPlatform("https://news.ycombinator.com/item?id=12345"),
+    "hackernews"
+  );
+  assert.equal(
+    extractCommunityPlatformDetails(
+      "https://news.ycombinator.com/item?id=12345",
+      "hackernews"
+    ).story_id,
+    "12345"
+  );
+
+  assert.equal(classifySource("https://twitter.com/foo/status/1"), "community_discussion");
+  assert.equal(classifySource("https://x.com/foo/status/1"), "community_discussion");
+  assert.equal(classifyCommunityPlatform("https://twitter.com/foo/status/1"), "twitter");
+  assert.equal(classifyCommunityPlatform("https://x.com/foo/status/1"), "twitter");
+
+  assert.equal(
+    classifySource("https://stackoverflow.com/questions/12345"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifySource("https://serverfault.stackexchange.com/questions/1"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifyCommunityPlatform("https://stackoverflow.com/questions/12345"),
+    "stackexchange"
+  );
+
+  // Non-community URLs unaffected:
+  assert.equal(classifySource("https://github.com/foo/bar"), "mature_oss");
+  assert.equal(classifySource("https://docs.example.com/"), "official_docs");
+}
+
+// ---------------------------------------------------------------------------
+// Adoption axes are only added to the comparison matrix when the evidence
+// pool contains at least one community_discussion source. Architecture-only
+// runs do not get polluted with empty ecosystem_traction / integration_breadth
+// / practitioner_pain_points columns.
+// ---------------------------------------------------------------------------
+
+{
+  const baseContext = {
+    domain: "test",
+    decision: "test",
+    query_shapes: [],
+    operational_envelope: {
+      latency: "not_specified",
+      cost: "not_specified",
+      scale: "not_specified",
+      availability: "not_specified"
+    },
+    compliance_constraints: []
+  };
+
+  // No community evidence → adoption axes are NOT added.
+  const axesPure = deriveComparisonAxes(baseContext, {
+    evidenceItems: [
+      { source_type: "official_docs" },
+      { source_type: "mature_oss" }
+    ]
+  });
+  const pureIds = axesPure.map((a) => a.id);
+  assert.ok(
+    !pureIds.includes("ecosystem_traction"),
+    `pure architecture run must not add ecosystem_traction; got: ${pureIds.join(", ")}`
+  );
+  assert.ok(!pureIds.includes("integration_breadth"));
+  assert.ok(!pureIds.includes("practitioner_pain_points"));
+
+  // At least one community_discussion source → adoption axes ARE added.
+  const axesAdopt = deriveComparisonAxes(baseContext, {
+    evidenceItems: [
+      { source_type: "official_docs" },
+      { source_type: "community_discussion" }
+    ]
+  });
+  const adoptIds = axesAdopt.map((a) => a.id);
+  assert.ok(adoptIds.includes("ecosystem_traction"));
+  assert.ok(adoptIds.includes("integration_breadth"));
+  assert.ok(adoptIds.includes("practitioner_pain_points"));
+}
+
+// ---------------------------------------------------------------------------
+// Community-source quote rule: extractClaims relaxes the literal-substring
+// requirement for source_type: "community_discussion". A paraphrased summary
+// is allowed when ≥ 60% of significant tokens from the quote appear in the
+// excerpt. Non-community sources keep the strict substring rule.
+// ---------------------------------------------------------------------------
+
+{
+  const redditExcerpt =
+    "I have been using Obsidian for three years to manage my notes. The plugin ecosystem is enormous: " +
+    "I run Dataview, Templater, and the calendar plugin daily. Performance gets sluggish past 10000 notes.";
+
+  installProvider((label) => {
+    if (label !== "source_claim_extractor") {
+      throw new Error(`community extractor fixture: unexpected label ${label}`);
+    }
+    return {
+      claims: [
+        // Paraphrased — NOT a substring, but every significant token appears.
+        {
+          claim: "Obsidian's plugin ecosystem is large and includes Dataview and Templater.",
+          quote: "Obsidian plugin ecosystem enormous includes Dataview Templater calendar",
+          architecture_family: "Obsidian",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.8
+        },
+        // Tokens completely unrelated to excerpt — should be dropped.
+        {
+          claim: "Obsidian costs $200/year.",
+          quote: "Obsidian subscription pricing premium tier enterprise license",
+          architecture_family: "Obsidian",
+          polarity: "neutral",
+          relevance: "on_topic",
+          confidence: 0.5
+        }
+      ]
+    };
+  });
+
+  const communityClaims = await extractClaims({
+    context: { domain: "PKM", decision: "knowledge store" },
+    task: { id: "t1", title: "obsidian", objective: "Compare PKM tools" },
+    source: {
+      title: "r/ObsidianMD thread",
+      url: "https://www.reddit.com/r/ObsidianMD/comments/xyz/",
+      source_type: "community_discussion",
+      excerpt: redditExcerpt
+    }
+  });
+  assert.equal(
+    communityClaims.length,
+    1,
+    `community source should accept paraphrased quote; got: ${JSON.stringify(communityClaims, null, 2)}`
+  );
+  assert.equal(communityClaims[0].claim, "Obsidian's plugin ecosystem is large and includes Dataview and Templater.");
+  setLlmJsonProvider(null);
+
+  // Non-community source with the SAME paraphrased quote — the strict
+  // substring rule rejects it.
+  installProvider((label) => {
+    if (label !== "source_claim_extractor") {
+      throw new Error(`strict extractor fixture: unexpected label ${label}`);
+    }
+    return {
+      claims: [
+        {
+          claim: "Obsidian's plugin ecosystem is large.",
+          quote: "Obsidian plugin ecosystem enormous includes Dataview Templater calendar",
+          architecture_family: "Obsidian",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.8
+        }
+      ]
+    };
+  });
+  const strictClaims = await extractClaims({
+    context: { domain: "PKM", decision: "knowledge store" },
+    task: { id: "t1", title: "obsidian", objective: "Compare PKM tools" },
+    source: {
+      title: "Obsidian docs",
+      url: "https://docs.obsidian.md/plugins",
+      source_type: "official_docs",
+      excerpt: redditExcerpt
+    }
+  });
+  assert.equal(strictClaims.length, 0, "non-community source must enforce literal substring rule");
+  setLlmJsonProvider(null);
 }
 
 

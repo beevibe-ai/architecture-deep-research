@@ -1529,9 +1529,42 @@ async function persistSourceSnapshot({ outDir, url, title, sourceType, fetchStat
 // promotion gate. Bias toward false negatives.
 const AGGREGATOR_DOMAIN_RE = /\b(geeksforgeeks\.org|tutorialspoint\.com|javatpoint\.com|journaldev\.com|simplilearn\.com|educative\.io|byjus\.com|netsuite\.com\/insights|btsta(?:gregator|ggregator)\.com|wisp\.(?:cms|app)|baeldung\.com|topcoder\.com)/i;
 
+// Community-discussion platforms — Reddit, HN, Twitter/X, Stack Exchange.
+// These aren't general web: they're community signal weighted by engagement
+// (upvotes, scores). Adoption-strategy peers depend on these for evidence
+// because their architecture isn't publicly documented but their adoption
+// stories are. Synthesis frames their claims as practitioner signal, not as
+// hard architectural facts.
+function classifyCommunityPlatform(url) {
+  if (!url) return null;
+  if (/(^|\/\/|\.)reddit\.com\//i.test(url)) return "reddit";
+  if (/(^|\/\/)news\.ycombinator\.com\//i.test(url)) return "hackernews";
+  if (/(^|\/\/|\.)(twitter\.com|x\.com)\//i.test(url)) return "twitter";
+  if (/(^|\/\/|\.)(stackoverflow\.com|stackexchange\.com)\//i.test(url)) return "stackexchange";
+  return null;
+}
+
+// Extract a community sub-platform identifier — subreddit for reddit, HN
+// story id for an /item?id=N link. Returned alongside `platform` so the
+// auditor and synthesis can refer to the specific thread the citation came
+// from. Best-effort; missing details are returned as undefined.
+function extractCommunityPlatformDetails(url, platform) {
+  const out = {};
+  if (!url) return out;
+  if (platform === "reddit") {
+    const m = String(url).match(/\/r\/([A-Za-z0-9_]+)/);
+    if (m) out.subreddit = m[1];
+  } else if (platform === "hackernews") {
+    const m = String(url).match(/[?&]id=(\d+)/);
+    if (m) out.story_id = m[1];
+  }
+  return out;
+}
+
 function classifySource(url) {
   if (!url) return "unknown";
   if (/^mcp:\/\//i.test(url)) return "private_corpus";
+  if (classifyCommunityPlatform(url)) return "community_discussion";
   if (AGGREGATOR_DOMAIN_RE.test(url)) return "aggregator";
   if (/docs\.|microsoft\.github\.io|langchain|llamaindex|neo4j\.com|cloud\.google|openai\.com\/docs/i.test(url)) {
     return "official_docs";
@@ -1551,6 +1584,11 @@ function sourceQuality(sourceType) {
     paper_or_benchmark: 0.85,
     private_corpus: 0.8,
     engineering_writeup: 0.78,
+    // community_discussion keeps general_web's weight for now (these URLs
+    // previously fell through to general_web). The class exists so synthesis
+    // and the auditor can treat them differently; scoring is a separate
+    // follow-up.
+    community_discussion: 0.45,
     general_web: 0.45,
     aggregator: 0.15,
     unknown: 0.25
@@ -1610,6 +1648,22 @@ function normalizeForQuoteCheck(text) {
     .replace(/[“”„‟″‶]/g, "\"")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// Softer match for community-discussion sources where the quote is a
+// paraphrased summary of a discussion thread, not a literal substring.
+// Returns true when ≥ 60% of significant (≥4-char) tokens from the quote
+// appear in the excerpt. Picks the simpler ratio match over a full
+// semantic check — community-source claims still surface in synthesis,
+// just framed as practitioner signal rather than hard fact.
+function communityQuoteMatches(quote, excerpt) {
+  const tokens = normalizeForQuoteCheck(quote)
+    .split(/\W+/)
+    .filter((t) => t.length >= 4);
+  if (tokens.length === 0) return false;
+  const haystack = normalizeForQuoteCheck(excerpt);
+  const hits = tokens.filter((t) => haystack.includes(t)).length;
+  return hits / tokens.length >= 0.6;
 }
 
 async function extractClaims({ context, task, source }) {
@@ -1680,6 +1734,7 @@ async function extractClaims({ context, task, source }) {
   });
 
   const excerptHaystack = normalizeForQuoteCheck(source.excerpt);
+  const isCommunitySource = source.source_type === "community_discussion";
 
   return toArray(result.claims)
     .map((claim) => {
@@ -1703,11 +1758,19 @@ async function extractClaims({ context, task, source }) {
       // Off-topic claims are dropped: the extractor said the source talks
       // about a different decision than the one we're researching.
       if (claim.relevance === "off_topic") return false;
-      // Quote must be a literal substring of the excerpt (whitespace- and
-      // quote-mark-normalized). This is the grounding gate: it forces the
-      // extractor to admit when a source does not actually support a claim.
-      // Hallucinated quotes are dropped.
       if (!claim.quote || claim.quote.length < 10) return false;
+      // Community-discussion sources (Reddit, HN, Twitter, Stack Exchange)
+      // get a softer rule: the quote may be a paraphrased summary of a
+      // discussion thread, not a literal substring. We still confirm the
+      // quote captures the gist via a token-ratio match — see
+      // communityQuoteMatches — but we don't demand verbatim text.
+      if (isCommunitySource) {
+        return communityQuoteMatches(claim.quote, source.excerpt);
+      }
+      // Architecture / docs / OSS sources keep the literal-substring rule.
+      // It's the grounding gate that forces the extractor to admit when a
+      // source does not actually support a claim. Hallucinated quotes are
+      // dropped.
       const needle = normalizeForQuoteCheck(claim.quote);
       if (!excerptHaystack.includes(needle)) return false;
       return true;
@@ -1829,6 +1892,17 @@ async function gatherEvidenceForQuery({
       sourceText
     });
 
+    // Tag community-discussion sources with their platform + sub-identifier
+    // (subreddit for reddit, story_id for HN). The auditor and synthesis
+    // both branch on source_type === "community_discussion"; the
+    // community_meta object lets downstream code reference the specific
+    // thread the citation came from.
+    const communityPlatform =
+      source_type === "community_discussion" ? classifyCommunityPlatform(result.url) : null;
+    const communityMeta = communityPlatform
+      ? { platform: communityPlatform, ...extractCommunityPlatformDetails(result.url, communityPlatform) }
+      : null;
+
     const partial = {
       task_id: task.id,
       title: result.title || result.url,
@@ -1839,6 +1913,7 @@ async function gatherEvidenceForQuery({
       source_type,
       source_quality: sourceQuality(source_type),
       relevance: task.objective,
+      ...(communityMeta ? { community_meta: communityMeta } : {}),
       ...sourceSnapshot
     };
     const claims = await extractClaims({ context, task, source: partial });
@@ -2279,6 +2354,34 @@ function deriveComparisonAxes(context, options = {}) {
     });
   }
 
+  // Adoption-mode axes: only added when the evidence pool actually contains
+  // at least one community_discussion source. Architecture-mode runs (no
+  // adoption peers) skip these — otherwise pure-architecture matrices fill
+  // up with empty cells the synthesis has no evidence to score against.
+  const hasCommunityEvidence = toArray(options.evidenceItems).some(
+    (item) => item && item.source_type === "community_discussion"
+  );
+  if (hasCommunityEvidence) {
+    axes.push({
+      id: "ecosystem_traction",
+      label: "Ecosystem traction",
+      rationale:
+        "Community size + plugin/extension count, scored from community_discussion evidence."
+    });
+    axes.push({
+      id: "integration_breadth",
+      label: "Integration breadth",
+      rationale:
+        "How many integrations or how broadly the option is adopted across the practitioner community."
+    });
+    axes.push({
+      id: "practitioner_pain_points",
+      label: "Practitioner pain points",
+      rationale:
+        "What users actually complain about in community threads. Scored from community_discussion evidence."
+    });
+  }
+
   return axes;
 }
 
@@ -2444,7 +2547,11 @@ async function buildComparisonMatrix({
   discoveredAntipatterns = [],
   discoveredStack = []
 }) {
-  const axes = deriveComparisonAxes(context, { discoveredAntipatterns, discoveredStack });
+  const axes = deriveComparisonAxes(context, {
+    discoveredAntipatterns,
+    discoveredStack,
+    evidenceItems
+  });
   const candidates = candidatesFromKnowledgeMap(knowledgeMap);
   if (candidates.length === 0 || axes.length === 0) {
     return {
@@ -2708,6 +2815,14 @@ async function synthesizeArchitectureSpec({
       "  option's properties. Do not put private_corpus citation_ids in any",
       "  option's evidence_citations array or in the decision's top-level",
       "  evidence_citations.",
+      "- When citing a claim sourced from source_type: \"community_discussion\",",
+      "  frame it as ADOPTION / PRACTITIONER signal — e.g. \"r/LocalLLaMA",
+      "  practitioners report X\" or \"HN discussion notes Y\" — not as a hard",
+      "  architectural fact. Still cite these claims (they are real evidence of",
+      "  what teams choose and why), but in the comparison matrix they",
+      "  primarily contribute to adoption-mode axes (ecosystem_traction,",
+      "  integration_breadth, team_adoption_pattern, practitioner_pain_points)",
+      "  — not to latency / consistency / throughput axes.",
       "",
       "Each option's when_to_pick / when_not_to_pick should reference whatever the matrix and evidence actually surface — fit-for-purpose, deployment mode, vendor concerns (pricing / lock-in / SDK quality / on-prem availability / ecosystem) when relevant, and pattern-level invariants when relevant. forbidden_topologies (per option) lists families / patterns / products that conflict with that option's invariants.",
       "",
@@ -3780,11 +3895,108 @@ async function prepareRun({ inputPath, flags, chained = false }) {
   };
 }
 
+// Per-task max queries — used to cap "both"-strategy peers so they don't
+// blow the per-peer query budget by emitting architecture + adoption sets in
+// full. Architecture queries win the cap (peer's architecture, when public,
+// is the highest-signal evidence).
+const PEER_TASK_MAX_QUERIES = 5;
+
+// Architecture-strategy queries: today's behavior. Targets engineering blogs,
+// public github, ARCHITECTURE.md / docs. Use when the peer's architecture is
+// publicly documented.
+function architecturePeerQueries({ label, decision, peer }) {
+  return [
+    `${label} ${decision} architecture`,
+    `${label} ${decision} site:github.com`,
+    peer.engineering_blog_url
+      ? `${label} ${decision} blog`
+      : `${label} how they built ${decision}`
+  ];
+}
+
+// Adoption-strategy queries: targets community signal — Reddit, HN, Twitter,
+// reverse-engineering posts, migration write-ups. Use when the peer is
+// closed-source or otherwise lacks public architecture docs but carries real
+// adoption signal (Obsidian, Roam, Mem.ai, Notion).
+//
+// The LLM picks relevant subreddits / communities per topic — we don't
+// hardcode a subreddit list because the right community varies per decision.
+async function adoptionPeerQueries({ context, peer }) {
+  const label = peer.label || peer.name;
+  const decisionAspect = context.decision;
+  const useCase = context.domain || decisionAspect;
+  try {
+    const raw = await callLlmJson({
+      label: "adoption_research_planner",
+      system: [
+        "You are the adoption-research query planner for Architecture Deep Research.",
+        "",
+        "This peer is closed-source or lacks public architecture docs, but it",
+        "carries real ADOPTION signal — community size, plugin ecosystems,",
+        "\"we tried X and switched to Y\" threads, reverse-engineering posts,",
+        "practitioner pain points. Your job is to generate search queries that",
+        "target that signal, not engineering blogs.",
+        "",
+        "Generate 4-6 queries that route to community discussion (Reddit, HN,",
+        "Twitter/X, Stack Exchange) and migration / reverse-engineering write-ups.",
+        "",
+        "Include a mix of these shapes (adapt the exact wording to the peer +",
+        "decision; do not just template-fill):",
+        "  - <peer> reddit users architecture experience <decision_aspect>",
+        "  - <peer> hacker news comments <decision_aspect>",
+        "  - site:reddit.com <peer> <use_case>",
+        "  - site:news.ycombinator.com <peer>",
+        "  - site:twitter.com <peer> <decision_aspect>",
+        "  - how does <peer> store data / <peer> internals reverse engineering",
+        "  - <peer> vs <known_competitor> migration",
+        "",
+        "Pick the relevant subreddit / community when one is well-known for",
+        "this decision (e.g. r/LocalLLaMA for local LLM tools, r/ObsidianMD",
+        "for Obsidian). Do not hardcode a single subreddit — choose what fits",
+        "the peer + decision.",
+        "",
+        "Output JSON: { queries: [string] }."
+      ].join("\n"),
+      user: JSON.stringify({
+        peer: {
+          name: peer.name,
+          label,
+          why_comparable: peer.why_comparable || ""
+        },
+        decision_aspect: decisionAspect,
+        use_case: useCase,
+        domain: context.domain
+      })
+    });
+    const queries = toArray(raw.queries)
+      .map((q) => String(q || "").trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    if (queries.length > 0) return queries;
+  } catch {
+    // Fall through to a deterministic fallback so a planner failure never
+    // strands an adoption-strategy peer with zero queries.
+  }
+  // Fallback: deterministic adoption-shaped queries built without the LLM.
+  return [
+    `${label} reddit users architecture experience ${decisionAspect}`,
+    `${label} hacker news comments ${decisionAspect}`,
+    `site:reddit.com ${label} ${useCase}`,
+    `site:news.ycombinator.com ${label}`,
+    `how does ${label} store data`
+  ];
+}
+
 // Build research tasks targeting peer products from peers.json (when present).
 // Real users picking architectures look at 3-5 similar products to see what
 // they did. One task per peer, narrowly scoped to how that peer handles the
-// SPECIFIC decision (not their entire architecture). Sources are the peer's
-// GitHub repo + docs + engineering blog when known.
+// SPECIFIC decision (not their entire architecture).
+//
+// Query shape branches on evidence_strategy:
+//   architecture: github repo + docs + engineering blog (today's behavior)
+//   adoption:     reddit / HN / twitter / migration write-ups
+//   both:         merged set, capped at PEER_TASK_MAX_QUERIES
+//                 (architecture wins ties).
 async function buildPeerResearchTasks({ context, outDir }) {
   let peersArtifact;
   try {
@@ -3800,7 +4012,7 @@ async function buildPeerResearchTasks({ context, outDir }) {
     return { tasks: [], status: "peers_json_empty" };
   }
 
-  const tasks = peers.map((peer, index) => {
+  const tasks = await Promise.all(peers.map(async (peer, index) => {
     const sources = [
       peer.github_url,
       peer.docs_url,
@@ -3810,25 +4022,49 @@ async function buildPeerResearchTasks({ context, outDir }) {
       .map((s) => String(s || "").trim())
       .filter(Boolean);
     const label = peer.label || peer.name;
+    const strategy =
+      typeof peer.evidence_strategy === "string"
+        ? peer.evidence_strategy.trim().toLowerCase()
+        : "architecture";
+
+    let search_queries;
+    if (strategy === "adoption") {
+      search_queries = await adoptionPeerQueries({ context, peer });
+    } else if (strategy === "both") {
+      const archQs = architecturePeerQueries({ label, decision: context.decision, peer });
+      const adoptQs = await adoptionPeerQueries({ context, peer });
+      // Architecture queries first so when the cap fires they survive.
+      search_queries = [...archQs, ...adoptQs].slice(0, PEER_TASK_MAX_QUERIES);
+    } else {
+      search_queries = architecturePeerQueries({ label, decision: context.decision, peer });
+    }
+
+    const isAdoptionShape = strategy === "adoption" || strategy === "both";
+    const objective = isAdoptionShape
+      ? `Find ADOPTION evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles ${context.decision}: community discussion, practitioner pain points, plugin / integration ecosystem, "we tried X and switched to Y" threads. ${label} is researched via Reddit / HN / Twitter / reverse-engineering posts because its architecture isn't publicly documented but its adoption signal is real.`
+      : `Find evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles the specific decision aspect: ${context.decision}. Look at their public repo, ARCHITECTURE.md, docs, and engineering blog. Extract their specific choice (e.g. pgvector vs Pinecone, BullMQ vs Trigger.dev) with the citation pointing at the file or URL where they made that choice.`;
+
+    const success_criteria = isAdoptionShape
+      ? [
+          `Identify what ${label}'s practitioner community says about ${context.decision} — ecosystem traction, integration breadth, common pain points.`,
+          `Capture concrete adoption signals (subreddit size, plugin counts, migration stories) when the cited sources expose them.`
+        ]
+      : [
+          `Identify the specific ${context.decision} ${label} uses, with a citation to ${peer.github_url || peer.docs_url || "their public docs"}.`,
+          `Capture quantitative signals (scale, version, deployment shape) when ${label}'s sources expose them.`
+        ];
+
     return {
       id: `peer_${slugify(peer.name)}_${index + 1}`,
-      title: `Peer architecture: how ${label} handles ${context.decision}`,
-      objective: `Find evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles the specific decision aspect: ${context.decision}. Look at their public repo, ARCHITECTURE.md, docs, and engineering blog. Extract their specific choice (e.g. pgvector vs Pinecone, BullMQ vs Trigger.dev) with the citation pointing at the file or URL where they made that choice.`,
-      search_queries: [
-        `${label} ${context.decision} architecture`,
-        `${label} ${context.decision} site:github.com`,
-        peer.engineering_blog_url
-          ? `${label} ${context.decision} blog`
-          : `${label} how they built ${context.decision}`
-      ],
+      title: `Peer ${isAdoptionShape ? "adoption" : "architecture"}: how ${label} handles ${context.decision}`,
+      objective,
+      search_queries,
       source_targets: sources,
-      success_criteria: [
-        `Identify the specific ${context.decision} ${label} uses, with a citation to ${peer.github_url || peer.docs_url || "their public docs"}.`,
-        `Capture quantitative signals (scale, version, deployment shape) when ${label}'s sources expose them.`
-      ],
-      peer_target: peer.name
+      success_criteria,
+      peer_target: peer.name,
+      evidence_strategy: strategy === "adoption" || strategy === "both" ? strategy : "architecture"
     };
-  });
+  }));
   return { tasks, status: "ok" };
 }
 
@@ -4839,10 +5075,18 @@ async function verifyCitationsPhase({
       claim_context: i.claim_context,
       reason: String(i.reason || "").slice(0, 200)
     }));
+  // Count how many of the audited citations came from community-discussion
+  // sources (Reddit, HN, Twitter, Stack Exchange). Surfaced so a run that
+  // leans heavily on practitioner signal is visible to the reader.
+  const communitySourceCount = toArray(audit.items).filter((i) => {
+    const ev = evidenceById.get(Number(i.citation_id));
+    return ev && ev.source_type === "community_discussion";
+  }).length;
   await appendEvent(outDir, "citation_audit_completed", {
     total_citations: totalCitations,
     verified_count: verifiedCount,
     unsupported_count: unsupportedCount,
+    community_source_count: communitySourceCount,
     unsupported_details: unsupportedDetails
   });
   return audit;
@@ -5804,10 +6048,13 @@ export {
   buildExecutionHandoff,
   buildGuardrails,
   buildKnowledgeMap,
+  buildPeerResearchTasks,
   buildResearchPlan,
   buildStrategicContext,
   callLlmJson,
+  classifyCommunityPlatform,
   classifySource,
+  extractCommunityPlatformDetails,
   compareTopologiesPhase,
   critiqueDecisionPhase,
   deepResearch,
