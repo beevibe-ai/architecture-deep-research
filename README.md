@@ -17,11 +17,15 @@ Architecture is the last bastion of human judgment in software, and right now it
 - **Design-implement drift.** The architecture gets settled. Code gets written. A week later nobody knows which parts of the original spec are still true — the drift is real but unmapped.
 - **Education + PR review don't scale to AI-coding speed.** Teams onboard to DDD / clean architecture / SOLID in learning series that cost weeks of senior time. Then every PR still takes 1+ hour of review for 10+ violations — because AI agents don't sit in the learning series, new hires keep arriving, and the patterns slip even for the people who attended. The team lead becomes both educator and enforcer, and that workload scales linearly with team size.
 
-Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the flagship feature, fully shipped — automates the decision-time research a senior architect would do by hand.** Three additional capabilities feed back to keep the decision honest as code lands — turning a periodic learning series + 1-hour PR review into continuous enforcement the coding agent itself respects at write time.
+Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the flagship feature, fully shipped — automates the decision-time research a senior architect would do by hand.** A continuously-evolving brain feeds it, and three additional capabilities feed back to keep the decision honest as code lands.
 
 ```text
-       ┌──────────────────────────────────────────────────────────────┐
-       │                                                              │
+   ┌──────────── BRAIN (always-on knowledge graph) ────────────┐
+   │   voices · trending OSS · competitor architecture · papers │
+   └────────────────────────────┬───────────────────────────────┘
+                                │ feeds
+       ┌────────────────────────┼─────────────────────────────────────┐
+       │                        ↓                                     │
        ↓                                                              │
   ▶ decide  ────▶  ▶ guard  ────▶  ▶ review  ────▶  ▶ drift  ─────────┘
    adr decide       adr guard       adr review      adr drift
@@ -31,11 +35,12 @@ Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the
 **Flagship: Architecture Deep Research (`adr decide`).** Live, evidence-only research that produces a ranked option set with explicit tradeoffs, per-option contracts, and a citation audit. The rest of this README is the deep-dive.
 
 **Next capabilities (in development):**
+- **The brain** — always-on knowledge graph. Continuously watches what the world ships today: the engineers with track records (Linear, Stripe, Notion, Vercel) on Twitter / HN / talks; trending OSS in your space (filtered for staying power, not flash-in-the-pan stars); competitors' architecture — public repos + ARCHITECTURE.md + engineering posts, not their landing pages; papers becoming engineering reality (arXiv / USENIX / ACM filtered through "what's actually being implemented"). Personalized to your stack via your PRD + past ADR runs. Catches the academic → engineering crossover before competitors do. Visual + browsable like Obsidian. Feeds all four loop stages.
 - **`adr guard`** — Claude Code hook + pre-commit check. Streams `agent-guardrails.md` + the team's `discovered-principles.json` antipatterns into the coding agent's context at write time. Blocks new code that re-introduces a rejected pattern, with a citation back to the file:line where the team rejected it.
 - **`adr review <PR#>`** — PR-time check against the spec + antipattern set. Returns: *does this PR stay inside the per-option contract? does it re-introduce a discovered antipattern? which ADR.md sections are the reviewer being asked to take on faith?* Posts as a PR comment, anchored to the saved ADR run.
 - **`adr drift <out_dir>`** — Periodic scan. Compares the current repo state against `architecture.spec.json` + per-option invariants from a prior ADR run. Reports drift items keyed to file:line, with three exits: update the code, auto-prep a `supersede` to update the spec, or accept the drift with explicit rationale (`drift-accepted.json`).
 
-Together, these are the AI CTO loop: the architecture decision is settled, the coding agent honors the contract, PRs get reviewed against the contract, drift gets detected and either fixed or owned. The team lead stops being the only memory.
+Together, these are the AI CTO loop: the brain stays current with the field, the architecture decision is settled with that current evidence, the coding agent honors the contract, PRs get reviewed against the contract, drift gets detected and either fixed or owned. The team lead stops being the only memory.
 
 ---
 
@@ -536,10 +541,11 @@ Open-source core (Apache-2.0):
 - Benchmark harness.
 
 **In development (the rest of the AI CTO loop):**
+- **The brain** — always-on knowledge graph that watches voices, trending OSS, competitor architecture, and papers. Personalized to your stack. Feeds all four loop stages. Visual + browsable.
 - `adr drift <out_dir>` — periodic scan, compares current repo state against the saved spec, reports drift by file:line.
 - `adr review <PR#>` — PR-time check against the per-option contract + antipattern set.
 - `adr guard` — Claude Code hook + pre-commit check that streams team antipatterns into the coding agent's context at write time.
 
-The repo URL remains `beevibe-ai/architecture-deep-research` — that's where Beevibe AI CTO ships from. The product name is "Beevibe AI CTO"; ADR is the flagship feature; the upcoming three commands close the loop.
+The repo URL remains `beevibe-ai/architecture-deep-research` — that's where Beevibe AI CTO ships from. The product name is "Beevibe AI CTO"; ADR is the flagship feature; the brain + the upcoming three commands close the loop.
 
 The commercial Beevibe surface can layer curated corpora, managed researcher agents, org-level memory, and team governance on top.
