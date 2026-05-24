@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/follow-up-questions.schema.json",
-  "title": "Beevibe Architecture Deep Research Follow-up Questions",
-  "description": "Sharper sub-decision questions derived from comparison-matrix axis variance. Each follow-up names a high-spread axis, a question that splits the options on that axis, and a pre-filled `adr deep-research` command the user can paste to chase it.",
+  "title": "Architecture Deep Research — Where to Dig Deeper",
+  "description": "Research threads to deepen evidence on the highest-spread axes from this run. Each entry names a high-spread axis, the next research dig framed as a question, and a pre-filled `adr deep-research` command the user can paste to chase it.",
   "type": "object",
   "required": ["version", "follow_ups"],
   "properties": {
@@ -10,10 +10,6 @@
     "decision": { "type": "string" },
     "domain": { "type": "string" },
     "generated_at": { "type": "string" },
-    "mode": {
-      "type": "string",
-      "enum": ["ranked_options", "deferred"]
-    },
     "follow_ups": {
       "type": "array",
       "items": {
@@ -30,11 +26,11 @@
           },
           "question": {
             "type": "string",
-            "description": "Sharp 1-sentence sub-decision question that splits the options on this axis."
+            "description": "Sharp 1-sentence research thread to deepen evidence on this axis."
           },
           "suggested_command": {
             "type": "string",
-            "description": "Pre-filled `adr deep-research` command the user can paste to chase the sub-decision."
+            "description": "Pre-filled `adr deep-research` command the user can paste to chase the thread."
           }
         },
         "additionalProperties": true

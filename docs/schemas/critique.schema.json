@@ -6,7 +6,6 @@
   "required": ["version", "issues", "summary", "high_severity_count", "recommend_human_review"],
   "properties": {
     "version": { "type": "string" },
-    "selected_topology": { "type": ["string", "null"] },
     "issues": {
       "type": "array",
       "items": {

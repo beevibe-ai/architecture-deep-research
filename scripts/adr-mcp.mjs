@@ -235,37 +235,39 @@ async function handleDeepResearch(args) {
 
   const drResult = await deepResearch({ inputPath: args.input_path || null, flags });
 
-  // Read back the handoff so the caller sees the result without a second tool
-  // call. Some hosts (Claude Code) display the response inline and this gives
-  // them something meaningful to surface.
+  // Read back the research report so the caller sees the result without a
+  // second tool call. The default pipeline does NOT produce execution-handoff.json
+  // anymore — that's lazy (run `adr handoff <out_dir> --option <name>`).
   const outDir = path.resolve(args.out_dir);
-  let handoff = null;
+  let report = null;
   try {
-    handoff = JSON.parse(
-      await readFile(path.join(outDir, "execution-handoff.json"), "utf8")
+    report = JSON.parse(
+      await readFile(path.join(outDir, "research-report.json"), "utf8")
     );
   } catch {
-    // Handoff missing means the run did not reach the handoff stage (e.g.
-    // critique blocked it). Caller can still inspect the run directory.
+    // Report missing means the run did not reach the artifact stage. Caller
+    // can still inspect the run directory.
   }
 
   return textResult({
     out_dir: outDir,
-    handoff_present: Boolean(handoff),
-    handoff: handoff
+    report_present: Boolean(report),
+    report: report
       ? {
-          decision_id: handoff.decision_id,
-          selected_topology: handoff.architecture_spec?.selected_topology || null,
-          required_invariants: handoff.required_invariants || [],
-          forbidden_topologies: handoff.forbidden_topologies || [],
-          critique_summary: handoff.critique_summary || null,
-          citation_audit_summary: handoff.citation_audit_summary || null,
-          comparison_matrix_summary: handoff.comparison_matrix_summary || null
+          decision_id: report.id,
+          title: report.title,
+          candidates: (report.options || []).map((o) => ({
+            name: o.name,
+            label: o.label,
+            evidence_depth: o.evidence_depth || "thin"
+          })),
+          executive_summary: String(report.executive_summary || "").slice(0, 500),
+          open_questions: report.open_questions || []
         }
       : null,
-    next_step: handoff
-      ? `Read ${path.join(outDir, "ADR.md")} for the human-readable decision record, or pass ${path.join(outDir, "execution-handoff.json")} to a coding agent as the implementation contract.`
-      : `Run did not reach the handoff stage. Inspect ${path.join(outDir, "state.json")} and ${path.join(outDir, "events.jsonl")} to diagnose.`
+    next_step: report
+      ? `Read ${path.join(outDir, "ADR.md")} for the human-readable report. Pick a candidate, then run \`adr handoff ${outDir} --option <name>\` to generate the implementation contract.`
+      : `Run did not reach the artifact stage. Inspect ${path.join(outDir, "state.json")} and ${path.join(outDir, "events.jsonl")} to diagnose.`
   });
 }
 

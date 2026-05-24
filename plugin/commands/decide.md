@@ -16,7 +16,7 @@ Ask **one** question (skip if the user already named it):
 
 Capture as `<DECISION>`. Derive `<SLUG>` by lowercasing and replacing non-alphanum with `-`. Derive `<DOMAIN>` from the repo's README / package.json — if you can't tell, ask.
 
-ADR no longer distinguishes "family" from "concrete" decisions. The synthesizer treats the option space the same way regardless — whatever candidates the live evidence promotes (architecture patterns, specific products, or a mix) end up in `ranked_options`. The reader picks.
+ADR produces a research report on the decision space — whatever candidates the live evidence surfaces (architecture patterns, specific products, or a mix) get their own section in `research-report.json` and `ADR.md`. The reader decides.
 
 ## Step 1.5 — Ask whether to include peer products
 
@@ -107,10 +107,10 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `adaptive_research_cycle_completed` | ✓  Adaptive cycle `cycle` complete (`promoted_candidate_count` promoted) |
 | `adversarial_research_cycle_started` | ⚔️  Adversarial cycle `cycle`: arguing against candidates |
 | `adversarial_research_cycle_completed` | ✓  Adversarial cycle `cycle` complete (`empty_cells_after` empty cells remain) |
-| `synthesis_started` | 🧩  Synthesizing — `promoted_candidates` candidates, `evidence_count` evidence items |
-| `critique_started` | 🧐  Critique: evaluating option set quality |
-| `resynthesis_started` | 🔄  Re-synthesizing to address `original_high_severity_count` high-severity issues |
-| `resynthesis_accepted` | ✓  Re-synthesis accepted (`original_high_severity_count` → `new_high_severity_count`, selected: `new_selected_topology`) |
+| `synthesis_started` | 🧩  Writing research report — `candidates` candidates, `evidence_count` evidence items |
+| `critique_started` | 🧐  Critique: evaluating report comprehensiveness |
+| `resynthesis_started` | 🔄  Re-writing report to address `original_high_severity_count` high-severity issues |
+| `resynthesis_accepted` | ✓  Re-synthesis accepted (`original_high_severity_count` → `new_high_severity_count`) |
 | `resynthesis_rejected` | ↪  Re-synthesis rejected — keeping original (`reason`) |
 | `citation_audit_started` | 🔗  Citation audit: verifying citations across `evidence_count` items |
 | `citation_audit_batch_started` | &nbsp;&nbsp;⤓ batch `<claim_context>` (`citation_count` citations) |
@@ -120,7 +120,8 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `claim_audit_started` | 📝  Claim audit: scanning artifacts |
 | `claim_audit_completed` | 📝  Claim audit: `total_claims_checked` checked, `uncited_material_claim_count` uncited |
 | `artifact_validation_warnings` | ⚠  `warning_count` artifact(s) failed schema; wrote .invalid.json siblings (`files`) |
-| `handoff_writing` | 📝  Writing handoff artifacts |
+| `handoff_skipped` | ↪  Handoff artifacts skipped — run `adr handoff <out_dir> --option <name>` after picking a candidate |
+| `handoff_writing` | 📝  Writing handoff artifacts (only when `adr handoff` ran) |
 
 ### Multi-line content events (render as a small block in chat)
 
@@ -200,17 +201,17 @@ These are annotations on the option space, not filters. They flow to synthesis a
   • weaviate — weak on fits_existing_stack: "Requires its own container alongside Postgres [9]"
 ```
 
-**`synthesis_completed`** — header + per-option summary:
+**`synthesis_completed`** — header + per-candidate summary:
 ```
-✓  Synthesis done — mode=ranked_options, 2 options
-  Options:
-    • pgvector (strong on fits_existing_stack, cost_envelope, p95_latency)
+✓  Report written — 2 candidates
+  Candidates:
+    • pgvector [thick] (strong on fits_existing_stack, cost_envelope, p95_latency)
       └ Pick when: existing Postgres deployment, low-single-digit-M vectors
-    • weaviate (strong on hybrid_search; weak on fits_existing_stack)
+    • weaviate [medium] (strong on hybrid_search; weak on fits_existing_stack)
       └ Pick when: hybrid search is mandatory and Postgres is not in the stack
 ```
 
-A `mode=ranked_options` run with `ranked_options[].length === 1` just means ADR found one option in this space — it's still the reader's call. A `mode=deferred` run means no candidate cleared the promotion gate; re-run with sharper context.
+A run with `candidate_count === 1` just means ADR found one candidate in this space — it's still the reader's call. A run with no candidates means the evidence pool didn't surface any (re-run with sharper context).
 
 **`critique_completed`** — header + top issues:
 ```
@@ -224,7 +225,7 @@ A `mode=ranked_options` run with `ranked_options[].length === 1` just means ADR 
 ```
 🔗  Citation audit: 29/30 verified, 1 unsupported
   Unsupported:
-    • [21] for candidate:pgvector:considered — "Cited paper discusses HNSW indexes in general, not pgvector specifically"
+    • [21] for candidate:pgvector — "Cited paper discusses HNSW indexes in general, not pgvector specifically"
 ```
 
 **`run_completed`** — final summary block (lives at the end of Step 7).
@@ -232,10 +233,8 @@ A `mode=ranked_options` run with `ranked_options[].length === 1` just means ADR 
 ### Pacing
 
 Stream every event individually. Do NOT consolidate multiple events into one message. The only exception: when `research_source_fetching` fires for many URLs in the same round, render them consecutively on adjacent lines (still one chat message per event).
-| `decision_downgraded_by_critique` | ⚠️  Recommendation dropped by critique (option set preserved) |
-| `decision_downgraded_by_citation_audit` | ⚠️  Recommendation dropped by citation audit (option set preserved) |
-| `handoff_writing` | 📝  Writing handoff artifacts |
-| `run_completed` | ✅  Run complete — handoff written |
+| `handoff_skipped` | ↪  Handoff artifacts skipped — `adr handoff <out_dir> --option <name>` after picking |
+| `run_completed` | ✅  Run complete — research report written |
 
 Unknown event types: print as `<event_type>` with no message body. Don't lose them.
 
@@ -260,69 +259,69 @@ If the user wants to add context before the run completes, the right move is to 
 You'll be notified when the background deep-research task completes (the one from Step 4, NOT the tail task). At that point:
 
 1. Stop the `tail -F` task (let it die naturally — it has no more input — or kill it explicitly via Bash).
-2. **Read `ADR.md` first.** This is the founder-facing artifact — decision-context header, per-option tradeoffs, "Evidence from your repo" section, "Follow-up Questions" section, and References. It's what the user actually wants to read. The handoff JSON is for downstream coding agents.
+2. **Read `ADR.md` first.** This is the founder-facing research report — executive summary, option space, per-candidate sections (`what evidence shows` / `what evidence does not show` / pick / avoid / citations), cross-cutting tradeoffs, open questions, where to dig deeper, references. It's what the user actually wants to read.
 
 ```bash
 cat .adr-runs/<SLUG>/ADR.md
 ```
 
-3. Then read `execution-handoff.json` ONLY if you need the structured `mode` / `options[]` fields for the summary at Step 8, or to drive an implement-the-option flow at Step 9.
+3. Then read `research-report.json` if you need the structured `options[]` for Step 8's summary.
 
 ```bash
-cat .adr-runs/<SLUG>/execution-handoff.json
+cat .adr-runs/<SLUG>/research-report.json
 ```
 
 4. If `ADR.md` doesn't exist, the run did not reach the artifact stage. Inspect `.adr-runs/<SLUG>/state.json` (the kernel writes `{"status": "crashed", "error": ...}` on every failure path now) and the tail of `events.jsonl` to find out what died. Report clearly to the user. Salvageable run state: `evidence.json`, `comparison-matrix.json`, and `critique.json` may still be present and useful even when the run crashed.
 
 ## Step 8 — Summarize the result
 
-Read the handoff and branch on `mode`:
+Read `research-report.json` and `state.json`:
 
-- **`mode: "ranked_options"`** — the option space is mapped. Show:
+- **`candidate_count > 0`** — the option space is mapped. Show:
   ```
-  Mode:        ranked_options — ADR mapped the space, the reader picks
-  Options:     <options[].name>, comma-separated
-  Matrix:      <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
-  Citations:   <verified_count>/<total_citations> verified
-  Follow-ups:  <follow_ups[].length> sharper sub-decisions proposed
+  Candidates:   <options[].name>, comma-separated
+  Depth split:  <thick count> thick, <medium> medium, <thin> thin
+  Matrix:       <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
+  Citations:    <verified_count>/<total_citations> verified
+  Open Qs:      <open_questions.length>
+  Dig deeper:   <follow_ups.length> research threads proposed
   ```
-  Then offer: "Want me to walk through each option's tradeoffs from `ADR.md`, or look at the follow-up questions?"
+  Then offer: "Want me to walk through each candidate from `ADR.md`, or look at the research threads to dig deeper?"
 
-  When `options[].length === 1`, frame it as "ADR found one option in this space" — not "the answer." The follow-up questions are how to widen the search if the lone survivor feels too thin.
+  When `candidate_count === 1`, frame it as "ADR found one candidate in this space" — not "the answer." The dig-deeper section is how to widen the search if the lone candidate feels too thin.
 
-- **`mode: "deferred"`** — no viable options. Show:
+- **`candidate_count === 0`** — no candidates surfaced. Show:
   ```
-  Mode:       deferred — no candidate cleared the promotion gate
+  Result:     no candidates surfaced from the evidence pool
   Reason:     read critique.json
   Next step:  re-run with sharper context (see follow-up-questions.json),
               or run `adr supersede` once more evidence is available
   ```
 
-If `critique_summary.recommend_human_review` is `true`, append:
+If `critique` flagged `recommend_human_review: true`, append:
 
 ```
-⚠  recommend_human_review = true — the critique flagged structural issues with the option set.
-   Open .adr-runs/<SLUG>/ADR.md before implementing.
+⚠  recommend_human_review = true — the critique flagged structural issues with the report.
+   Open .adr-runs/<SLUG>/ADR.md before acting.
 ```
 
-## Step 9 — Offer next steps
+## Step 9 — Your job after the report
 
-Ask which the user wants:
+The report does not pick a candidate. That's the human's call. Read the per-candidate sections in `ADR.md`, weigh them against your team-side context (existing infrastructure, hiring plans, vendor relationships, budget), then:
 
-- Open `ADR.md` and walk through each option's tradeoffs
+- Walk through each candidate's tradeoffs from `ADR.md`
 - Walk the comparison matrix cell by cell
-- Look at `follow-up-questions.json` and pick a sharper sub-decision to run next
-- Implement under one option's contract (ask the user which option first — there is no default; honor that option's `required_invariants` and `forbidden_topologies` from `execution-handoff.json` -> `options[]`)
+- Look at `follow-up-questions.json` and pick a sharper research thread to chase next
+- Once you've picked a candidate, run `adr handoff <out_dir> --option <name>` to generate the implementation contract (`agent-guardrails.md` + `execution-handoff.json`). Pass `--write-evaluation-pack` to also generate `domain-evaluation-pack.json`.
 
 ## Hard rules for the implement path
 
-If the user says "implement," `execution-handoff.json` carries per-option contracts under `options[]`. The agent's job:
+When the user has run `adr handoff` and is ready to implement, the agent's job:
 
-1. **Pick one option.** ADR does not pick for you — ask the user which option from `ranked_options[]` before writing any code.
-2. **Honor THAT option's `required_invariants`** in the code you write.
-3. **Never reach for anything in THAT option's `forbidden_topologies`.**
-4. Run against `domain-evaluation-pack.json` test cases before declaring done.
-5. If you cannot satisfy an invariant for the chosen option, stop and surface the conflict — don't paper over it, and don't silently swap to a different option.
+1. **Read the chosen candidate's block.** `execution-handoff.json` is scoped to one candidate by `--option`. Honor THAT candidate's `strong_axes`, `weak_axes`, `when_to_pick`, `when_not_to_pick`, and `citations`.
+2. **Respect `agent-guardrails.md`** for the chosen candidate.
+3. **Run against `domain-evaluation-pack.json`** test cases before declaring done (only if it was generated).
+4. If something the cited evidence doesn't support comes up, surface the gap — don't paper over it, and don't silently swap to a different candidate.
 
 ## Failure modes
 

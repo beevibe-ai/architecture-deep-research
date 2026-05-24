@@ -8,32 +8,36 @@ const SOURCE_TYPE_PILL = {
 };
 
 export default function EvidencePanel({ evidence, knowledgeMap }) {
-  const promoted = knowledgeMap?.promoted_candidates || [];
-  const insufficient = knowledgeMap?.insufficient_evidence_candidates || [];
+  const candidates =
+    knowledgeMap?.candidates || knowledgeMap?.promoted_candidates || [];
+  const offTopic =
+    knowledgeMap?.off_topic_candidates ||
+    knowledgeMap?.insufficient_evidence_candidates ||
+    [];
   return (
     <div className="card p-5 space-y-4">
       <div className="flex items-baseline justify-between">
         <h2 className="card-title">Evidence</h2>
         <div className="text-xs text-ink-500">
-          {evidence.length} items · {promoted.length} promoted, {insufficient.length} insufficient
+          {evidence.length} items · {candidates.length} candidates, {offTopic.length} off-topic
         </div>
       </div>
-      {(promoted.length > 0 || insufficient.length > 0) && (
+      {(candidates.length > 0 || offTopic.length > 0) && (
         <div className="rounded-lg border border-ink-800 bg-ink-900/30 p-3 text-xs">
-          {promoted.length > 0 && (
+          {candidates.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-ink-400">Promoted candidates:</span>
-              {promoted.map((p) => (
+              <span className="text-ink-400">Candidates:</span>
+              {candidates.map((p) => (
                 <span key={p.name} className="pill-success">
-                  {p.label} · {p.evidence_count}
+                  {p.label} · {p.evidence_depth || "thin"} · {p.evidence_count}
                 </span>
               ))}
             </div>
           )}
-          {insufficient.length > 0 && (
+          {offTopic.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-ink-400">Insufficient evidence:</span>
-              {insufficient.map((p) => (
+              <span className="text-ink-400">Off-topic:</span>
+              {offTopic.map((p) => (
                 <span key={p.name} className="pill-warn">
                   {p.label} · {p.evidence_count}
                 </span>

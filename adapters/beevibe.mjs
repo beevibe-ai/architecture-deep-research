@@ -18,9 +18,12 @@ function createBeevibeArchitectAgentConfig({
     parent_agent_id: parentAgentId,
     runtime_config: {
       specialist: "architecture_deep_research",
-      output_boundary: "adr_stops_at_execution_handoff",
+      output_boundary: "adr_stops_at_research_report",
       required_artifacts: [
-        "architecture.spec.json",
+        "research-report.json",
+        "ADR.md"
+      ],
+      handoff_artifacts: [
         "domain-evaluation-pack.json",
         "execution-handoff.json",
         "agent-guardrails.md"
@@ -33,47 +36,64 @@ function createBeevibeArchitectAgentConfig({
 
 function memoryFactsFromSpec(spec, knowledgeMap) {
   const candidates = [
-    ...(knowledgeMap.promoted_candidates || []),
-    ...(knowledgeMap.insufficient_evidence_candidates || [])
+    ...(knowledgeMap.candidates || []),
+    ...(knowledgeMap.off_topic_candidates || [])
   ];
 
   return [
     {
       type: "architecture_decision",
-      text: `ADR selected ${spec.decision.selected_topology} for ${spec.decision.title}.`,
-      source: "architecture.spec.json",
+      text: `ADR mapped ${(spec.options || []).length} candidates for ${spec.title || spec.id || "the decision"}.`,
+      source: "research-report.json",
       confidence: 0.9
     },
     ...candidates.slice(0, 8).map((candidate) => ({
       type: "architecture_precedent",
-      text: `${candidate.label} was ${candidate.promotion_status} with citations ${candidate.citations.join(", ")}.`,
+      text: `${candidate.label} surfaced with evidence_depth=${candidate.evidence_depth || "thin"} (citations ${(candidate.citations || []).join(", ")}).`,
       source: "knowledge-map.json",
-      confidence: candidate.promotion_status === "evidence_backed_candidate" ? 0.8 : 0.45
+      confidence: candidate.evidence_depth === "thick" ? 0.8 : candidate.evidence_depth === "medium" ? 0.65 : 0.45
     }))
   ];
 }
 
 async function createBeevibeMeshHandoff({ outDir }) {
   const resolved = path.resolve(outDir);
-  const spec = await readJson(path.join(resolved, "architecture.spec.json"));
-  const handoff = await readJson(path.join(resolved, "execution-handoff.json"));
-  const evaluationPack = await readJson(path.join(resolved, "domain-evaluation-pack.json"));
+  const spec = await readJson(path.join(resolved, "research-report.json"));
   const knowledgeMap = await readJson(path.join(resolved, "knowledge-map.json"));
+  // execution-handoff.json is optional — produced only when `adr handoff`
+  // ran for a chosen candidate.
+  let handoff = null;
+  try {
+    handoff = await readJson(path.join(resolved, "execution-handoff.json"));
+  } catch {
+    // missing — caller hasn't run `adr handoff` yet
+  }
+  let evaluationPack = null;
+  try {
+    evaluationPack = await readJson(path.join(resolved, "domain-evaluation-pack.json"));
+  } catch {
+    // missing — same reason
+  }
 
   return {
     type: "architecture_deep_research_handoff",
-    boundary: handoff.handoff_boundary,
+    boundary: handoff?.handoff_boundary || "adr_stops_at_research_report",
     architect_agent: createBeevibeArchitectAgentConfig(),
-    selected_topology: spec.decision.selected_topology,
-    required_invariants: handoff.required_invariants,
-    forbidden_topologies: handoff.forbidden_topologies,
-    artifacts: Object.fromEntries(
-      Object.entries(handoff.artifacts).map(([key, value]) => [key, path.join(resolved, value)])
-    ),
-    evaluation_suite: evaluationPack.suite,
+    chosen_option: handoff?.chosen_option || null,
+    artifacts: handoff
+      ? Object.fromEntries(
+          Object.entries(handoff.artifacts || {}).map(([key, value]) => [key, path.join(resolved, value)])
+        )
+      : {
+          adr: path.join(resolved, "ADR.md"),
+          research_report: path.join(resolved, "research-report.json")
+        },
+    evaluation_suite: evaluationPack?.suite || null,
     memory_facts: memoryFactsFromSpec(spec, knowledgeMap),
     mesh_instruction:
-      "Route implementation work through the Architect specialist first. IC coding agents must consume this handoff before writing code and must request a superseding ADR before changing topology."
+      handoff?.chosen_option
+        ? `Route implementation work through the Architect specialist using the ${handoff.chosen_option} contract. IC coding agents must consume this handoff before writing code and must request a superseding ADR before changing topology.`
+        : "ADR produced a research report. Pick a candidate, then run `adr handoff <out_dir> --option <name>` to generate an implementation contract before routing work."
   };
 }
 

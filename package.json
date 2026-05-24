@@ -1,6 +1,6 @@
 {
   "name": "@beevibe/architecture-deep-research",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Beevibe AI CTO — the decision layer your coding agents are missing. Flagship feature: ADR (Architecture Deep Research). Coming next: adr drift, adr review, adr guard.",
   "license": "Apache-2.0",
   "author": "Beevibe",

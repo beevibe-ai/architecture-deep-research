@@ -6,7 +6,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 const ignoredDirs = new Set([".adr-runs", ".smoke-runs", ".git", "node_modules", "dist"]);
 
 const schemaByFilename = {
-  "architecture.spec.json": "docs/schemas/architecture-spec.schema.json",
+  "research-report.json": "docs/schemas/research-report.schema.json",
   "claim-audit.json": "docs/schemas/claim-audit.schema.json",
   "citation-audit.json": "docs/schemas/citation-audit.schema.json",
   "clarification.json": "docs/schemas/clarification.schema.json",

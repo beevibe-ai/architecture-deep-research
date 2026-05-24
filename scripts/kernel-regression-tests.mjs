@@ -14,11 +14,13 @@ import {
   buildStrategicContext,
   buildAdversarialResearchPlan,
   classifySource,
+  critiqueDecisionPhase,
   deriveComparisonAxes,
   discoverPatterns,
   extractClaims,
   extractDecisionContext,
   filterPromotedByRelevance,
+  generateHandoff,
   injectDiscoveredEvidence,
   openUrl,
   prepareRun,
@@ -123,40 +125,40 @@ try {
     })
   ]);
 
-  assert.equal(knowledgeMap.promoted_candidates.length, 1);
-  assert.equal(knowledgeMap.promoted_candidates[0].name, "graphrag");
-  assert.equal(knowledgeMap.promoted_candidates[0].support.length, 2);
-  assert.equal(Number.isFinite(knowledgeMap.promoted_candidates[0].score), true);
+  // Every family with at least one evidence claim becomes a candidate now —
+  // the old evidence-depth promotion gate is gone. Off-topic candidates are
+  // still filtered (none here, so candidates = 1).
+  assert.equal(knowledgeMap.candidates.length, 1);
+  assert.equal(knowledgeMap.candidates[0].name, "graphrag");
+  assert.equal(knowledgeMap.candidates[0].support.length, 2);
+  assert.equal(knowledgeMap.candidates[0].evidence_depth, "medium");
+  assert.equal(Number.isFinite(knowledgeMap.candidates[0].score), true);
 
   installProvider((label) => {
-    assert.equal(label, "architecture_synthesis_agent");
+    assert.equal(label, "research_report_agent");
     // The synthesizer tries to invent "invented_topology" which is NOT in
-    // promoted_candidates; the parser must drop it from ranked_options and
-    // fall back to mode = "deferred".
+    // candidates; the parser must drop it from options.
     return {
-      decision: {
-        id: "ADR-X",
-        title: "Retrieval Topology",
-        status: "selected",
-        mode: "recommended",
-        ranked_options: [
-          {
-            name: "invented_topology",
-            label: "Invented",
-            summary: "Looks plausible but is not promoted.",
-            when_to_pick: [],
-            when_not_to_pick: [],
-            strong_axes: [],
-            weak_axes: [],
-            risks: ["No promoted evidence."],
-            evidence_citations: [999],
-            confidence: 0.9
-          }
-        ],
-        recommendation: { name: "invented_topology", why: "Looks good." },
-        summary: "Invented topology should not clear the gate.",
-        evidence_citations: [999]
-      },
+      id: "ADR-X",
+      title: "Retrieval Topology",
+      executive_summary: "Empty pool — no candidates surfaced.",
+      options: [
+        {
+          name: "invented_topology",
+          label: "Invented",
+          summary: "Looks plausible but is not in the candidate set.",
+          evidence_depth: "thin",
+          what_evidence_shows: "",
+          what_evidence_does_not_show: "",
+          strong_axes: [],
+          weak_axes: [],
+          when_to_pick: [],
+          when_not_to_pick: [],
+          citations: [999]
+        }
+      ],
+      cross_cutting_tradeoffs: [],
+      open_questions: [],
       domain_model: {},
       evidence_summary: {}
     };
@@ -169,59 +171,19 @@ try {
     comparisonMatrix: null
   });
 
-  // No promoted candidates → invented option gets filtered → ranked_options
-  // is empty → mode = "deferred" → selected_topology = HUMAN_REVIEW back-compat.
-  assert.equal(gatedSpec.decision.mode, "deferred");
-  assert.deepEqual(gatedSpec.decision.ranked_options, []);
-  assert.equal(gatedSpec.decision.recommendation, null);
-  assert.equal(gatedSpec.decision.selected_topology, "requires_human_architecture_review");
-  assert.equal(gatedSpec.decision.status, "proposed");
-  assert.deepEqual(gatedSpec.candidate_topologies, []);
+  // No candidates → invented option gets filtered → options is empty.
+  assert.deepEqual(gatedSpec.options, []);
+  assert.equal(gatedSpec.id, "ADR-X");
 
-  // applyCitationAudit drops the recommendation (not selected_topology now).
-  // Build a recommended-mode spec by hand and verify the audit demotes it
-  // to ranked_options + null recommendation, preserving ranked_options.
-  const recommendedSpec = {
-    ...gatedSpec,
-    decision: {
-      ...gatedSpec.decision,
-      mode: "recommended",
-      ranked_options: [
-        {
-          name: "graphrag",
-          label: "GraphRAG",
-          summary: "ok",
-          required_invariants: ["maintain lineage"],
-          forbidden_topologies: ["pure_vector_retrieval"],
-          evidence_citations: [1],
-          confidence: 0.9
-        },
-        {
-          name: "vector_rag",
-          label: "Vector RAG",
-          required_invariants: [],
-          forbidden_topologies: [],
-          evidence_citations: [],
-          confidence: 0.6
-        }
-      ],
-      recommendation: { name: "graphrag", why: "best on axes" },
-      selected_topology: "graphrag"
-    },
-    guardrails: {
-      ...gatedSpec.guardrails,
-      required_invariants: ["maintain lineage"],
-      forbidden_topologies: ["pure_vector_retrieval"]
-    }
-  };
-
-  const citationDowngrade = applyCitationAudit({
-    spec: recommendedSpec,
+  // applyCritique / applyCitationAudit are no-ops in the report engine —
+  // they preserve the spec unchanged. Verify that contract.
+  const passthrough = applyCitationAudit({
+    spec: gatedSpec,
     citationAudit: {
       items: [
         {
           citation_id: 1,
-          claim_context: "selected_topology_summary",
+          claim_context: "candidate:graphrag",
           verified: false,
           confidence: 0.1,
           reason: "unsupported"
@@ -230,38 +192,10 @@ try {
     },
     flags: {}
   });
-  assert.equal(citationDowngrade.downgraded, true);
-  assert.equal(citationDowngrade.spec.decision.mode, "ranked_options");
-  assert.equal(citationDowngrade.spec.decision.recommendation, null);
-  assert.equal(citationDowngrade.spec.decision.selected_topology, "ranked_options");
-  // ranked_options must survive the downgrade — that is the whole point.
-  assert.equal(citationDowngrade.spec.decision.ranked_options.length, 2);
-  // Back-compat roll-up invariants/forbidden go empty when no recommendation.
-  assert.deepEqual(citationDowngrade.spec.guardrails.required_invariants, []);
-  assert.deepEqual(citationDowngrade.spec.guardrails.forbidden_topologies, []);
+  assert.equal(passthrough.downgraded, false);
+  assert.equal(passthrough.spec, gatedSpec, "applyCitationAudit must return the spec unchanged");
 
   installProvider((label) => {
-    if (label === "evaluation_pack_agent") {
-      return {
-        suite: "regression_suite",
-        target_topologies: ["graphrag"],
-        metrics: {
-          deterministic_lineage_rate: { target: "not numeric" },
-          boundary_spill_tolerance: { target: -1 },
-          unsupported_answer_rate: { target: 5 }
-        },
-        test_cases: [
-          {
-            id: "TC-001",
-            type: "adversarial_multi_hop",
-            question: "Can the topology preserve cited multi-hop lineage?",
-            expected_entities: ["Contract", "Vendor"],
-            minimum_citation_depth: 2,
-            acceptance_criteria: ["Must cite source evidence."]
-          }
-        ]
-      };
-    }
     if (label === "uncited_claim_scanner") {
       return {
         claims: [
@@ -293,7 +227,7 @@ try {
   await writeRunArtifacts({
     context,
     plan: {
-      version: "0.2.0",
+      version: "0.3.0",
       architecture: "fixture",
       max_parallel_research_agents: 1,
       tasks: [
@@ -307,37 +241,32 @@ try {
       ]
     },
     spec: {
-      version: "0.2.0",
-      decision: {
-        id: "ADR-001",
-        title: "Retrieval Topology",
-        status: "proposed",
-        selected_topology: "graphrag",
-        summary: "GraphRAG is selected from promoted evidence.",
-        evidence_citations: [1]
-      },
+      version: "0.3.0",
+      id: "ADR-001",
+      title: "Retrieval Topology",
+      executive_summary: "GraphRAG surfaced in the evidence pool.",
+      option_space_shape: "Single-candidate space.",
+      options: [
+        {
+          name: "graphrag",
+          label: "GraphRAG",
+          summary: "Preserves explicit relationships.",
+          evidence_depth: "medium",
+          what_evidence_shows: "Citations show multi-hop retrieval.",
+          what_evidence_does_not_show: "No production scale data.",
+          strong_axes: ["multi_hop_relational"],
+          weak_axes: [],
+          when_to_pick: ["multi-hop reasoning"],
+          when_not_to_pick: ["pure single-hop"],
+          citations: [1]
+        }
+      ],
+      cross_cutting_tradeoffs: [],
+      open_questions: ["What does production scale look like?"],
       domain_model: {
         bounded_contexts: ["KnowledgeGraphContext"],
         core_entities: ["Contract", "Vendor"],
         domain_invariants: ["Answers must resolve to source-backed evidence before being returned."]
-      },
-      candidate_topologies: [
-        {
-          name: "graphrag",
-          fit: "Preserves explicit relationships.",
-          risks: ["Operational complexity."],
-          decision: "selected",
-          evidence_citations: [1],
-          confidence: 0.8
-        }
-      ],
-      guardrails: {
-        forbidden_topologies: [],
-        required_invariants: [
-          "Answers must resolve to source-backed evidence before being returned."
-        ],
-        allowed_agentic_use: ["source discovery"],
-        enforcement_notes: []
       },
       evidence_summary: {}
     },
@@ -362,9 +291,186 @@ try {
   assert.equal(claimAudit.claims[1].needs_citation, true);
   assert.equal(claimAudit.claims[1].severity, "high");
 
+  // Default-path artifacts: research-report.json + ADR.md + research-report.md
+  // + sources.md. Handoff artifacts (agent-guardrails.md, execution-handoff.json,
+  // domain-evaluation-pack.json) are SKIPPED by default — they're produced by
+  // `adr handoff <out_dir> --option <name>`.
+  const { existsSync } = await import("node:fs");
+  assert.ok(existsSync(path.join(outDir, "research-report.json")), "research-report.json must be written");
+  assert.ok(existsSync(path.join(outDir, "ADR.md")), "ADR.md must be written");
+  assert.ok(!existsSync(path.join(outDir, "agent-guardrails.md")), "agent-guardrails.md must NOT be written on default path");
+  assert.ok(!existsSync(path.join(outDir, "execution-handoff.json")), "execution-handoff.json must NOT be written on default path");
+  assert.ok(!existsSync(path.join(outDir, "domain-evaluation-pack.json")), "domain-evaluation-pack.json must NOT be written on default path");
+
   await rm(outDir, { recursive: true, force: true });
 } finally {
   setLlmJsonProvider(null);
+}
+
+// ---------------------------------------------------------------------------
+// Critique categories (research-report engine):
+// The critique now evaluates report comprehensiveness, not recommendation
+// defensibility. New categories include missing_candidate_section,
+// imbalanced_evidence_depth, weak_citation, missing_open_question, etc.
+// ---------------------------------------------------------------------------
+
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-critique-test-"));
+
+  installProvider((label) => {
+    assert.equal(label, "research_report_critique_agent");
+    return {
+      issues: [
+        {
+          severity: "high",
+          category: "missing_candidate_section",
+          description: "candidate `weaviate` is in knowledge_map.candidates but no options entry exists.",
+          evidence_citations: [],
+          target: { kind: "report" }
+        },
+        {
+          severity: "medium",
+          category: "imbalanced_evidence_depth",
+          description: "pgvector is thick but pinecone is thin; executive_summary doesn't acknowledge this.",
+          evidence_citations: [],
+          target: { kind: "report" }
+        }
+      ],
+      summary: "One missing candidate section + imbalanced depth not acknowledged.",
+      recommend_human_review: false
+    };
+  });
+
+  const spec = {
+    version: "0.3.0",
+    id: "ADR-1",
+    title: "Vector store",
+    executive_summary: "Two candidates surfaced.",
+    options: [
+      { name: "pgvector", label: "pgvector", evidence_depth: "thick", citations: [1] },
+      { name: "pinecone", label: "Pinecone", evidence_depth: "thin", citations: [2] }
+    ]
+  };
+  const km = {
+    acquisition_rule: "test",
+    candidates: [
+      { name: "pgvector", label: "pgvector", evidence_depth: "thick", citations: [1], evidence_count: 5, support: [] },
+      { name: "pinecone", label: "Pinecone", evidence_depth: "thin", citations: [2], evidence_count: 1, support: [] },
+      { name: "weaviate", label: "Weaviate", evidence_depth: "medium", citations: [3], evidence_count: 3, support: [] }
+    ],
+    off_topic_candidates: []
+  };
+
+  const critique = await critiqueDecisionPhase({
+    context: { domain: "saas", decision: "vector store" },
+    spec,
+    knowledgeMap: km,
+    evidenceItems: [
+      { citation_id: 1, title: "a", url: "https://x", source_type: "official_docs", score: 1, claims: [] },
+      { citation_id: 2, title: "b", url: "https://y", source_type: "official_docs", score: 1, claims: [] },
+      { citation_id: 3, title: "c", url: "https://z", source_type: "official_docs", score: 1, claims: [] }
+    ],
+    outDir: tmpDir
+  });
+
+  assert.equal(critique.issues.length, 2);
+  assert.equal(critique.high_severity_count, 1);
+  const categories = new Set(critique.issues.map((i) => i.category));
+  assert.ok(categories.has("missing_candidate_section"), "missing_candidate_section must be present");
+  assert.ok(categories.has("imbalanced_evidence_depth"), "imbalanced_evidence_depth must be present");
+
+  setLlmJsonProvider(null);
+  await rm(tmpDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// `adr handoff <out_dir> --option <name>`: lazy handoff that reads an
+// existing research-report.json, scopes to one candidate, and writes
+// agent-guardrails.md + execution-handoff.json (and optionally
+// domain-evaluation-pack.json when --write-evaluation-pack is set).
+// ---------------------------------------------------------------------------
+
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-handoff-test-"));
+  // Pre-create a research-report.json on disk.
+  const report = {
+    version: "0.3.0",
+    id: "ADR-Vector",
+    title: "Vector store",
+    executive_summary: "Two candidates.",
+    option_space_shape: "split between OSS and managed.",
+    options: [
+      {
+        name: "pgvector",
+        label: "pgvector",
+        summary: "Postgres extension.",
+        evidence_depth: "thick",
+        what_evidence_shows: "x",
+        what_evidence_does_not_show: "y",
+        strong_axes: ["fits_existing_stack"],
+        weak_axes: [],
+        when_to_pick: ["Postgres in stack"],
+        when_not_to_pick: ["No Postgres"],
+        citations: [1]
+      },
+      {
+        name: "pinecone",
+        label: "Pinecone",
+        summary: "Managed vector DB.",
+        evidence_depth: "medium",
+        what_evidence_shows: "x",
+        what_evidence_does_not_show: "y",
+        strong_axes: ["latency"],
+        weak_axes: ["self_host"],
+        when_to_pick: ["managed cloud OK"],
+        when_not_to_pick: ["self-hosted only"],
+        citations: [2]
+      }
+    ],
+    cross_cutting_tradeoffs: [],
+    open_questions: []
+  };
+  await writeJson(path.join(tmpDir, "research-report.json"), report);
+
+  const { existsSync } = await import("node:fs");
+
+  // Generate handoff for pgvector.
+  const result = await generateHandoff({
+    outDir: tmpDir,
+    optionName: "pgvector",
+    flags: {}
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.chosen_option, "pgvector");
+  assert.ok(existsSync(path.join(tmpDir, "agent-guardrails.md")));
+  assert.ok(existsSync(path.join(tmpDir, "execution-handoff.json")));
+  // Evaluation pack NOT generated unless --write-evaluation-pack is set.
+  assert.ok(!existsSync(path.join(tmpDir, "domain-evaluation-pack.json")));
+
+  // Verify the handoff json is scoped to one option.
+  const handoff = JSON.parse(await readFile(path.join(tmpDir, "execution-handoff.json"), "utf8"));
+  assert.equal(handoff.chosen_option, "pgvector");
+  assert.equal(handoff.options.length, 1);
+  assert.equal(handoff.options[0].name, "pgvector");
+
+  // Verify guardrails markdown is scoped to one option.
+  const guardrailsMd = await readFile(path.join(tmpDir, "agent-guardrails.md"), "utf8");
+  assert.ok(guardrailsMd.includes("Option: `pgvector`"));
+  assert.ok(!guardrailsMd.includes("Option: `pinecone`"));
+
+  // Asking for a non-existent option must throw a helpful error.
+  await assert.rejects(
+    async () => {
+      await generateHandoff({
+        outDir: tmpDir,
+        optionName: "milvus",
+        flags: {}
+      });
+    },
+    /Option "milvus" not found/
+  );
+
+  await rm(tmpDir, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -595,8 +701,8 @@ try {
     //    as an insufficient-evidence candidate. We just check the names land.
     const knowledgeMap = buildKnowledgeMap(injection.evidenceItems);
     const allNames = [
-      ...knowledgeMap.promoted_candidates.map((c) => c.name),
-      ...knowledgeMap.insufficient_evidence_candidates.map((c) => c.name)
+      ...knowledgeMap.candidates.map((c) => c.name),
+      ...knowledgeMap.off_topic_candidates.map((c) => c.name)
     ];
     assert.ok(
       allNames.includes("postgres-centric-storage") || allNames.includes("postgres_centric_storage"),
@@ -942,65 +1048,62 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Exploratory mode:
+// Research-report mode:
 //
-// ADR maps the option space and does not pick a winner. The synthesizer's
-// mode is always "ranked_options" (when candidates exist) or "deferred"
-// (when none do). Guardrails are per-option; the handoff lists every
-// option as a separate contract. recommendation is always null.
+// ADR produces a research report covering every candidate from the knowledge
+// map. There is no winner, no recommendation, no mode enum. Every candidate
+// gets its own options[] entry. Guardrails are generated lazily via
+// `adr handoff --option <name>` — not by writeRunArtifacts.
 // ---------------------------------------------------------------------------
 
 {
-  // Sub-test 1: even when the LLM returns mode=recommended with a
-  // recommendation, the kernel forces ranked_options. recommendation is
-  // dropped. The option still appears in ranked_options + candidate_topologies.
+  // Sub-test 1: the synthesizer must produce an entry for EVERY candidate
+  // in knowledge_map.candidates. Hallucinated candidates are dropped.
 
   installProvider((label) => {
-    assert.equal(label, "architecture_synthesis_agent");
+    assert.equal(label, "research_report_agent");
     return {
-      decision: {
-        id: "ADR-Auth",
-        title: "Auth provider",
-        status: "selected",
-        mode: "recommended",
-        ranked_options: [
-          {
-            name: "clerk",
-            label: "Clerk",
-            summary: "Drop-in auth for Next.js apps.",
-            when_to_pick: ["You want low integration time", "MFA + organizations matter out of the box"],
-            when_not_to_pick: ["You require on-prem deployment"],
-            strong_axes: ["pricing_model", "sdk_integration_quality"],
-            weak_axes: ["on_prem_self_host"],
-            risks: ["Vendor lock-in"],
-            required_invariants: ["Tokens must be issued by Clerk's session API"],
-            forbidden_topologies: ["roll_your_own_jwt"],
-            evidence_citations: [1, 2],
-            confidence: 0.9
-          },
-          {
-            name: "auth0",
-            label: "Auth0",
-            summary: "Mature OAuth-first provider.",
-            when_to_pick: ["You need enterprise SSO/SAML"],
-            when_not_to_pick: ["You are price-sensitive at scale"],
-            strong_axes: ["sdk_integration_quality"],
-            weak_axes: ["pricing_model"],
-            risks: ["Costs scale poorly"],
-            required_invariants: ["Use Auth0 Rules for tenant gating"],
-            forbidden_topologies: ["self_host_session_store"],
-            evidence_citations: [3],
-            confidence: 0.7
-          }
-        ],
-        recommendation: {
+      id: "ADR-Auth",
+      title: "Auth provider",
+      executive_summary: "Two candidates surfaced in the auth provider space.",
+      option_space_shape: "Managed SaaS dominates the space.",
+      options: [
+        {
           name: "clerk",
-          why: "LLM still emitted a recommendation; kernel must drop it.",
-          when_this_breaks: ["test fixture"]
+          label: "Clerk",
+          summary: "Drop-in auth for Next.js apps.",
+          evidence_depth: "thick",
+          what_evidence_shows: "Multiple docs describe Clerk's Next.js SDK.",
+          what_evidence_does_not_show: "No production-scale cost benchmarks.",
+          when_to_pick: ["You want low integration time"],
+          when_not_to_pick: ["You require on-prem deployment"],
+          strong_axes: ["pricing_model", "sdk_integration_quality"],
+          weak_axes: ["on_prem_self_host"],
+          citations: [1, 2]
         },
-        summary: "Two viable options.",
-        evidence_citations: [1, 2, 3]
-      },
+        {
+          name: "auth0",
+          label: "Auth0",
+          summary: "Mature OAuth-first provider.",
+          evidence_depth: "medium",
+          what_evidence_shows: "Documented SSO/SAML and tenant isolation patterns.",
+          what_evidence_does_not_show: "No fresh community discussion on pricing.",
+          when_to_pick: ["You need enterprise SSO/SAML"],
+          when_not_to_pick: ["You are price-sensitive at scale"],
+          strong_axes: ["sdk_integration_quality"],
+          weak_axes: ["pricing_model"],
+          citations: [3]
+        }
+      ],
+      cross_cutting_tradeoffs: [
+        {
+          axis: "pricing_model",
+          observation: "Clerk wins on pricing; Auth0 weak.",
+          candidates_high: ["clerk"],
+          candidates_low: ["auth0"]
+        }
+      ],
+      open_questions: ["What does Clerk look like at >1M MAU?"],
       domain_model: {
         bounded_contexts: ["AuthContext"],
         core_entities: ["User"],
@@ -1010,14 +1113,13 @@ try {
     };
   });
 
-  // Knowledge map: simulate two promoted candidates (clerk + auth0).
   const km = {
-    promotion_rule: "test rule",
-    promoted_candidates: [
-      { name: "clerk", label: "Clerk", citations: [1, 2], evidence_count: 2 },
-      { name: "auth0", label: "Auth0", citations: [3], evidence_count: 1 }
+    acquisition_rule: "test rule",
+    candidates: [
+      { name: "clerk", label: "Clerk", evidence_depth: "thick", citations: [1, 2], evidence_count: 5 },
+      { name: "auth0", label: "Auth0", evidence_depth: "medium", citations: [3], evidence_count: 3 }
     ],
-    insufficient_evidence_candidates: []
+    off_topic_candidates: []
   };
   const evidence = [
     { citation_id: 1, title: "Clerk docs", url: "https://clerk.com", source_type: "official_docs", score: 0.9, excerpt: "...", claims: [], relevance: "x" },
@@ -1046,95 +1148,71 @@ try {
     comparisonMatrix: null
   });
 
-  // Kernel forces ranked_options regardless of what the LLM tried to emit.
-  assert.equal(spec.decision.mode, "ranked_options", "mode must be ranked_options, never recommended");
-  assert.equal(spec.decision.recommendation, null, "recommendation must be null in exploratory mode");
-  assert.equal(spec.decision.ranked_options.length, 2);
-  assert.equal(spec.decision.selected_topology, "ranked_options", "selected_topology back-compat sentinel");
-  // Both ranked options appear in candidate_topologies as "considered" — no
-  // option is "selected" because there is no recommendation.
-  const candByName = Object.fromEntries(spec.candidate_topologies.map((c) => [c.name, c]));
-  assert.equal(candByName.clerk.decision, "considered");
-  assert.equal(candByName.auth0.decision, "considered");
-  // Back-compat roll-up: top-level guardrails are EMPTY — readers must use
-  // per-option ranked_options entries.
-  assert.deepEqual(spec.guardrails.required_invariants, []);
-  assert.deepEqual(spec.guardrails.forbidden_topologies, []);
+  // Every candidate must have an options entry — the report does not
+  // filter or pick a winner.
+  assert.equal(spec.options.length, 2, "every candidate gets a section");
+  const byName = Object.fromEntries(spec.options.map((o) => [o.name, o]));
+  assert.equal(byName.clerk.evidence_depth, "thick");
+  assert.equal(byName.auth0.evidence_depth, "medium");
+  assert.equal(spec.executive_summary.length > 0, true);
+  assert.equal(spec.options[0].what_evidence_shows.length > 0, true);
 
-  // Per-option guardrails markdown contains BOTH options. No (recommended) tag
-  // anymore — exploratory mode does not crown a winner.
-  const guardrailsMd = buildGuardrails(spec);
-  assert.ok(guardrailsMd.includes("Option: `clerk`"), "guardrails should list option clerk");
-  assert.ok(guardrailsMd.includes("Option: `auth0`"), "guardrails should list option auth0");
-  assert.ok(!guardrailsMd.includes("*(recommended)*"), "no (recommended) tag in exploratory mode");
-  assert.ok(
-    guardrailsMd.includes("Tokens must be issued by Clerk's session API"),
-    "clerk's per-option invariant must appear"
-  );
-  assert.ok(
-    guardrailsMd.includes("Use Auth0 Rules for tenant gating"),
-    "auth0's per-option invariant must appear"
-  );
+  // buildGuardrails scoped to one option produces only that option's block.
+  const guardrailsMd = buildGuardrails(spec, { targetOptionName: "clerk" });
+  assert.ok(guardrailsMd.includes("Option: `clerk`"));
+  assert.ok(!guardrailsMd.includes("Option: `auth0`"), "scoped guardrails only renders chosen option");
+  assert.ok(guardrailsMd.includes("**Evidence depth:** thick"));
+
+  // Unscoped guardrails (no chosen option) renders all candidates.
+  const fullGuardrails = buildGuardrails(spec);
+  assert.ok(fullGuardrails.includes("Option: `clerk`"));
+  assert.ok(fullGuardrails.includes("Option: `auth0`"));
+  assert.ok(fullGuardrails.includes("No option chosen"));
 
   setLlmJsonProvider(null);
 }
 
 {
-  // Sub-test 2: synthesizer in mode=ranked_options — two viable options,
-  // no recommendation. This is the correct default for genuine tradeoffs.
-
+  // Sub-test 2: candidate-backstop. When the synthesizer DROPS a candidate
+  // (the prompt forbids this), the kernel inserts a minimal entry so
+  // nothing silently disappears from the report.
   installProvider((label) => {
-    assert.equal(label, "architecture_synthesis_agent");
+    assert.equal(label, "research_report_agent");
     return {
-      decision: {
-        id: "ADR-Retrieval",
-        title: "Retrieval Topology",
-        status: "proposed",
-        mode: "ranked_options",
-        ranked_options: [
-          {
-            name: "graphrag",
-            label: "GraphRAG",
-            summary: "Graph-based retrieval over hierarchical communities.",
-            when_to_pick: ["Multi-hop entity reasoning matters"],
-            when_not_to_pick: ["Single-hop QA only"],
-            strong_axes: ["multi_hop_relational"],
-            weak_axes: ["index_build_cost"],
-            required_invariants: ["Preserve community hierarchy"],
-            forbidden_topologies: ["pure_vector_retrieval"],
-            evidence_citations: [1],
-            confidence: 0.7
-          },
-          {
-            name: "vector_rag",
-            label: "Vector RAG",
-            summary: "Top-K vector search with reranking.",
-            when_to_pick: ["High-volume single-hop QA"],
-            when_not_to_pick: ["Multi-hop entity reasoning matters"],
-            strong_axes: ["index_build_cost"],
-            weak_axes: ["multi_hop_relational"],
-            required_invariants: ["Cite source IDs in answers"],
-            forbidden_topologies: ["unsupervised_clustering"],
-            evidence_citations: [2],
-            confidence: 0.6
-          }
-        ],
-        recommendation: null,
-        summary: "Two viable retrieval topologies with genuine tradeoffs.",
-        evidence_citations: []
-      },
+      id: "ADR-Retrieval",
+      title: "Retrieval Topology",
+      executive_summary: "GraphRAG only; synthesizer skipped vector_rag.",
+      option_space_shape: "Two retrieval styles.",
+      // Only ONE option emitted — vector_rag is missing.
+      options: [
+        {
+          name: "graphrag",
+          label: "GraphRAG",
+          summary: "Graph-based retrieval.",
+          evidence_depth: "medium",
+          what_evidence_shows: "Multi-hop benchmarks.",
+          what_evidence_does_not_show: "No production cost data.",
+          when_to_pick: ["Multi-hop"],
+          when_not_to_pick: ["Single-hop only"],
+          strong_axes: ["multi_hop_relational"],
+          weak_axes: ["index_build_cost"],
+          citations: [1]
+        }
+      ],
+      cross_cutting_tradeoffs: [],
+      open_questions: [],
       domain_model: {},
       evidence_summary: {}
     };
   });
 
   const km2 = {
-    promotion_rule: "test",
-    promoted_candidates: [
-      { name: "graphrag", label: "GraphRAG", citations: [1], evidence_count: 1 },
-      { name: "vector_rag", label: "Vector RAG", citations: [2], evidence_count: 1 }
+    acquisition_rule: "test",
+    candidates: [
+      { name: "graphrag", label: "GraphRAG", evidence_depth: "medium", citations: [1], evidence_count: 3 },
+      { name: "vector_rag", label: "Vector RAG", evidence_depth: "thin", citations: [2], evidence_count: 1 }
     ],
-    insufficient_evidence_candidates: []
+    off_topic_candidates: []
   };
   const evidence2 = [
     { citation_id: 1, title: "graphrag paper", url: "https://...", source_type: "paper_or_benchmark", score: 0.9, excerpt: "...", claims: [], relevance: "x" },
@@ -1162,28 +1240,13 @@ try {
     comparisonMatrix: null
   });
 
-  assert.equal(spec.decision.mode, "ranked_options");
-  assert.equal(spec.decision.recommendation, null);
-  assert.equal(spec.decision.ranked_options.length, 2);
-  // selected_topology takes the literal "ranked_options" sentinel — NOT
-  // requires_human_architecture_review. The two are different signals.
-  assert.equal(spec.decision.selected_topology, "ranked_options");
-  // Both options should appear as "considered" (none "selected") because
-  // there is no recommendation.
-  for (const c of spec.candidate_topologies) {
-    assert.equal(c.decision, "considered");
-  }
-  // Top-level guardrails are EMPTY when no recommendation — callers must
-  // read per-option from ranked_options.
-  assert.deepEqual(spec.guardrails.required_invariants, []);
-  assert.deepEqual(spec.guardrails.forbidden_topologies, []);
-
-  // Guardrails: per-option blocks, "No recommendation" framing visible.
-  const guardrailsMd = buildGuardrails(spec);
-  assert.ok(guardrailsMd.includes("Option: `graphrag`"));
-  assert.ok(guardrailsMd.includes("Option: `vector_rag`"));
-  assert.ok(guardrailsMd.includes("No recommendation"));
-  assert.ok(!guardrailsMd.includes("*(recommended)*"));
+  // Backstop: both candidates must appear, even though the synthesizer
+  // only emitted one.
+  assert.equal(spec.options.length, 2, "backstop must fill in missing candidate");
+  const byName = Object.fromEntries(spec.options.map((o) => [o.name, o]));
+  assert.equal(byName.graphrag.summary, "Graph-based retrieval.");
+  assert.equal(byName.vector_rag.evidence_depth, "thin");
+  assert.ok(byName.vector_rag.what_evidence_shows.includes("did not produce a section"));
 
   setLlmJsonProvider(null);
 }
@@ -1428,15 +1491,15 @@ try {
   });
 
   const knowledgeMap = {
-    promotion_rule: "test",
-    promoted_candidates: [
-      { name: "clerk", label: "Clerk", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
-      { name: "auth0", label: "Auth0", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
-      { name: "nextjs", label: "Next.js", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [3], score: 0.6 },
-      { name: "postgres_centric_storage", label: "Postgres", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [4], score: 0.6 },
-      { name: "supertokens", label: "SuperTokens", evidence_count: 2, source_types: ["mature_oss"], support: [], citations: [5], score: 0.8 }
+    acquisition_rule: "test",
+    candidates: [
+      { name: "clerk", label: "Clerk", evidence_depth: "medium", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
+      { name: "auth0", label: "Auth0", evidence_depth: "medium", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
+      { name: "nextjs", label: "Next.js", evidence_depth: "medium", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [3], score: 0.6 },
+      { name: "postgres_centric_storage", label: "Postgres", evidence_depth: "medium", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [4], score: 0.6 },
+      { name: "supertokens", label: "SuperTokens", evidence_depth: "medium", evidence_count: 2, source_types: ["mature_oss"], support: [], citations: [5], score: 0.8 }
     ],
-    insufficient_evidence_candidates: []
+    off_topic_candidates: []
   };
 
   const result = await filterPromotedByRelevance({
@@ -1450,12 +1513,12 @@ try {
   assert.equal(result.dropped.length, 2, `expected 2 dropped, got: ${JSON.stringify(result.dropped)}`);
   const droppedNames = result.dropped.map((d) => d.name).sort();
   assert.deepEqual(droppedNames, ["nextjs", "postgres_centric_storage"]);
-  const keptNames = result.knowledgeMap.promoted_candidates.map((c) => c.name).sort();
+  const keptNames = result.knowledgeMap.candidates.map((c) => c.name).sort();
   assert.deepEqual(keptNames, ["auth0", "clerk", "supertokens"]);
-  // Dropped candidates moved into insufficient_evidence_candidates with the
+  // Dropped candidates moved into off_topic_candidates with the
   // off_topic_for_decision marker.
-  const moved = result.knowledgeMap.insufficient_evidence_candidates.filter(
-    (c) => c.promotion_status === "off_topic_for_decision"
+  const moved = result.knowledgeMap.off_topic_candidates.filter(
+    (c) => c.off_topic_for_decision === true
   );
   assert.equal(moved.length, 2);
   assert.ok(moved.some((c) => c.off_topic_reason.includes("Framework")));
@@ -1477,7 +1540,7 @@ try {
 
 // ---------------------------------------------------------------------------
 // Schema-validation guard: the spec the synthesizer returns MUST pass the
-// JSON schema for architecture.spec.json. Catching this in tests prevents
+// JSON schema for research-report.json. Catching this in tests prevents
 // "ran the whole pipeline, then died at the last writeJson" failures.
 // ---------------------------------------------------------------------------
 
@@ -1485,33 +1548,30 @@ try {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-schema-validate-test-"));
 
   installProvider((label) => {
-    assert.equal(label, "architecture_synthesis_agent");
+    assert.equal(label, "research_report_agent");
     return {
-      decision: {
-        id: "ADR-Vector",
-        title: "Vector store",
-        status: "selected",
-        mode: "ranked_options",
-        ranked_options: [
-          { name: "pgvector", label: "pgvector", summary: "x", evidence_citations: [1], confidence: 0.9 },
-          { name: "pinecone", label: "Pinecone", summary: "y", evidence_citations: [2], confidence: 0.7 }
-        ],
-        recommendation: null,
-        summary: "Two options.",
-        evidence_citations: []
-      },
+      id: "ADR-Vector",
+      title: "Vector store",
+      executive_summary: "Two candidates surfaced in the vector-store space.",
+      option_space_shape: "OSS extensions vs managed SaaS.",
+      options: [
+        { name: "pgvector", label: "pgvector", summary: "x", evidence_depth: "medium", what_evidence_shows: "a", what_evidence_does_not_show: "b", citations: [1] },
+        { name: "pinecone", label: "Pinecone", summary: "y", evidence_depth: "medium", what_evidence_shows: "a", what_evidence_does_not_show: "b", citations: [2] }
+      ],
+      cross_cutting_tradeoffs: [],
+      open_questions: [],
       domain_model: { bounded_contexts: [], core_entities: [], domain_invariants: [] },
       evidence_summary: {}
     };
   });
 
   const km = {
-    promotion_rule: "test",
-    promoted_candidates: [
-      { name: "pgvector", label: "pgvector", citations: [1], evidence_count: 1 },
-      { name: "pinecone", label: "Pinecone", citations: [2], evidence_count: 1 }
+    acquisition_rule: "test",
+    candidates: [
+      { name: "pgvector", label: "pgvector", evidence_depth: "medium", citations: [1], evidence_count: 2 },
+      { name: "pinecone", label: "Pinecone", evidence_depth: "medium", citations: [2], evidence_count: 2 }
     ],
-    insufficient_evidence_candidates: []
+    off_topic_candidates: []
   };
   const ev = [
     { citation_id: 1, title: "pgvector", url: "https://example.com/1", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" },
@@ -1522,7 +1582,6 @@ try {
     context: {
       domain: "saas",
       decision: "vector store",
-      decision_kind: "concrete",
       domain_entities: [],
       bounded_contexts: [],
       query_shapes: [],
@@ -1535,21 +1594,14 @@ try {
     comparisonMatrix: null
   });
 
-  // The real bug we're guarding against: candidate_topologies[].decision was
-  // set to "considered" by synthesizeArchitectureSpec but the schema enum
-  // didn't include it. writeJson is the actual validation path the kernel
-  // uses on disk — calling it here catches the mismatch at test time.
-  const specPath = path.join(tmpDir, "architecture.spec.json");
+  // writeJson validates against the research-report.schema.json; this guards
+  // against "spec drifted from schema" pathologies catching them at test time.
+  const specPath = path.join(tmpDir, "research-report.json");
   await writeJson(specPath, spec);
   const written = JSON.parse(await readFile(specPath, "utf8"));
-  // Every non-recommendation viable option should land as "considered".
-  const consideredDecisions = written.candidate_topologies
-    .filter((c) => c.decision === "considered");
-  assert.equal(
-    consideredDecisions.length,
-    2,
-    `expected both ranked options to land as 'considered', got: ${written.candidate_topologies.map((c) => `${c.name}:${c.decision}`).join(", ")}`
-  );
+  assert.equal(written.options.length, 2);
+  assert.equal(written.options[0].name, "pgvector");
+  assert.equal(written.options[1].name, "pinecone");
 
   setLlmJsonProvider(null);
   await rm(tmpDir, { recursive: true, force: true });
@@ -1596,11 +1648,11 @@ try {
 
   const matrix = {
     candidates: [
-      { name: "pgvector", label: "pgvector", promotion_status: "evidence_backed_candidate" },
-      { name: "weaviate", label: "Weaviate", promotion_status: "evidence_backed_candidate" },
-      { name: "milvus", label: "Milvus", promotion_status: "evidence_backed_candidate" },
-      { name: "pinecone", label: "Pinecone", promotion_status: "evidence_backed_candidate" },
-      { name: "faiss", label: "Faiss", promotion_status: "evidence_backed_candidate" }
+      { name: "pgvector", label: "pgvector", evidence_depth: "medium" },
+      { name: "weaviate", label: "Weaviate", evidence_depth: "medium" },
+      { name: "milvus", label: "Milvus", evidence_depth: "medium" },
+      { name: "pinecone", label: "Pinecone", evidence_depth: "medium" },
+      { name: "faiss", label: "Faiss", evidence_depth: "medium" }
     ],
     axes: [],
     empty_cells: []
@@ -2224,13 +2276,10 @@ try {
   });
 
   const spec = {
-    decision: {
-      mode: "ranked_options",
-      ranked_options: [
-        { name: "memgraph", label: "Memgraph", strong_axes: ["deployment_model"], weak_axes: ["pricing_model"] },
-        { name: "neo4j_aura", label: "Neo4j Aura", strong_axes: ["pricing_model"], weak_axes: ["deployment_model"] }
-      ]
-    }
+    options: [
+      { name: "memgraph", label: "Memgraph", strong_axes: ["deployment_model"], weak_axes: ["pricing_model"], evidence_depth: "medium" },
+      { name: "neo4j_aura", label: "Neo4j Aura", strong_axes: ["pricing_model"], weak_axes: ["deployment_model"], evidence_depth: "medium" }
+    ]
   };
   const comparisonMatrix = {
     axes: [
@@ -2270,7 +2319,7 @@ try {
   });
   const deferredResult = await proposeFollowUpQuestions({
     context: { domain: "kg", decision: "graph store" },
-    spec: { decision: { mode: "deferred", ranked_options: [] } },
+    spec: { options: [] },
     comparisonMatrix: null,
     outDir: tmpDir
   });

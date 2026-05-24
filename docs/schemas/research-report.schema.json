@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/research-report.schema.json",
+  "title": "Architecture Deep Research — Research Report",
+  "type": "object",
+  "required": ["version", "id", "title", "executive_summary", "options"],
+  "properties": {
+    "version": { "type": "string" },
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "executive_summary": { "type": "string" },
+    "option_space_shape": { "type": "string" },
+    "options": {
+      "type": "array",
+      "description": "Every candidate from knowledge-map.candidates that survived the off-topic filter. The reader decides which candidate fits their context.",
+      "items": {
+        "type": "object",
+        "required": ["name", "label"],
+        "properties": {
+          "name": { "type": "string" },
+          "label": { "type": "string" },
+          "summary": { "type": "string" },
+          "evidence_depth": {
+            "type": "string",
+            "enum": ["thick", "medium", "thin"]
+          },
+          "what_evidence_shows": { "type": "string" },
+          "what_evidence_does_not_show": { "type": "string" },
+          "strong_axes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "weak_axes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "when_to_pick": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "when_not_to_pick": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "citations": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "cross_cutting_tradeoffs": {
+      "type": "array",
+      "description": "Axes where candidates split. Each entry surfaces the spread and which candidates landed strong vs weak.",
+      "items": {
+        "type": "object",
+        "required": ["axis", "observation"],
+        "properties": {
+          "axis": { "type": "string" },
+          "observation": { "type": "string" },
+          "candidates_high": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "candidates_low": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "description": "Free-form items the evidence pool did not resolve.",
+      "items": { "type": "string" }
+    },
+    "domain_model": {
+      "type": "object",
+      "properties": {
+        "bounded_contexts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "core_entities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "domain_invariants": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence_summary": { "type": "object" },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "url", "relevance"],
+        "properties": {
+          "label": { "type": "string" },
+          "url": { "type": "string" },
+          "relevance": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

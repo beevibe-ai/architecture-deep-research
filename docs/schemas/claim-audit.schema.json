@@ -5,7 +5,6 @@
   "type": "object",
   "required": [
     "version",
-    "selected_topology",
     "total_claims_checked",
     "uncited_material_claim_count",
     "high_severity_count",
@@ -14,7 +13,6 @@
   ],
   "properties": {
     "version": { "type": "string" },
-    "selected_topology": { "type": ["string", "null"] },
     "total_claims_checked": { "type": "integer", "minimum": 0 },
     "uncited_material_claim_count": { "type": "integer", "minimum": 0 },
     "high_severity_count": { "type": "integer", "minimum": 0 },

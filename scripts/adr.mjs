@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { loadConfigIntoEnv } from "./adr-doctor.mjs";
-import { deepResearch, discoverPatterns, research, supersedeAdr } from "../src/kernel.mjs";
+import {
+  deepResearch,
+  discoverPatterns,
+  generateHandoff,
+  research,
+  supersedeAdr
+} from "../src/kernel.mjs";
 
 // Hydrate process.env from ~/.adr/config.json before any kernel call. Keys
 // set in the launching shell still win — this only fills in what's missing.
@@ -47,6 +53,7 @@ function usage() {
   adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir>
   adr deep-research --discover-first --repo <path> --domain <domain> --decision <decision> --out <dir>
   adr discover --repo <path> --decision <decision> --out <dir> [--issue-body <path-or-text>]
+  adr handoff <out_dir> --option <candidate-name> [--write-evaluation-pack]
   adr resume <out_dir>
   adr supersede <previous-output-dir> --with <product-context.md> --domain <domain> --decision <decision> --out <dir>
 
@@ -167,6 +174,22 @@ async function main() {
 
   if (command === "supersede") {
     await supersedeAdr({ previousDir: inputPath, flags });
+    return;
+  }
+
+  if (command === "handoff") {
+    if (!inputPath) {
+      console.error("Usage: adr handoff <out_dir> --option <candidate-name> [--write-evaluation-pack]");
+      process.exitCode = 1;
+      return;
+    }
+    const optionName = flags.option;
+    if (!optionName || typeof optionName !== "string") {
+      console.error("adr handoff requires --option <candidate-name>.");
+      process.exitCode = 1;
+      return;
+    }
+    await generateHandoff({ outDir: inputPath, optionName, flags });
     return;
   }
 
