@@ -9,11 +9,11 @@
 
 **The decision layer your coding agents are missing.**
 
-ADR (Architecture Deep Research) — the flagship feature, fully shipped — produces a research report on an architectural decision space. Every candidate the evidence surfaces gets its own section with what the evidence shows and what it doesn't. The decision is yours; the kernel maps what's available so you can decide well. Same posture as OpenAI / Perplexity / Gemini Deep Research — narrower scope (architectural decisions, not topics).
+ADR (Architecture Deep Research) produces a research report on an architectural decision space. 
 
 **[See an example report →](https://beevibe.ai/cto/example-report/)** A real, unedited ADR run on a Beevibe decision: 11 candidates, 60 citations, 4 Mermaid diagrams, $0.27, 122 LLM calls.
 
-The brain + `adr guard` / `review` / `drift` close the loop; they're in development.
+The brain + `adr guard` / `review` / `drift` close the loop; Upcoming.
 
 ---
 
