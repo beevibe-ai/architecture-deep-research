@@ -2,13 +2,22 @@
 
 **The decision layer your coding agents are missing.**
 
-Coding agents are excellent execution engines. They edit files, run tests, iterate quickly. The failures sit one layer above the code:
+Architecture is the last bastion of human judgment in software, and right now it shows. Two problems compound — the decision itself, and the loop that's supposed to keep the decision honest after code lands.
+
+### The architecture decision is broken before it's even made
+
+- **Pre-AI guts make post-AI calls.** Engineering leads run on a gut earned in the world before agents existed. What's cheap, what's expensive, what's worth owning — all of it has shifted. A pre-AI gut making post-AI architecture is a slow drift that nobody notices until the second migration.
+- **The raw material is finally accessible. Teams skip it anyway.** This is the first moment in history when reading what strong open-source projects, working papers, and architects with track records actually figured out costs minutes instead of months. We hand a one-line product brief to a coding agent and hope the model fills in the architecture from training data.
+- **We have deep research for everything else.** Markets, legal, medicine, competitive teardown — all shipped years ago. Architecture, where the cost of being wrong is highest and lives in production the longest, is still done in a chat box.
+- **Real AI system architect expertise is rare.** Domain expertise in AI-native architecture is genuinely hard to hire — the senior engineers candidates exist, the AI-native architect candidates barely do. Most teams default to whoever's senior, running on the pre-AI gut above.
+
+### After the decision, the loop never closes back
 
 - **Design-implement drift.** The architecture gets settled. Code gets written. A week later nobody knows which parts of the original spec are still true — the drift is real but unmapped.
 - **AI introduces antipatterns the team already rejected.** Claude / Cursor write fast and don't know your team explicitly migrated off Kafka in 2024. The decision is in `docs/adr/0003.md`; the AI never read it.
-- **Stateless PR reviews.** The team lead is the only living memory of the architecture. Every PR re-derives context from scratch. Review burden compounds with team growth.
+- **Stateless PR reviews.** The team lead becomes the only living memory of the architecture. Every PR re-derives context from scratch. Review burden compounds with team growth.
 
-Beevibe AI CTO closes that loop. ADR (Architecture Deep Research) — the flagship feature, fully shipped — makes the decision. Three additional capabilities feed back to keep the decision honest as code lands.
+Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the flagship feature, fully shipped — automates the decision-time research a senior architect would do by hand.** Three additional capabilities feed back to keep the decision honest as code lands.
 
 ```text
        ┌──────────────────────────────────────────────────────────────┐
