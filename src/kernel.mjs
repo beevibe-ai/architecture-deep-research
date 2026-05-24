@@ -2960,7 +2960,12 @@ async function synthesizeResearchReport({
       core_entities: toArray(result.domain_model?.core_entities),
       domain_invariants: toArray(result.domain_model?.domain_invariants)
     },
-    evidence_summary: result.evidence_summary || {},
+    evidence_summary:
+      result.evidence_summary &&
+      typeof result.evidence_summary === "object" &&
+      !Array.isArray(result.evidence_summary)
+        ? result.evidence_summary
+        : {},
     evidence: evidenceItems.slice(0, 16).map((item) => ({
       label: `[${item.citation_id}] ${item.title}`,
       url: item.url,
