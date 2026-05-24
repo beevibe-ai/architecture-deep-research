@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { loadConfigIntoEnv } from "./adr-doctor.mjs";
+import { renderReportHtml } from "../src/render/html.mjs";
 import {
   deepResearch,
   discoverPatterns,
@@ -7,6 +9,28 @@ import {
   research,
   supersedeAdr
 } from "../src/kernel.mjs";
+
+// Open a file or URL in the user's default browser. Resolves once the
+// platform's opener is dispatched (does not wait for the browser itself).
+function openInBrowser(target) {
+  const cmd =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32" ? "start" :
+    "xdg-open";
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, [target], { stdio: "ignore", detached: true });
+    child.on("error", reject);
+    child.unref();
+    resolve();
+  });
+}
+
+async function renderAndOpenReport(outDir) {
+  const htmlPath = await renderReportHtml({ outDir });
+  await openInBrowser(htmlPath);
+  console.log(`Opened ${htmlPath} in your browser.`);
+  return htmlPath;
+}
 
 // Hydrate process.env from ~/.adr/config.json before any kernel call. Keys
 // set in the launching shell still win — this only fills in what's missing.
@@ -50,10 +74,11 @@ function parseArgs(argv) {
 
 function usage() {
   return `Usage:
-  adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir>
-  adr deep-research --discover-first --repo <path> --domain <domain> --decision <decision> --out <dir>
+  adr deep-research <product-context.md> --domain <domain> --decision <decision> --out <dir> [--open]
+  adr deep-research --discover-first --repo <path> --domain <domain> --decision <decision> --out <dir> [--open]
   adr discover --repo <path> --decision <decision> --out <dir> [--issue-body <path-or-text>]
   adr handoff <out_dir> --option <candidate-name> [--write-evaluation-pack]
+  adr open <out_dir>
   adr resume <out_dir>
   adr supersede <previous-output-dir> --with <product-context.md> --domain <domain> --decision <decision> --out <dir>
 
@@ -125,6 +150,30 @@ async function main() {
 
   if (command === "deep-research") {
     await deepResearch({ inputPath, flags });
+    if (flags.open && flags.out) {
+      await renderAndOpenReport(String(flags.out)).catch((error) => {
+        console.error(`Could not open report: ${error.message}`);
+      });
+    }
+    return;
+  }
+
+  // `adr open <out_dir>` — render <out_dir>/ADR.md as ADR.html and open it
+  // in the user's default browser. Mermaid diagrams render as SVG, tables
+  // and headings get proper styling. Idempotent: re-running regenerates
+  // the HTML.
+  if (command === "open") {
+    if (!inputPath) {
+      console.error("Usage: adr open <out_dir>");
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      await renderAndOpenReport(inputPath);
+    } catch (error) {
+      console.error(`adr open failed: ${error.message}`);
+      process.exitCode = 1;
+    }
     return;
   }
 
