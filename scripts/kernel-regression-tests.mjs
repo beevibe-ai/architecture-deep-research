@@ -9,6 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import {
   applyCitationAudit,
   assessClarification,
+  buildGuardrails,
   buildKnowledgeMap,
   buildStrategicContext,
   deriveComparisonAxes,
@@ -124,27 +125,34 @@ try {
 
   installProvider((label) => {
     assert.equal(label, "architecture_synthesis_agent");
+    // The synthesizer tries to invent "invented_topology" which is NOT in
+    // promoted_candidates; the parser must drop it from ranked_options and
+    // fall back to mode = "deferred".
     return {
       decision: {
         id: "ADR-X",
         title: "Retrieval Topology",
         status: "selected",
-        selected_topology: "invented_topology",
+        mode: "recommended",
+        ranked_options: [
+          {
+            name: "invented_topology",
+            label: "Invented",
+            summary: "Looks plausible but is not promoted.",
+            when_to_pick: [],
+            when_not_to_pick: [],
+            strong_axes: [],
+            weak_axes: [],
+            risks: ["No promoted evidence."],
+            evidence_citations: [999],
+            confidence: 0.9
+          }
+        ],
+        recommendation: { name: "invented_topology", why: "Looks good." },
         summary: "Invented topology should not clear the gate.",
         evidence_citations: [999]
       },
       domain_model: {},
-      candidate_topologies: [
-        {
-          name: "invented_topology",
-          fit: "Looks plausible but is not promoted.",
-          risks: ["No promoted evidence."],
-          decision: "Selected as primary topology.",
-          evidence_citations: [999],
-          confidence: "very high"
-        }
-      ],
-      guardrails: {},
       evidence_summary: {}
     };
   });
@@ -156,20 +164,54 @@ try {
     comparisonMatrix: null
   });
 
+  // No promoted candidates → invented option gets filtered → ranked_options
+  // is empty → mode = "deferred" → selected_topology = HUMAN_REVIEW back-compat.
+  assert.equal(gatedSpec.decision.mode, "deferred");
+  assert.deepEqual(gatedSpec.decision.ranked_options, []);
+  assert.equal(gatedSpec.decision.recommendation, null);
   assert.equal(gatedSpec.decision.selected_topology, "requires_human_architecture_review");
   assert.equal(gatedSpec.decision.status, "proposed");
-  assert.equal(gatedSpec.candidate_topologies[0].decision, "deferred");
-  assert.equal(gatedSpec.candidate_topologies[0].confidence, 0);
-  assert.deepEqual(gatedSpec.candidate_topologies[0].evidence_citations, []);
+  assert.deepEqual(gatedSpec.candidate_topologies, []);
+
+  // applyCitationAudit drops the recommendation (not selected_topology now).
+  // Build a recommended-mode spec by hand and verify the audit demotes it
+  // to ranked_options + null recommendation, preserving ranked_options.
+  const recommendedSpec = {
+    ...gatedSpec,
+    decision: {
+      ...gatedSpec.decision,
+      mode: "recommended",
+      ranked_options: [
+        {
+          name: "graphrag",
+          label: "GraphRAG",
+          summary: "ok",
+          required_invariants: ["maintain lineage"],
+          forbidden_topologies: ["pure_vector_retrieval"],
+          evidence_citations: [1],
+          confidence: 0.9
+        },
+        {
+          name: "vector_rag",
+          label: "Vector RAG",
+          required_invariants: [],
+          forbidden_topologies: [],
+          evidence_citations: [],
+          confidence: 0.6
+        }
+      ],
+      recommendation: { name: "graphrag", why: "best on axes" },
+      selected_topology: "graphrag"
+    },
+    guardrails: {
+      ...gatedSpec.guardrails,
+      required_invariants: ["maintain lineage"],
+      forbidden_topologies: ["pure_vector_retrieval"]
+    }
+  };
 
   const citationDowngrade = applyCitationAudit({
-    spec: {
-      ...gatedSpec,
-      decision: {
-        ...gatedSpec.decision,
-        selected_topology: "graphrag"
-      }
-    },
+    spec: recommendedSpec,
     citationAudit: {
       items: [
         {
@@ -184,10 +226,14 @@ try {
     flags: {}
   });
   assert.equal(citationDowngrade.downgraded, true);
-  assert.equal(
-    citationDowngrade.spec.decision.selected_topology,
-    "requires_human_architecture_review"
-  );
+  assert.equal(citationDowngrade.spec.decision.mode, "ranked_options");
+  assert.equal(citationDowngrade.spec.decision.recommendation, null);
+  assert.equal(citationDowngrade.spec.decision.selected_topology, "ranked_options");
+  // ranked_options must survive the downgrade — that is the whole point.
+  assert.equal(citationDowngrade.spec.decision.ranked_options.length, 2);
+  // Back-compat roll-up invariants/forbidden go empty when no recommendation.
+  assert.deepEqual(citationDowngrade.spec.guardrails.required_invariants, []);
+  assert.deepEqual(citationDowngrade.spec.guardrails.forbidden_topologies, []);
 
   installProvider((label) => {
     if (label === "evaluation_pack_agent") {
@@ -1009,6 +1055,255 @@ try {
   assert.equal(claims[0].claim, "Clerk has a Next.js drop-in.");
   assert.equal(claims[0].relevance, "on_topic");
   assert.equal(claims[1].claim, "MFA is supported.");
+
+  setLlmJsonProvider(null);
+}
+
+// ---------------------------------------------------------------------------
+// Reframe to ranked_options:
+//
+// ADR no longer pretends to pick one architecture. The synthesizer produces
+// a ranked option set with explicit tradeoffs, plus a recommendation only
+// when one option clearly dominates. mode = "recommended" | "ranked_options"
+// | "deferred". Guardrails are per-option (each option carries its own
+// required_invariants and forbidden_topologies); the handoff lists every
+// option as a separate contract.
+// ---------------------------------------------------------------------------
+
+{
+  // Sub-test 1: synthesizer in mode=recommended produces a clean spec
+  // where exactly one option is "selected" and its invariants roll up to
+  // the back-compat top-level guardrails.
+
+  installProvider((label) => {
+    assert.equal(label, "architecture_synthesis_agent");
+    return {
+      decision: {
+        id: "ADR-Auth",
+        title: "Auth provider",
+        status: "selected",
+        mode: "recommended",
+        ranked_options: [
+          {
+            name: "clerk",
+            label: "Clerk",
+            summary: "Drop-in auth for Next.js apps.",
+            when_to_pick: ["You want low integration time", "MFA + organizations matter out of the box"],
+            when_not_to_pick: ["You require on-prem deployment"],
+            strong_axes: ["pricing_model", "sdk_integration_quality"],
+            weak_axes: ["on_prem_self_host"],
+            risks: ["Vendor lock-in"],
+            required_invariants: ["Tokens must be issued by Clerk's session API"],
+            forbidden_topologies: ["roll_your_own_jwt"],
+            evidence_citations: [1, 2],
+            confidence: 0.9
+          },
+          {
+            name: "auth0",
+            label: "Auth0",
+            summary: "Mature OAuth-first provider.",
+            when_to_pick: ["You need enterprise SSO/SAML"],
+            when_not_to_pick: ["You are price-sensitive at scale"],
+            strong_axes: ["sdk_integration_quality"],
+            weak_axes: ["pricing_model"],
+            risks: ["Costs scale poorly"],
+            required_invariants: ["Use Auth0 Rules for tenant gating"],
+            forbidden_topologies: ["self_host_session_store"],
+            evidence_citations: [3],
+            confidence: 0.7
+          }
+        ],
+        recommendation: {
+          name: "clerk",
+          why: "Clerk is strong on the two axes that matter most for this multi-tenant Next.js app.",
+          when_this_breaks: ["You decide you must self-host"]
+        },
+        summary: "Clerk recommended; Auth0 retained as a viable alternative.",
+        evidence_citations: [1, 2, 3]
+      },
+      domain_model: {
+        bounded_contexts: ["AuthContext"],
+        core_entities: ["User"],
+        domain_invariants: []
+      },
+      evidence_summary: { allowed_agentic_use: ["onboarding"] }
+    };
+  });
+
+  // Knowledge map: simulate two promoted candidates (clerk + auth0).
+  const km = {
+    promotion_rule: "test rule",
+    promoted_candidates: [
+      { name: "clerk", label: "Clerk", citations: [1, 2], evidence_count: 2 },
+      { name: "auth0", label: "Auth0", citations: [3], evidence_count: 1 }
+    ],
+    insufficient_evidence_candidates: []
+  };
+  const evidence = [
+    { citation_id: 1, title: "Clerk docs", url: "https://clerk.com", source_type: "official_docs", score: 0.9, excerpt: "...", claims: [], relevance: "x" },
+    { citation_id: 2, title: "Clerk pricing", url: "https://clerk.com/pricing", source_type: "official_docs", score: 0.7, excerpt: "...", claims: [], relevance: "x" },
+    { citation_id: 3, title: "Auth0 docs", url: "https://auth0.com", source_type: "official_docs", score: 0.8, excerpt: "...", claims: [], relevance: "x" }
+  ];
+
+  const spec = await synthesizeDecisionPhase({
+    context: {
+      domain: "saas",
+      decision: "auth provider",
+      decision_kind: "concrete",
+      domain_entities: ["User"],
+      bounded_contexts: ["AuthContext"],
+      query_shapes: [],
+      operational_envelope: {
+        latency: "not_specified",
+        cost: "not_specified",
+        scale: "not_specified",
+        availability: "not_specified"
+      },
+      compliance_constraints: [],
+      risk_invariants: []
+    },
+    knowledgeMap: km,
+    evidenceItems: evidence,
+    comparisonMatrix: null
+  });
+
+  assert.equal(spec.decision.mode, "recommended");
+  assert.equal(spec.decision.recommendation.name, "clerk");
+  assert.equal(spec.decision.ranked_options.length, 2);
+  assert.equal(spec.decision.selected_topology, "clerk", "selected_topology back-compat should equal recommendation.name");
+  // Both ranked options must appear in candidate_topologies; the recommended
+  // one with decision: "selected", the other with decision: "considered".
+  const candByName = Object.fromEntries(spec.candidate_topologies.map((c) => [c.name, c]));
+  assert.equal(candByName.clerk.decision, "selected");
+  assert.equal(candByName.auth0.decision, "considered");
+  // Back-compat roll-up: top-level guardrails mirror the recommended option.
+  assert.deepEqual(spec.guardrails.required_invariants, ["Tokens must be issued by Clerk's session API"]);
+  assert.deepEqual(spec.guardrails.forbidden_topologies, ["roll_your_own_jwt"]);
+
+  // Per-option guardrails markdown contains BOTH options, each with its own
+  // invariants block. The recommended option carries the (recommended) tag.
+  const guardrailsMd = buildGuardrails(spec);
+  assert.ok(guardrailsMd.includes("Option: `clerk`"), "guardrails should list option clerk");
+  assert.ok(guardrailsMd.includes("Option: `auth0`"), "guardrails should list option auth0");
+  assert.ok(guardrailsMd.includes("*(recommended)*"), "recommended option should be tagged");
+  assert.ok(
+    guardrailsMd.includes("Tokens must be issued by Clerk's session API"),
+    "clerk's per-option invariant must appear"
+  );
+  assert.ok(
+    guardrailsMd.includes("Use Auth0 Rules for tenant gating"),
+    "auth0's per-option invariant must appear"
+  );
+
+  setLlmJsonProvider(null);
+}
+
+{
+  // Sub-test 2: synthesizer in mode=ranked_options — two viable options,
+  // no recommendation. This is the correct default for genuine tradeoffs.
+
+  installProvider((label) => {
+    assert.equal(label, "architecture_synthesis_agent");
+    return {
+      decision: {
+        id: "ADR-Retrieval",
+        title: "Retrieval Topology",
+        status: "proposed",
+        mode: "ranked_options",
+        ranked_options: [
+          {
+            name: "graphrag",
+            label: "GraphRAG",
+            summary: "Graph-based retrieval over hierarchical communities.",
+            when_to_pick: ["Multi-hop entity reasoning matters"],
+            when_not_to_pick: ["Single-hop QA only"],
+            strong_axes: ["multi_hop_relational"],
+            weak_axes: ["index_build_cost"],
+            required_invariants: ["Preserve community hierarchy"],
+            forbidden_topologies: ["pure_vector_retrieval"],
+            evidence_citations: [1],
+            confidence: 0.7
+          },
+          {
+            name: "vector_rag",
+            label: "Vector RAG",
+            summary: "Top-K vector search with reranking.",
+            when_to_pick: ["High-volume single-hop QA"],
+            when_not_to_pick: ["Multi-hop entity reasoning matters"],
+            strong_axes: ["index_build_cost"],
+            weak_axes: ["multi_hop_relational"],
+            required_invariants: ["Cite source IDs in answers"],
+            forbidden_topologies: ["unsupervised_clustering"],
+            evidence_citations: [2],
+            confidence: 0.6
+          }
+        ],
+        recommendation: null,
+        summary: "Two viable retrieval topologies with genuine tradeoffs.",
+        evidence_citations: []
+      },
+      domain_model: {},
+      evidence_summary: {}
+    };
+  });
+
+  const km2 = {
+    promotion_rule: "test",
+    promoted_candidates: [
+      { name: "graphrag", label: "GraphRAG", citations: [1], evidence_count: 1 },
+      { name: "vector_rag", label: "Vector RAG", citations: [2], evidence_count: 1 }
+    ],
+    insufficient_evidence_candidates: []
+  };
+  const evidence2 = [
+    { citation_id: 1, title: "graphrag paper", url: "https://...", source_type: "paper_or_benchmark", score: 0.9, excerpt: "...", claims: [], relevance: "x" },
+    { citation_id: 2, title: "vectorrag", url: "https://...", source_type: "official_docs", score: 0.8, excerpt: "...", claims: [], relevance: "x" }
+  ];
+
+  const spec = await synthesizeDecisionPhase({
+    context: {
+      domain: "kb",
+      decision: "retrieval topology",
+      decision_kind: "family",
+      domain_entities: [],
+      bounded_contexts: [],
+      query_shapes: [],
+      operational_envelope: {
+        latency: "not_specified",
+        cost: "not_specified",
+        scale: "not_specified",
+        availability: "not_specified"
+      },
+      compliance_constraints: [],
+      risk_invariants: []
+    },
+    knowledgeMap: km2,
+    evidenceItems: evidence2,
+    comparisonMatrix: null
+  });
+
+  assert.equal(spec.decision.mode, "ranked_options");
+  assert.equal(spec.decision.recommendation, null);
+  assert.equal(spec.decision.ranked_options.length, 2);
+  // selected_topology takes the literal "ranked_options" sentinel — NOT
+  // requires_human_architecture_review. The two are different signals.
+  assert.equal(spec.decision.selected_topology, "ranked_options");
+  // Both options should appear as "considered" (none "selected") because
+  // there is no recommendation.
+  for (const c of spec.candidate_topologies) {
+    assert.equal(c.decision, "considered");
+  }
+  // Top-level guardrails are EMPTY when no recommendation — callers must
+  // read per-option from ranked_options.
+  assert.deepEqual(spec.guardrails.required_invariants, []);
+  assert.deepEqual(spec.guardrails.forbidden_topologies, []);
+
+  // Guardrails: per-option blocks, "No recommendation" framing visible.
+  const guardrailsMd = buildGuardrails(spec);
+  assert.ok(guardrailsMd.includes("Option: `graphrag`"));
+  assert.ok(guardrailsMd.includes("Option: `vector_rag`"));
+  assert.ok(guardrailsMd.includes("No recommendation"));
+  assert.ok(!guardrailsMd.includes("*(recommended)*"));
 
   setLlmJsonProvider(null);
 }

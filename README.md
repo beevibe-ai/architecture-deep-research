@@ -24,7 +24,7 @@ The handoff is where ADR stops. Claude Code, Cursor, Codex, or a Beevibe special
 - No deterministic mock research.
 - No static pattern library that forces the answer.
 - Architecture candidates must come from live source evidence.
-- If evidence is insufficient, ADR returns `requires_human_architecture_review` instead of pretending confidence.
+- ADR produces a **ranked option set with explicit tradeoffs**, not a single forced winner. A `recommendation` is populated only when one option clearly dominates the comparison matrix; otherwise the mode is `ranked_options` and the caller picks based on team-side constraints ADR cannot know. When no candidate clears the promotion gate at all, the mode is `deferred` — re-run with sharper context.
 
 ## Three Ways In
 
@@ -88,6 +88,20 @@ adr deep-research .adr-runs/discover/pdr.draft.md \
 ```
 
 > `npm install -g github:...` installs straight from this GitHub repo — no npm registry account required. A published `@beevibe/architecture-deep-research` package on npmjs.com may follow.
+
+## Ranked Options, Not a Single Forced Winner
+
+Every architecture decision is a tradeoff. ADR's primary output is a **ranked option set** — every viable candidate from the comparison matrix appears with explicit `when_to_pick` / `when_not_to_pick` conditions, `strong_axes` / `weak_axes`, and per-option `required_invariants` and `forbidden_topologies`.
+
+A `recommendation` is added only when one option clearly dominates (strong on multiple axes that matter AND others are weak or no_evidence on at least one critical axis). When no option dominates, `mode = "ranked_options"` and the caller picks based on team-side constraints ADR cannot know (existing infrastructure, hiring plans, vendor relationships, budget envelope).
+
+| Mode | Meaning |
+| --- | --- |
+| `recommended` | One option dominates; `recommendation.name` names it. The other options are recorded with their tradeoffs as alternatives. |
+| `ranked_options` | Multiple options are viable with genuine tradeoffs. `recommendation: null`. Pick the option whose conditions match your situation. |
+| `deferred` | No candidate cleared the promotion gate. Re-run with sharper context. |
+
+Coding agents downstream pick one option, then honor the matching block in `agent-guardrails.md` (per-option contract). The handoff JSON's `options[]` is the machine-readable equivalent.
 
 ## Decision Kind: Family vs Concrete
 

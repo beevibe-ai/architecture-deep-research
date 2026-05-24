@@ -18,8 +18,85 @@
           "type": "string",
           "enum": ["proposed", "approved", "superseded", "rejected"]
         },
-        "selected_topology": { "type": "string" },
-        "summary": { "type": "string" }
+        "mode": {
+          "type": "string",
+          "enum": ["recommended", "ranked_options", "deferred"],
+          "description": "How to read this decision. \"recommended\" — one option dominates and is named in .recommendation. \"ranked_options\" — multiple viable options with genuine tradeoffs; no winner (recommendation is null). \"deferred\" — no candidate cleared the promotion gate."
+        },
+        "ranked_options": {
+          "type": "array",
+          "description": "The primary output of ADR: a ranked option set with tradeoffs. Every viable candidate from the comparison matrix appears here.",
+          "items": {
+            "type": "object",
+            "required": ["name", "label"],
+            "properties": {
+              "name": { "type": "string" },
+              "label": { "type": "string" },
+              "summary": { "type": "string" },
+              "when_to_pick": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "when_not_to_pick": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "strong_axes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "weak_axes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "risks": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "required_invariants": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "forbidden_topologies": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "evidence_citations": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 1 }
+              },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "recommendation": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["name", "why"],
+              "properties": {
+                "name": { "type": "string" },
+                "why": { "type": "string" },
+                "when_this_breaks": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "selected_topology": {
+          "type": "string",
+          "description": "Back-compat shortcut. When mode=recommended, equals recommendation.name. When mode=ranked_options, equals the literal string \"ranked_options\". When mode=deferred, equals \"requires_human_architecture_review\". Prefer reading mode + ranked_options + recommendation directly."
+        },
+        "summary": { "type": "string" },
+        "evidence_citations": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        }
       },
       "additionalProperties": true
     },

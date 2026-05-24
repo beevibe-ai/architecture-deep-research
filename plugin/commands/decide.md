@@ -108,6 +108,9 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `adversarial_research_cycle_started` | ⚔️  Adversarial cycle `N`: arguing against candidates |
 | `adversarial_research_cycle_completed` | ✓  Adversarial cycle `N` complete (`E` empty cells remain) |
 | `critique_completed` | 🧐  Critique: `N` issues (`H` high-severity) |
+| `resynthesis_started` | 🔄  Re-synthesizing to address `N` high-severity issues |
+| `resynthesis_accepted` | ✓  Re-synthesis accepted (`N` → `M` high-severity, selected: `<value>`) |
+| `resynthesis_rejected` | ↪  Re-synthesis rejected — keeping original (`reason`) |
 | `citation_audit_completed` | 🔗  Citation audit: `V/T` verified, `U` unsupported |
 | `claim_audit_completed` | 📝  Claim audit complete |
 | `decision_downgraded_by_critique` | ⚠️  Decision downgraded by critique |
@@ -151,7 +154,7 @@ EOF
 
 5. Restart the `tail -F` task and resume streaming events. The strategic-context extraction will re-run with the answers folded in, and the gate will not re-block.
 
-**Do NOT default to `--no-clarify`** — the user has to opt out of clarification explicitly. The point of the gate is that running with no answers wastes 3+ minutes of evidence collection to land on `requires_human_architecture_review`.
+**Do NOT default to `--no-clarify`** — the user has to opt out of clarification explicitly. The point of the gate is that running with no answers wastes 3+ minutes of evidence collection to land on a `deferred` run with no viable options.
 
 ## Step 7 — When the deep-research task finishes
 
@@ -168,20 +171,37 @@ cat .adr-runs/<SLUG>/execution-handoff.json
 
 ## Step 8 — Summarize the result
 
-Show the user a tight 4–6 line summary:
+Read the handoff and branch on `mode`:
 
-```
-Selected:  <selected_topology>
-Required:  <2 most important required_invariants>
-Avoid:     <forbidden_topologies as a comma list>
-Matrix:    <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
-Citations: <verified_count>/<total_citations> verified
-```
+- **`mode: "recommended"`** — one option dominates. Show:
+  ```
+  Recommended:  <recommendation.name>
+  Why:          <recommendation.why, one line>
+  Other options: <options[].name except the recommended one, comma-separated>
+  Matrix:       <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
+  Citations:    <verified_count>/<total_citations> verified
+  ```
+
+- **`mode: "ranked_options"`** — multiple viable options with genuine tradeoffs. Show:
+  ```
+  Mode:        ranked_options — no single recommendation
+  Options:     <options[].name>, comma-separated
+  Matrix:      <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
+  Citations:   <verified_count>/<total_citations> verified
+  ```
+  Then offer: "Want me to walk through each option's tradeoffs from `ADR.md`?"
+
+- **`mode: "deferred"`** — no viable options. Show:
+  ```
+  Mode:       deferred — no viable options produced
+  Reason:     read critique.json
+  Next step:  re-run with sharper context, or run `adr supersede` once more evidence is available
+  ```
 
 If `critique_summary.recommend_human_review` is `true`, append:
 
 ```
-⚠  recommend_human_review = true — the critique flagged the synthesis.
+⚠  recommend_human_review = true — the critique flagged structural issues with the option set.
    Open .adr-runs/<SLUG>/ADR.md before implementing.
 ```
 
@@ -189,18 +209,19 @@ If `critique_summary.recommend_human_review` is `true`, append:
 
 Ask which the user wants:
 
-- Open `ADR.md` and walk through the human-readable decision record
+- Open `ADR.md` and walk through each option's tradeoffs
 - Walk the comparison matrix cell by cell
-- Implement under the handoff (read `execution-handoff.json`, treat it as a hard contract)
+- Implement under one option's contract (ask which option first if `mode == ranked_options`; honor that option's `required_invariants` and `forbidden_topologies` from `execution-handoff.json` -> `options[]`)
 
 ## Hard rules for the implement path
 
-If the user says "implement," treat `execution-handoff.json` as a contract:
+If the user says "implement," `execution-handoff.json` carries per-option contracts under `options[]`. The agent's job:
 
-- Honor every `required_invariant` in the code you write.
-- Never reach for anything in `forbidden_topologies`.
-- Run against `domain-evaluation-pack.json` test cases before declaring done.
-- If you cannot satisfy an invariant, stop and surface the conflict — don't paper over it.
+1. **Pick one option.** If `mode == "recommended"`, default to `recommendation.name` unless the user picks differently. If `mode == "ranked_options"`, ask which option before writing any code — there is no default.
+2. **Honor THAT option's `required_invariants`** in the code you write.
+3. **Never reach for anything in THAT option's `forbidden_topologies`.**
+4. Run against `domain-evaluation-pack.json` test cases before declaring done.
+5. If you cannot satisfy an invariant for the chosen option, stop and surface the conflict — don't paper over it, and don't silently swap to a different option.
 
 ## Failure modes
 
