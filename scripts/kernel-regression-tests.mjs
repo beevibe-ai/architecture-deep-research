@@ -9,6 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import {
   applyCitationAudit,
   assessClarification,
+  buildADR,
   buildGuardrails,
   buildKnowledgeMap,
   buildStrategicContext,
@@ -27,6 +28,7 @@ import {
   proposeFollowUpQuestions,
   setLlmJsonProvider,
   synthesizeDecisionPhase,
+  validateMermaidSource,
   writeJson,
   writeRunArtifacts
 } from "../src/kernel.mjs";
@@ -2327,6 +2329,222 @@ try {
   setLlmJsonProvider(null);
 
   await rm(tmpDir, { recursive: true, force: true });
+}
+
+// ============================================================================
+// Mermaid diagrams in the research report.
+// ============================================================================
+//
+// Two checks cover the contract:
+//   1. Happy path — LLM emits valid Mermaid for both decision_space_diagram
+//      and per-option deployment_diagram. The synthesizer keeps both fields
+//      and buildADR renders two ```mermaid fenced blocks.
+//   2. Validation failure — LLM emits broken Mermaid (missing flowchart
+//      header, triple-backtick contamination). The synthesizer drops the
+//      bad fields, emits diagram_validation_failed, and the rest of the
+//      report ships intact.
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-diagrams-"));
+  await writeFile(path.join(tmpDir, "events.jsonl"), "");
+
+  const goodDecisionDiagram = `flowchart LR
+  decision{Retrieval architecture}
+  decision --> pgvector[Pgvector]
+  decision --> pinecone[Pinecone]
+  classDef thick fill:#cfc,stroke:#363
+  class pgvector thick`;
+  const goodDeploymentDiagram = `flowchart LR
+  subgraph App
+    api[API]
+  end
+  subgraph Data
+    pg[(Postgres + pgvector)]
+  end
+  api -->|HNSW lookup| pg`;
+
+  installProvider((label) => {
+    assert.equal(label, "research_report_agent");
+    return {
+      id: "ADR-Retrieval",
+      title: "Retrieval architecture",
+      executive_summary: "Two candidates: pgvector and pinecone.",
+      decision_space_diagram: goodDecisionDiagram,
+      option_space_shape: "Self-host vs managed.",
+      options: [
+        {
+          name: "pgvector",
+          label: "Pgvector",
+          summary: "Postgres extension.",
+          evidence_depth: "thick",
+          what_evidence_shows: "Production usage documented in Spring AI docs.",
+          what_evidence_does_not_show: "No p99 latency at scale.",
+          when_to_pick: ["You already run Postgres"],
+          when_not_to_pick: ["You need >1B vectors"],
+          strong_axes: ["fits_existing_stack"],
+          weak_axes: ["scale"],
+          citations: [1],
+          deployment_diagram: goodDeploymentDiagram
+        },
+        {
+          name: "pinecone",
+          label: "Pinecone",
+          summary: "Managed vector DB.",
+          evidence_depth: "medium",
+          what_evidence_shows: "Managed-service SDK and pricing docs.",
+          what_evidence_does_not_show: "Vendor lock-in patterns.",
+          when_to_pick: ["You want zero ops"],
+          when_not_to_pick: ["You require on-prem"],
+          strong_axes: ["scale"],
+          weak_axes: ["fits_existing_stack"],
+          citations: [2]
+          // deployment_diagram omitted — synthesizer skipped it for this option
+        }
+      ],
+      cross_cutting_tradeoffs: [],
+      open_questions: [],
+      domain_model: { bounded_contexts: [], core_entities: [], domain_invariants: [] },
+      evidence_summary: {}
+    };
+  });
+
+  const km = {
+    acquisition_rule: "test rule",
+    candidates: [
+      { name: "pgvector", label: "Pgvector", evidence_depth: "thick", citations: [1], evidence_count: 3 },
+      { name: "pinecone", label: "Pinecone", evidence_depth: "medium", citations: [2], evidence_count: 2 }
+    ],
+    off_topic_candidates: []
+  };
+  const evidence = [
+    { citation_id: 1, title: "pgvector docs", url: "https://example.com/pgv", source_type: "official_docs", score: 0.9, excerpt: "...", claims: [], relevance: "x" },
+    { citation_id: 2, title: "Pinecone docs", url: "https://example.com/pin", source_type: "official_docs", score: 0.8, excerpt: "...", claims: [], relevance: "x" }
+  ];
+  const context = {
+    domain: "agents", decision: "retrieval architecture",
+    domain_entities: [], bounded_contexts: [], query_shapes: [],
+    operational_envelope: { latency: "not_specified", cost: "not_specified", scale: "not_specified", availability: "not_specified" },
+    compliance_constraints: [], risk_invariants: []
+  };
+
+  const spec = await synthesizeDecisionPhase({
+    context, knowledgeMap: km, evidenceItems: evidence, comparisonMatrix: null, outDir: tmpDir
+  });
+
+  // Happy-path assertions.
+  assert.equal(spec.decision_space_diagram, goodDecisionDiagram, "decision_space_diagram preserved on happy path");
+  const byName = Object.fromEntries(spec.options.map((o) => [o.name, o]));
+  assert.equal(byName.pgvector.deployment_diagram, goodDeploymentDiagram, "pgvector deployment_diagram preserved");
+  assert.equal(byName.pinecone.deployment_diagram, undefined, "omitted deployment_diagram stays omitted");
+
+  // Renderer wraps each diagram in a ```mermaid fenced block.
+  const md = buildADR(context, spec, km, evidence, {});
+  const mermaidBlocks = md.match(/```mermaid\n[\s\S]*?\n```/g) || [];
+  assert.equal(mermaidBlocks.length, 2, `expected 2 mermaid blocks in ADR.md, got ${mermaidBlocks.length}`);
+  assert.ok(md.includes(goodDecisionDiagram), "decision_space_diagram appears in ADR.md");
+  assert.ok(md.includes(goodDeploymentDiagram), "deployment_diagram appears in ADR.md");
+
+  // No validation-failure event should have fired on the happy path.
+  const happyEvents = (await readFile(path.join(tmpDir, "events.jsonl"), "utf8"))
+    .split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert.equal(
+    happyEvents.filter((e) => e.type === "diagram_validation_failed").length,
+    0,
+    "no diagram_validation_failed on happy path"
+  );
+
+  setLlmJsonProvider(null);
+
+  // -- Sub-test 2: validation failure drops fields and emits event --
+  const tmpDir2 = await mkdtemp(path.join(os.tmpdir(), "adr-diagrams-bad-"));
+  await writeFile(path.join(tmpDir2, "events.jsonl"), "");
+
+  installProvider(() => ({
+    id: "ADR-Bad",
+    title: "Retrieval architecture",
+    executive_summary: "Two candidates with broken diagrams.",
+    // Missing 'flowchart <dir>' header.
+    decision_space_diagram: "graph LR\n  a --> b",
+    option_space_shape: "x",
+    options: [
+      {
+        name: "pgvector",
+        label: "Pgvector",
+        summary: "x",
+        evidence_depth: "thick",
+        what_evidence_shows: "x",
+        what_evidence_does_not_show: "x",
+        when_to_pick: ["x"],
+        when_not_to_pick: ["x"],
+        strong_axes: [],
+        weak_axes: [],
+        citations: [1],
+        // Triple-backtick contamination — LLM wrapped its own answer.
+        deployment_diagram: "```mermaid\nflowchart LR\n  api --> pg\n```"
+      },
+      {
+        name: "pinecone",
+        label: "Pinecone",
+        summary: "x",
+        evidence_depth: "medium",
+        what_evidence_shows: "x",
+        what_evidence_does_not_show: "x",
+        when_to_pick: ["x"],
+        when_not_to_pick: ["x"],
+        strong_axes: [],
+        weak_axes: [],
+        citations: [2],
+        // Unbalanced brackets.
+        deployment_diagram: "flowchart LR\n  api[API --> pg[(Postgres)]"
+      }
+    ],
+    cross_cutting_tradeoffs: [],
+    open_questions: [],
+    domain_model: { bounded_contexts: [], core_entities: [], domain_invariants: [] },
+    evidence_summary: {}
+  }));
+
+  const badSpec = await synthesizeDecisionPhase({
+    context, knowledgeMap: km, evidenceItems: evidence, comparisonMatrix: null, outDir: tmpDir2
+  });
+
+  // All three diagram fields should be dropped — the rest of the report intact.
+  assert.equal(badSpec.decision_space_diagram, undefined, "broken decision_space_diagram dropped");
+  const badByName = Object.fromEntries(badSpec.options.map((o) => [o.name, o]));
+  assert.equal(badByName.pgvector.deployment_diagram, undefined, "broken pgvector deployment_diagram dropped");
+  assert.equal(badByName.pinecone.deployment_diagram, undefined, "unbalanced pinecone deployment_diagram dropped");
+  assert.equal(badSpec.options.length, 2, "options still present despite diagram failures");
+  assert.ok(badSpec.executive_summary.length > 0, "executive_summary still present");
+
+  // One diagram_validation_failed event with all 3 failures.
+  const badEvents = (await readFile(path.join(tmpDir2, "events.jsonl"), "utf8"))
+    .split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const failureEvents = badEvents.filter((e) => e.type === "diagram_validation_failed");
+  assert.equal(failureEvents.length, 1, "one diagram_validation_failed event");
+  assert.equal(failureEvents[0].failure_count, 3, "all 3 failures captured");
+  const failureSections = failureEvents[0].failures.map((f) => f.section).sort();
+  assert.deepEqual(
+    failureSections,
+    ["decision_space_diagram", "option:pgvector:deployment_diagram", "option:pinecone:deployment_diagram"],
+    "failure sections recorded"
+  );
+
+  // ADR.md must NOT contain any mermaid fenced blocks (all dropped).
+  const badMd = buildADR(context, badSpec, km, evidence, {});
+  const badBlocks = badMd.match(/```mermaid\n[\s\S]*?\n```/g) || [];
+  assert.equal(badBlocks.length, 0, "no mermaid blocks rendered when all diagrams failed validation");
+
+  setLlmJsonProvider(null);
+
+  // -- Sub-test 3: pure validator unit tests --
+  assert.equal(validateMermaidSource("").ok, false);
+  assert.equal(validateMermaidSource("not mermaid").ok, false);
+  assert.equal(validateMermaidSource("flowchart LR\n  a --> b").ok, true);
+  assert.equal(validateMermaidSource("flowchart TD\n  a{q} --> b[v]").ok, true);
+  assert.equal(validateMermaidSource("```mermaid\nflowchart LR\n  a --> b\n```").ok, false);
+  assert.equal(validateMermaidSource("flowchart LR\n  a[unbalanced --> b").ok, false);
+
+  await rm(tmpDir, { recursive: true, force: true });
+  await rm(tmpDir2, { recursive: true, force: true });
 }
 
 console.log("kernel regression tests ok");

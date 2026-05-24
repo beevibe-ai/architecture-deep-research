@@ -9,6 +9,10 @@
     "id": { "type": "string" },
     "title": { "type": "string" },
     "executive_summary": { "type": "string" },
+    "decision_space_diagram": {
+      "type": "string",
+      "description": "Mermaid flowchart source showing the candidate space at a glance. Renders as a ```mermaid block after the executive summary in ADR.md. Optional — omitted when synthesis couldn't produce a valid diagram or when there are fewer than two candidates."
+    },
     "option_space_shape": { "type": "string" },
     "options": {
       "type": "array",
@@ -45,6 +49,10 @@
           "citations": {
             "type": "array",
             "items": { "type": "integer", "minimum": 1 }
+          },
+          "deployment_diagram": {
+            "type": "string",
+            "description": "Mermaid flowchart source showing this candidate wired into the user's stack. Renders as a ```mermaid block inside the candidate section. Optional — omitted for abstract categories / patterns that don't have a deployable shape, or when synthesis couldn't produce a valid diagram."
           }
         },
         "additionalProperties": true

@@ -63,6 +63,35 @@ function normalizeDecisionStatus(value) {
   return "proposed";
 }
 
+// Lightweight Mermaid validator for LLM-emitted flowchart source. Catches the
+// common breakage modes — empty output, triple-backtick contamination from the
+// LLM wrapping its own answer, missing `flowchart <dir>` header, and unbalanced
+// node-shape delimiters that would crash the GitHub/Obsidian renderer. Returns
+// { ok: true } or { ok: false, error: <reason> }. We drop the diagram on
+// failure rather than blocking the rest of the report (see synthesizeResearchReport).
+function validateMermaidSource(source) {
+  if (typeof source !== "string") return { ok: false, error: "not a string" };
+  const trimmed = source.trim();
+  if (!trimmed) return { ok: false, error: "empty" };
+  if (trimmed.includes("```")) return { ok: false, error: "contains triple-backticks (LLM wrapped its own answer)" };
+  if (!/^flowchart\s+(LR|TD|TB|RL|BT)\b/i.test(trimmed)) {
+    return { ok: false, error: "must start with 'flowchart <LR|TD|TB|RL|BT>'" };
+  }
+  const pairs = [
+    ["[", "]"],
+    ["(", ")"],
+    ["{", "}"]
+  ];
+  for (const [open, close] of pairs) {
+    const opens = (trimmed.match(new RegExp(`\\${open}`, "g")) || []).length;
+    const closes = (trimmed.match(new RegExp(`\\${close}`, "g")) || []).length;
+    if (opens !== closes) {
+      return { ok: false, error: `unbalanced ${open}${close}: ${opens} open vs ${closes} close` };
+    }
+  }
+  return { ok: true };
+}
+
 function normalizeCandidateDecision(value, { candidateName, selectedTopology } = {}) {
   const candidateSlug = slugify(candidateName);
   const selectedSlug = slugify(selectedTopology);
@@ -2705,7 +2734,8 @@ async function synthesizeResearchReport({
   evidenceItems,
   comparisonMatrix,
   priorCritique = null,
-  priorSpec = null
+  priorSpec = null,
+  outDir = null
 }) {
   const candidateRecords = toArray(knowledgeMap?.candidates);
   const candidateNames = candidateRecords.map((c) => c.name);
@@ -2797,6 +2827,49 @@ async function synthesizeResearchReport({
       "  practitioners report X\" or \"HN discussion notes Y\" — not as a hard",
       "  architectural fact.",
       "",
+      "DIAGRAMS — emit Mermaid flowchart source for two specific fields:",
+      "",
+      "1. decision_space_diagram (top-level, required when there are ≥2 candidates):",
+      "   flowchart LR with one central decision node and each candidate as a",
+      "   sibling. Style nodes by evidence_depth using these classes:",
+      "     classDef thick fill:#cfc,stroke:#363",
+      "     classDef thin fill:#fcc,stroke:#933",
+      "   Apply `class <name> thick` for evidence_depth=thick candidates and",
+      "   `class <name> thin` for evidence_depth=thin candidates. Medium gets no",
+      "   class. Total node count: keep ≤16. No subgraphs needed.",
+      "",
+      "2. options[].deployment_diagram (per concrete candidate):",
+      "   flowchart LR showing how this candidate integrates with the user's",
+      "   existing stack. Use subgraphs for layers (App / Data / Infra). Label",
+      "   edges with protocol or operation (\"HNSW lookup\", \"REST\", \"embedding",
+      "   upsert\"). Total nodes ≤15.",
+      "",
+      "   IMPORTANT: omit deployment_diagram entirely when the candidate is an",
+      "   abstract category, generic pattern, or research concept rather than a",
+      "   deployable system. \"Pgvector\" / \"Memgraph\" / \"Neo4j\" get diagrams;",
+      "   \"Graph Database\" / \"Knowledge Graph\" / \"Bidirectional Knowledge Graph\"",
+      "   do not. The reader can tell from the candidate's name and summary",
+      "   whether a deployment topology makes sense.",
+      "",
+      "Mermaid rules (both fields):",
+      "- Output bare Mermaid DSL only — no ```mermaid``` fences (the renderer",
+      "  adds them).",
+      "- No custom HTML, no clickable links, no themes beyond the classDef above.",
+      "- Stable kebab-case IDs (so future diff detection works).",
+      "- If you cannot produce a valid diagram for a field, OMIT the field",
+      "  rather than emit broken syntax. Better no diagram than a broken one.",
+      "",
+      "Example decision_space_diagram (3 candidates):",
+      "  flowchart LR",
+      "    decision{Retrieval architecture}",
+      "    decision --> pgvector[Pgvector]",
+      "    decision --> pinecone[Pinecone]",
+      "    decision --> weaviate[Weaviate]",
+      "    classDef thick fill:#cfc,stroke:#363",
+      "    classDef thin fill:#fcc,stroke:#933",
+      "    class pgvector thick",
+      "    class weaviate thin",
+      "",
       ...(isResynth
         ? [
             "RE-SYNTHESIS MODE — the previous report was critiqued.",
@@ -2811,7 +2884,7 @@ async function synthesizeResearchReport({
             ""
           ]
         : []),
-      "Output JSON: { id, title, executive_summary, option_space_shape, options: [...], cross_cutting_tradeoffs: [...], open_questions: [...], domain_model, evidence_summary }."
+      "Output JSON: { id, title, executive_summary, decision_space_diagram, option_space_shape, options: [{ ..., deployment_diagram }], cross_cutting_tradeoffs: [...], open_questions: [...], domain_model, evidence_summary }."
     ].filter(Boolean).join("\n"),
     user: JSON.stringify({
       context,
@@ -2859,6 +2932,7 @@ async function synthesizeResearchReport({
   const rawOptions = toArray(result.options);
   const dedupSeen = new Set();
   const options = [];
+  const diagramFailures = []; // collected here; emitted via outDir below
   for (const opt of rawOptions) {
     const name = slugify(String(opt.name || "").trim());
     if (!name) continue;
@@ -2869,7 +2943,7 @@ async function synthesizeResearchReport({
     const evidenceDepth = ["thick", "medium", "thin"].includes(declaredDepth)
       ? declaredDepth
       : depthByName.get(name) || "thin";
-    options.push({
+    const parsedOption = {
       name,
       label: String(opt.label || titleCase(name)),
       summary: String(opt.summary || ""),
@@ -2883,7 +2957,22 @@ async function synthesizeResearchReport({
       citations: toArray(opt.citations)
         .map(Number)
         .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id))
-    });
+    };
+    // Per-candidate Mermaid deployment_diagram. Optional — the prompt instructs
+    // the LLM to omit it for abstract categories. We only act when the field
+    // is present: validate, attach on success, drop on failure.
+    if (opt.deployment_diagram != null) {
+      const validated = validateMermaidSource(opt.deployment_diagram);
+      if (validated.ok) {
+        parsedOption.deployment_diagram = String(opt.deployment_diagram).trim();
+      } else {
+        diagramFailures.push({
+          section: `option:${name}:deployment_diagram`,
+          error: validated.error
+        });
+      }
+    }
+    options.push(parsedOption);
   }
 
   // Backstop: every candidate in knowledge_map must have an options entry.
@@ -2946,11 +3035,35 @@ async function synthesizeResearchReport({
 
   const optionSpaceShape = String(result.option_space_shape || "").trim();
 
+  // Top-level decision_space_diagram. Same validate-or-drop pattern as the
+  // per-option deployment_diagram above. Collected into diagramFailures so
+  // we emit all failures in one event at the end.
+  let decisionSpaceDiagram = null;
+  if (result.decision_space_diagram != null) {
+    const validated = validateMermaidSource(result.decision_space_diagram);
+    if (validated.ok) {
+      decisionSpaceDiagram = String(result.decision_space_diagram).trim();
+    } else {
+      diagramFailures.push({
+        section: "decision_space_diagram",
+        error: validated.error
+      });
+    }
+  }
+
+  if (outDir && diagramFailures.length > 0) {
+    await appendEvent(outDir, "diagram_validation_failed", {
+      failure_count: diagramFailures.length,
+      failures: diagramFailures
+    });
+  }
+
   return {
     version: VERSION,
     id: result.id || "ADR-001",
     title: result.title || titleCase(context.decision),
     executive_summary: executiveSummary,
+    ...(decisionSpaceDiagram ? { decision_space_diagram: decisionSpaceDiagram } : {}),
     option_space_shape: optionSpaceShape,
     options,
     cross_cutting_tradeoffs: crossCuttingTradeoffs,
@@ -3267,11 +3380,18 @@ ${options.map((opt) => {
       const strong = (opt.strong_axes || []).join(", ") || "—";
       const weak = (opt.weak_axes || []).join(", ") || "—";
       const evidence = (opt.citations || []).map((id) => `[${id}]`).join(", ") || "none";
+      // The deployment diagram (when present) lands between "What the
+      // evidence shows" and "What the evidence does not show" — it visualizes
+      // the positive claim before the prose pivots to gaps. Absent for
+      // abstract / category candidates by design.
+      const deploymentDiagramBlock = opt.deployment_diagram
+        ? `\n\n\`\`\`mermaid\n${opt.deployment_diagram}\n\`\`\``
+        : "";
       return `### ${opt.label || titleCase(opt.name)} (evidence: ${opt.evidence_depth || "thin"})
 
 ${summary || "_(no summary provided)_"}
 
-**What the evidence shows.** ${shows || "_(no synthesis provided)_"}
+**What the evidence shows.** ${shows || "_(no synthesis provided)_"}${deploymentDiagramBlock}
 
 **What the evidence does not show.** ${gaps || "_(no gap analysis provided)_"}
 
@@ -3351,13 +3471,20 @@ ${items}
       : "";
   })();
 
+  // Map-of-the-territory diagram lands right after the executive summary
+  // text. Optional — synthesizer omits it for runs with <2 candidates or
+  // when the LLM couldn't produce valid Mermaid.
+  const decisionSpaceDiagramBlock = spec.decision_space_diagram
+    ? `\n\n\`\`\`mermaid\n${spec.decision_space_diagram}\n\`\`\``
+    : "";
+
   return `# Research report: ${spec.title || titleCase(context.decision)}
 
 ${headerLine}
 
 ## Executive Summary
 
-${(spec.executive_summary || "").trim() || "_(no executive summary generated)_"}
+${(spec.executive_summary || "").trim() || "_(no executive summary generated)_"}${decisionSpaceDiagramBlock}
 
 ## Option Space
 
@@ -4689,7 +4816,8 @@ async function synthesizeDecisionPhase({
   evidenceItems,
   comparisonMatrix,
   priorCritique = null,
-  priorSpec = null
+  priorSpec = null,
+  outDir = null
 }) {
   return synthesizeResearchReport({
     context,
@@ -4697,7 +4825,8 @@ async function synthesizeDecisionPhase({
     evidenceItems,
     comparisonMatrix,
     priorCritique,
-    priorSpec
+    priorSpec,
+    outDir
   });
 }
 
@@ -5620,7 +5749,8 @@ async function _deepResearchImpl({ inputPath, flags }) {
     context: prepared.context,
     knowledgeMap,
     evidenceItems,
-    comparisonMatrix
+    comparisonMatrix,
+    outDir: prepared.outDir
   });
   // Concrete content: each candidate's name, label, 1-line summary, top
   // strong + weak axes, evidence depth, and pick-when reading aid. This is
@@ -5681,7 +5811,8 @@ async function _deepResearchImpl({ inputPath, flags }) {
       evidenceItems,
       comparisonMatrix,
       priorCritique: critique,
-      priorSpec: rawSpec
+      priorSpec: rawSpec,
+      outDir: prepared.outDir
     });
     // Persist the v1 report + critique for transparency; the active report
     // (whichever wins) keeps the canonical filename.
@@ -5966,6 +6097,7 @@ export {
   applyCritique,
   assessClarification,
   buildAdaptiveResearchPlan,
+  buildADR,
   buildAdversarialResearchPlan,
   buildComparisonMatrix,
   buildEvaluationPack,
@@ -6011,6 +6143,7 @@ export {
   supersedeAdr,
   synthesizeDecisionPhase,
   synthesizeResearchReport,
+  validateMermaidSource,
   verifyCitationsPhase,
   writeJson,
   writeRunArtifacts
