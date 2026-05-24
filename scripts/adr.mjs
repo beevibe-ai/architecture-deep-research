@@ -86,7 +86,7 @@ Required runtime:
 	  --max-peers <N>              cap peer count (default 5)
 	  --seed <name>                seed product to anchor peer-finding (defaults to repo name when omitted)
 
-	  When set on `discover`, writes peers.json. When set on `deep-research`
+	  When set on 'discover', writes peers.json. When set on 'deep-research'
 	  (with or without --discover-first), the deep-research planner picks up
 	  peers.json automatically and adds one targeted research task per peer
 	  hitting their GitHub repo + docs + engineering blog. Peer findings flow

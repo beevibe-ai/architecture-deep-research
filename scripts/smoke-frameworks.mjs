@@ -1,3 +1,18 @@
+// Sanity-check that the CLI entry points parse. The blog-friendly help-text
+// template literal in scripts/adr.mjs is easy to break with stray backticks
+// (`discover`, `deep-research`) — guard against the regression that ate one
+// of our published releases.
+import { execFile } from "node:child_process";
+import { promisify as _p } from "node:util";
+const __execFile = _p(execFile);
+for (const cli of [
+  "scripts/adr.mjs",
+  "scripts/adr-doctor.mjs",
+  "scripts/adr-mcp.mjs"
+]) {
+  await __execFile("node", ["--check", cli]);
+}
+
 import {
   Command,
   createAdrLangGraph,
