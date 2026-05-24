@@ -20,8 +20,8 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["recommended", "ranked_options", "deferred"],
-          "description": "How to read this decision. \"recommended\" — one option dominates and is named in .recommendation. \"ranked_options\" — multiple viable options with genuine tradeoffs; no winner (recommendation is null). \"deferred\" — no candidate cleared the promotion gate."
+          "enum": ["ranked_options", "deferred"],
+          "description": "How to read this decision. \"ranked_options\" — the option space is mapped; the reader picks. recommendation is always null. \"deferred\" — no candidate cleared the promotion gate."
         },
         "ranked_options": {
           "type": "array",

@@ -12,19 +12,17 @@ import {
   buildGuardrails,
   buildKnowledgeMap,
   buildStrategicContext,
-  applyConstraintFilter,
   buildAdversarialResearchPlan,
   classifySource,
-  validateConcreteCandidates,
   deriveComparisonAxes,
   discoverPatterns,
   extractClaims,
-  extractHardConstraints,
+  extractDecisionContext,
   filterPromotedByRelevance,
-  inferDecisionKind,
   injectDiscoveredEvidence,
   openUrl,
   prepareRun,
+  proposeFollowUpQuestions,
   setLlmJsonProvider,
   synthesizeDecisionPhase,
   writeJson,
@@ -743,107 +741,8 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// decision_kind: auto-detection from decision name, override via param,
-// vendor-grade axes appear only in concrete mode.
-// ---------------------------------------------------------------------------
-
-{
-  // Auto-detection.
-  assert.equal(inferDecisionKind("retrieval topology"), "family");
-  assert.equal(inferDecisionKind("event bus architecture"), "family");
-  assert.equal(inferDecisionKind("auth provider"), "concrete");
-  assert.equal(inferDecisionKind("queue library"), "concrete");
-  assert.equal(inferDecisionKind("logging vendor"), "concrete");
-  assert.equal(inferDecisionKind("storage platform"), "concrete");
-  assert.equal(inferDecisionKind("data lake design"), "family");
-  // Edge cases.
-  assert.equal(inferDecisionKind(""), "family");
-  assert.equal(inferDecisionKind(undefined), "family");
-
-  // Override via buildStrategicContext: caller passes decisionKind, the LLM
-  // is called with that value, and the returned context carries it through.
-  installProvider((label) => {
-    if (label !== "strategic_context_extractor") {
-      throw new Error(`decision-kind fixture: unexpected label ${label}`);
-    }
-    return {
-      domain_entities: ["User"],
-      bounded_contexts: ["AuthContext"],
-      query_shapes: [{ name: "login", evidence: ["user logs in"] }],
-      risk_invariants: ["Cross-tenant isolation"],
-      operational_envelope: {
-        latency: "not_specified",
-        cost: "not_specified",
-        scale: "not_specified",
-        availability: "not_specified"
-      },
-      compliance_constraints: []
-    };
-  });
-
-  const concreteCtx = await buildStrategicContext({
-    sourcePath: "fixture.md",
-    content: "Pick an auth provider for our multi-tenant SaaS.",
-    domain: "multi-tenant SaaS",
-    decision: "auth provider"
-  });
-  assert.equal(concreteCtx.decision_kind, "concrete", "decision_kind should auto-detect to concrete for 'auth provider'");
-
-  const familyCtx = await buildStrategicContext({
-    sourcePath: "fixture.md",
-    content: "Pick a retrieval topology for our knowledge base.",
-    domain: "kb",
-    decision: "retrieval topology"
-  });
-  assert.equal(familyCtx.decision_kind, "family", "decision_kind should auto-detect to family for 'retrieval topology'");
-
-  const overrideCtx = await buildStrategicContext({
-    sourcePath: "fixture.md",
-    content: "Pick a strategy.",
-    domain: "x",
-    decision: "auth provider",
-    decisionKind: "family"   // explicit override beats auto-detection
-  });
-  assert.equal(overrideCtx.decision_kind, "family");
-
-  setLlmJsonProvider(null);
-
-  // Axes: concrete-mode adds pricing / lock-in / SDK / on-prem / ecosystem.
-  const familyAxes = deriveComparisonAxes({
-    decision_kind: "family",
-    query_shapes: [],
-    operational_envelope: { latency: "not_specified", cost: "not_specified", scale: "not_specified", availability: "not_specified" },
-    compliance_constraints: []
-  });
-  const concreteAxes = deriveComparisonAxes({
-    decision_kind: "concrete",
-    query_shapes: [],
-    operational_envelope: { latency: "not_specified", cost: "not_specified", scale: "not_specified", availability: "not_specified" },
-    compliance_constraints: []
-  });
-  const vendorAxisIds = new Set([
-    "pricing_model",
-    "vendor_lock_in",
-    "sdk_integration_quality",
-    "on_prem_self_host",
-    "ecosystem_health"
-  ]);
-  for (const id of vendorAxisIds) {
-    assert.ok(
-      concreteAxes.some((a) => a.id === id),
-      `concrete-mode axes should include ${id}, got: ${concreteAxes.map((a) => a.id).join(", ")}`
-    );
-    assert.ok(
-      !familyAxes.some((a) => a.id === id),
-      `family-mode axes should NOT include ${id}, got: ${familyAxes.map((a) => a.id).join(", ")}`
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Clarification gate: PRD "Open questions" are folded into clarification,
-// gate is blocking by default, --clarification-answers unblocks, --no-clarify
-// opts out.
+// but the gate is NON-BLOCKING. Detection still fires; the run continues.
 // ---------------------------------------------------------------------------
 
 {
@@ -894,7 +793,8 @@ try {
   const priorTavily = process.env.TAVILY_API_KEY;
   process.env.TAVILY_API_KEY = priorTavily || "fixture-only";
 
-  // prepareRun: gate blocks by default when PRD is thin.
+  // prepareRun: gate is non-blocking. Even with a thin PRD, the run
+  // continues; the gaps are surfaced as decision_context_gaps_detected.
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-clarify-test-"));
   const thinPrdPath = path.join(tmpDir, "thin.md");
   await writeFile(
@@ -903,69 +803,44 @@ try {
   );
 
   installProvider((label) => {
-    if (label !== "strategic_context_extractor") {
-      throw new Error(`prepareRun clarify fixture: unexpected label ${label}`);
+    if (label === "strategic_context_extractor") {
+      return {
+        domain_entities: [],
+        bounded_contexts: [],
+        query_shapes: [],
+        risk_invariants: [],
+        operational_envelope: {
+          latency: "not_specified",
+          cost: "not_specified",
+          scale: "not_specified",
+          availability: "not_specified"
+        },
+        compliance_constraints: []
+      };
     }
-    return {
-      domain_entities: [],
-      bounded_contexts: [],
-      query_shapes: [],
-      risk_invariants: [],
-      operational_envelope: {
-        latency: "not_specified",
-        cost: "not_specified",
-        scale: "not_specified",
-        availability: "not_specified"
-      },
-      compliance_constraints: []
-    };
+    if (label === "decision_context_extractor") {
+      return { notes: [] };
+    }
+    throw new Error(`prepareRun fixture: unexpected label ${label}`);
   });
 
-  // Default = blocking.
-  const blocked = await prepareRun({
+  // Non-blocking: prepareRun returns with needsClarification=false even
+  // when the PRD is thin. The clarification questions remain on the
+  // returned object so callers can surface them; they no longer halt.
+  const result = await prepareRun({
     inputPath: thinPrdPath,
     flags: {
       domain: "saas",
       decision: "auth provider",
-      out: path.join(tmpDir, "out-blocked")
+      out: path.join(tmpDir, "out-thin")
     }
   });
-  assert.equal(blocked.needsClarification, true, "thin PRD should block by default");
-  assert.ok(blocked.clarification.questions.length > 0);
+  assert.equal(result.needsClarification, false, "thin PRD no longer halts the run");
+  assert.ok(result.clarification.questions.length > 0, "gaps still detected");
   assert.ok(
-    blocked.clarification.questions.some((q) => q.startsWith("From PRD Open questions:")),
-    "blocked clarification should include the PRD's Open questions"
+    result.clarification.questions.some((q) => q.startsWith("From PRD Open questions:")),
+    "PRD Open questions should still surface in the clarification record"
   );
-
-  // --no-clarify opts out.
-  const opted = await prepareRun({
-    inputPath: thinPrdPath,
-    flags: {
-      domain: "saas",
-      decision: "auth provider",
-      out: path.join(tmpDir, "out-noclarify"),
-      "no-clarify": true
-    }
-  });
-  assert.equal(opted.needsClarification, false, "--no-clarify should bypass the gate");
-
-  // --clarification-answers unblocks and appends to content.
-  const answered = await prepareRun({
-    inputPath: thinPrdPath,
-    flags: {
-      domain: "saas",
-      decision: "auth provider",
-      out: path.join(tmpDir, "out-answered"),
-      "clarification-answers":
-        "Latency: 100ms p95. Scale: 10k qps. Compliance: SOC2."
-    }
-  });
-  assert.equal(answered.needsClarification, false, "--clarification-answers should unblock");
-  assert.ok(
-    answered.content.includes("## Clarification answers"),
-    "answers should be appended to content"
-  );
-  assert.ok(answered.content.includes("Latency: 100ms p95"));
 
   setLlmJsonProvider(null);
   await rm(tmpDir, { recursive: true, force: true });
@@ -1046,7 +921,7 @@ try {
   });
 
   const claims = await extractClaims({
-    context: { domain: "saas", decision: "auth provider", decision_kind: "concrete" },
+    context: { domain: "saas", decision: "auth provider" },
     task: { id: "t1", title: "auth", objective: "Compare auth providers" },
     source: {
       title: "Clerk docs",
@@ -1067,20 +942,18 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Reframe to ranked_options:
+// Exploratory mode:
 //
-// ADR no longer pretends to pick one architecture. The synthesizer produces
-// a ranked option set with explicit tradeoffs, plus a recommendation only
-// when one option clearly dominates. mode = "recommended" | "ranked_options"
-// | "deferred". Guardrails are per-option (each option carries its own
-// required_invariants and forbidden_topologies); the handoff lists every
-// option as a separate contract.
+// ADR maps the option space and does not pick a winner. The synthesizer's
+// mode is always "ranked_options" (when candidates exist) or "deferred"
+// (when none do). Guardrails are per-option; the handoff lists every
+// option as a separate contract. recommendation is always null.
 // ---------------------------------------------------------------------------
 
 {
-  // Sub-test 1: synthesizer in mode=recommended produces a clean spec
-  // where exactly one option is "selected" and its invariants roll up to
-  // the back-compat top-level guardrails.
+  // Sub-test 1: even when the LLM returns mode=recommended with a
+  // recommendation, the kernel forces ranked_options. recommendation is
+  // dropped. The option still appears in ranked_options + candidate_topologies.
 
   installProvider((label) => {
     assert.equal(label, "architecture_synthesis_agent");
@@ -1122,10 +995,10 @@ try {
         ],
         recommendation: {
           name: "clerk",
-          why: "Clerk is strong on the two axes that matter most for this multi-tenant Next.js app.",
-          when_this_breaks: ["You decide you must self-host"]
+          why: "LLM still emitted a recommendation; kernel must drop it.",
+          when_this_breaks: ["test fixture"]
         },
-        summary: "Clerk recommended; Auth0 retained as a viable alternative.",
+        summary: "Two viable options.",
         evidence_citations: [1, 2, 3]
       },
       domain_model: {
@@ -1156,7 +1029,6 @@ try {
     context: {
       domain: "saas",
       decision: "auth provider",
-      decision_kind: "concrete",
       domain_entities: ["User"],
       bounded_contexts: ["AuthContext"],
       query_shapes: [],
@@ -1174,25 +1046,27 @@ try {
     comparisonMatrix: null
   });
 
-  assert.equal(spec.decision.mode, "recommended");
-  assert.equal(spec.decision.recommendation.name, "clerk");
+  // Kernel forces ranked_options regardless of what the LLM tried to emit.
+  assert.equal(spec.decision.mode, "ranked_options", "mode must be ranked_options, never recommended");
+  assert.equal(spec.decision.recommendation, null, "recommendation must be null in exploratory mode");
   assert.equal(spec.decision.ranked_options.length, 2);
-  assert.equal(spec.decision.selected_topology, "clerk", "selected_topology back-compat should equal recommendation.name");
-  // Both ranked options must appear in candidate_topologies; the recommended
-  // one with decision: "selected", the other with decision: "considered".
+  assert.equal(spec.decision.selected_topology, "ranked_options", "selected_topology back-compat sentinel");
+  // Both ranked options appear in candidate_topologies as "considered" — no
+  // option is "selected" because there is no recommendation.
   const candByName = Object.fromEntries(spec.candidate_topologies.map((c) => [c.name, c]));
-  assert.equal(candByName.clerk.decision, "selected");
+  assert.equal(candByName.clerk.decision, "considered");
   assert.equal(candByName.auth0.decision, "considered");
-  // Back-compat roll-up: top-level guardrails mirror the recommended option.
-  assert.deepEqual(spec.guardrails.required_invariants, ["Tokens must be issued by Clerk's session API"]);
-  assert.deepEqual(spec.guardrails.forbidden_topologies, ["roll_your_own_jwt"]);
+  // Back-compat roll-up: top-level guardrails are EMPTY — readers must use
+  // per-option ranked_options entries.
+  assert.deepEqual(spec.guardrails.required_invariants, []);
+  assert.deepEqual(spec.guardrails.forbidden_topologies, []);
 
-  // Per-option guardrails markdown contains BOTH options, each with its own
-  // invariants block. The recommended option carries the (recommended) tag.
+  // Per-option guardrails markdown contains BOTH options. No (recommended) tag
+  // anymore — exploratory mode does not crown a winner.
   const guardrailsMd = buildGuardrails(spec);
   assert.ok(guardrailsMd.includes("Option: `clerk`"), "guardrails should list option clerk");
   assert.ok(guardrailsMd.includes("Option: `auth0`"), "guardrails should list option auth0");
-  assert.ok(guardrailsMd.includes("*(recommended)*"), "recommended option should be tagged");
+  assert.ok(!guardrailsMd.includes("*(recommended)*"), "no (recommended) tag in exploratory mode");
   assert.ok(
     guardrailsMd.includes("Tokens must be issued by Clerk's session API"),
     "clerk's per-option invariant must appear"
@@ -1271,7 +1145,6 @@ try {
     context: {
       domain: "kb",
       decision: "retrieval topology",
-      decision_kind: "family",
       domain_entities: [],
       bounded_contexts: [],
       query_shapes: [],
@@ -1567,7 +1440,7 @@ try {
   };
 
   const result = await filterPromotedByRelevance({
-    context: { decision: "auth provider", decision_kind: "concrete", domain: "saas" },
+    context: { decision: "auth provider", domain: "saas" },
     knowledgeMap,
     outDir: tmpOutDir,
     flags: {}
@@ -1591,7 +1464,7 @@ try {
 
   // --skip-relevance-filter passes the knowledge map through unchanged.
   const skipResult = await filterPromotedByRelevance({
-    context: { decision: "auth provider", decision_kind: "concrete", domain: "saas" },
+    context: { decision: "auth provider", domain: "saas" },
     knowledgeMap,
     outDir: tmpOutDir,
     flags: { "skip-relevance-filter": true }
@@ -1680,315 +1553,6 @@ try {
 
   setLlmJsonProvider(null);
   await rm(tmpDir, { recursive: true, force: true });
-}
-
-// ---------------------------------------------------------------------------
-// Hard-constraint extraction + filter:
-//
-// The user's stated constraints ("self-hosted only", "fits Docker Compose")
-// should structurally eliminate candidates that violate them, not decorate
-// them as "weak on X". This was the central diagnosis from the live run:
-// ADR kept Pinecone in ranked_options even though the user said cloud-only
-// providers are out.
-// ---------------------------------------------------------------------------
-
-{
-  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-constraints-test-"));
-
-  // Sub-test 1: extractHardConstraints persists constraints.json and
-  // labels severities correctly.
-  installProvider((label) => {
-    assert.equal(label, "hard_constraint_extractor");
-    return {
-      constraints: [
-        {
-          id: "self_hosted_only",
-          statement: "Self-hosted deployment is the primary model.",
-          severity: "must_have",
-          check_question: "Does <CANDIDATE> support self-hosted deployment?",
-          evidence_from_input: "self-hosted is the primary deploy model",
-          category: "deployment"
-        },
-        {
-          id: "fits_docker_compose",
-          statement: "Must fit inside the existing Docker Compose stack.",
-          severity: "must_have",
-          check_question: "Does <CANDIDATE> run as part of Docker Compose?",
-          evidence_from_input: "fits the existing Docker Compose",
-          category: "deployment"
-        },
-        {
-          id: "low_cost",
-          statement: "Prefer low cost at low scale.",
-          severity: "preferred",
-          check_question: "Does <CANDIDATE> have low per-tenant cost?",
-          evidence_from_input: "budget-sensitive at early stage",
-          category: "cost"
-        }
-      ]
-    };
-  });
-  const constraints = await extractHardConstraints({
-    context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
-    content: "PRD: self-hosted is the primary deploy model. fits the existing Docker Compose. budget-sensitive at early stage.",
-    outDir: tmpDir,
-    flags: {}
-  });
-  assert.equal(constraints.constraints.length, 3);
-  assert.equal(constraints.constraints.filter((c) => c.severity === "must_have").length, 2);
-  // File written so a re-run picks it up unchanged:
-  const persisted = JSON.parse(await readFile(path.join(tmpDir, "constraints.json"), "utf8"));
-  assert.equal(persisted.constraints[0].id, "self_hosted_only");
-  setLlmJsonProvider(null);
-
-  // Second extract should load from disk, not call LLM:
-  installProvider(() => {
-    throw new Error("LLM should NOT be called when constraints.json exists");
-  });
-  const cached = await extractHardConstraints({
-    context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
-    content: "irrelevant",
-    outDir: tmpDir,
-    flags: {}
-  });
-  assert.equal(cached.constraints.length, 3, "cached load should return persisted constraints");
-  setLlmJsonProvider(null);
-
-  // Sub-test 2: applyConstraintFilter drops candidates that fail any must_have.
-  installProvider((label) => {
-    assert.equal(label, "hard_constraint_filter");
-    return {
-      verdicts: [
-        // pgvector passes both must-haves
-        { candidate_name: "pgvector", constraint_id: "self_hosted_only", verdict: "pass", reason: "Postgres extension, self-hostable anywhere." },
-        { candidate_name: "pgvector", constraint_id: "fits_docker_compose", verdict: "pass", reason: "Runs inside existing Postgres container." },
-        // pinecone fails self-hosted (cloud-only)
-        { candidate_name: "pinecone", constraint_id: "self_hosted_only", verdict: "fail", reason: "Cloud-only managed service." },
-        { candidate_name: "pinecone", constraint_id: "fits_docker_compose", verdict: "fail", reason: "Not a service you can run locally." },
-        // weaviate passes self-hosted, unsure on Docker Compose (kept)
-        { candidate_name: "weaviate", constraint_id: "self_hosted_only", verdict: "pass", reason: "Has self-hosted distribution." },
-        { candidate_name: "weaviate", constraint_id: "fits_docker_compose", verdict: "unsure", reason: "Requires its own container — depends on user intent." }
-      ]
-    };
-  });
-  const knowledgeMap = {
-    promotion_rule: "test",
-    promoted_candidates: [
-      { name: "pgvector", label: "pgvector", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
-      { name: "pinecone", label: "Pinecone", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
-      { name: "weaviate", label: "Weaviate", evidence_count: 2, source_types: ["mature_oss"], support: [], citations: [3], score: 0.8 }
-    ],
-    insufficient_evidence_candidates: []
-  };
-  const result = await applyConstraintFilter({
-    context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
-    knowledgeMap,
-    constraints,
-    outDir: tmpDir,
-    flags: {}
-  });
-  assert.equal(result.eliminated.length, 1, `expected 1 eliminated, got: ${JSON.stringify(result.eliminated)}`);
-  assert.equal(result.eliminated[0].name, "pinecone");
-  // Failure reasons attached so the user can see WHY:
-  assert.ok(result.eliminated[0].failures.length >= 1);
-  assert.ok(result.eliminated[0].failures[0].reason.toLowerCase().includes("cloud"));
-  // Survivors include both pgvector and weaviate (unsure is kept):
-  const keptNames = result.knowledgeMap.promoted_candidates.map((c) => c.name).sort();
-  assert.deepEqual(keptNames, ["pgvector", "weaviate"]);
-  // Eliminated candidates moved into insufficient_evidence_candidates with
-  // the eliminated_by_hard_constraint marker:
-  const moved = result.knowledgeMap.insufficient_evidence_candidates.filter(
-    (c) => c.promotion_status === "eliminated_by_hard_constraint"
-  );
-  assert.equal(moved.length, 1);
-  assert.equal(moved[0].name, "pinecone");
-  assert.ok(moved[0].constraint_failures.length >= 1);
-
-  setLlmJsonProvider(null);
-
-  // Sub-test 3: --skip-constraint-filter bypasses the filter entirely.
-  const skipResult = await applyConstraintFilter({
-    context: { domain: "saas", decision: "vector store" },
-    knowledgeMap,
-    constraints,
-    outDir: tmpDir,
-    flags: { "skip-constraint-filter": true }
-  });
-  assert.equal(skipResult.skipped, true);
-  assert.equal(skipResult.eliminated.length, 0);
-
-  // Sub-test 4: no must_have constraints = no-op even with preferred ones.
-  const preferredOnly = {
-    version: "0.2.0",
-    constraints: [
-      { id: "low_cost", statement: "Prefer low cost.", severity: "preferred", check_question: "?" }
-    ]
-  };
-  const noopResult = await applyConstraintFilter({
-    context: { domain: "saas", decision: "vector store" },
-    knowledgeMap,
-    constraints: preferredOnly,
-    outDir: tmpDir,
-    flags: {}
-  });
-  assert.equal(noopResult.eliminated.length, 0);
-  assert.equal(noopResult.skipped, false);
-
-  await rm(tmpDir, { recursive: true, force: true });
-}
-
-// ---------------------------------------------------------------------------
-// Commitment threshold:
-//
-// The synthesizer prompt is told to commit when the surviving field is
-// narrow, but LLMs over-default to hedging. Deterministic post-processing
-// forces mode=recommended when:
-//   - Only 1 option survived constraint filtering
-//   - 2 options survived AND one has net strong_axes lead >= 2
-// ---------------------------------------------------------------------------
-
-{
-  // Sub-test 1: single survivor → forced recommendation
-  installProvider(() => ({
-    decision: {
-      id: "x",
-      title: "y",
-      status: "selected",
-      mode: "ranked_options",
-      ranked_options: [
-        {
-          name: "pgvector",
-          label: "pgvector",
-          summary: "ok",
-          strong_axes: ["fits_existing_stack"],
-          weak_axes: [],
-          evidence_citations: [1],
-          confidence: 0.9
-        }
-      ],
-      recommendation: null
-    },
-    domain_model: {},
-    evidence_summary: {}
-  }));
-
-  const km1 = {
-    promotion_rule: "test",
-    promoted_candidates: [{ name: "pgvector", label: "pgvector", citations: [1] }],
-    insufficient_evidence_candidates: []
-  };
-  const spec1 = await synthesizeDecisionPhase({
-    context: { domain: "x", decision: "vector store", decision_kind: "concrete", domain_entities: [], bounded_contexts: [], query_shapes: [], operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" }, compliance_constraints: [], risk_invariants: [] },
-    knowledgeMap: km1,
-    evidenceItems: [{ citation_id: 1, title: "x", url: "https://x", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" }],
-    comparisonMatrix: null
-  });
-  assert.equal(spec1.decision.mode, "recommended", "single survivor must be forced to recommended");
-  assert.equal(spec1.decision.recommendation.name, "pgvector");
-  assert.ok(spec1.decision.recommendation.why.toLowerCase().includes("only viable"));
-  setLlmJsonProvider(null);
-
-  // Sub-test 2: 2 survivors with clear lead → forced recommendation for the leader
-  installProvider(() => ({
-    decision: {
-      id: "x",
-      title: "y",
-      status: "selected",
-      mode: "ranked_options",
-      ranked_options: [
-        {
-          name: "pgvector",
-          label: "pgvector",
-          summary: "ok",
-          strong_axes: ["a", "b", "c", "d"],
-          weak_axes: ["e"],
-          evidence_citations: [1],
-          confidence: 0.9
-        },
-        {
-          name: "weaviate",
-          label: "Weaviate",
-          summary: "ok",
-          strong_axes: ["a"],
-          weak_axes: ["b", "c", "d"],
-          evidence_citations: [2],
-          confidence: 0.7
-        }
-      ],
-      recommendation: null
-    },
-    domain_model: {},
-    evidence_summary: {}
-  }));
-
-  const km2 = {
-    promotion_rule: "test",
-    promoted_candidates: [
-      { name: "pgvector", label: "pgvector", citations: [1] },
-      { name: "weaviate", label: "Weaviate", citations: [2] }
-    ],
-    insufficient_evidence_candidates: []
-  };
-  const spec2 = await synthesizeDecisionPhase({
-    context: { domain: "x", decision: "vector store", decision_kind: "concrete", domain_entities: [], bounded_contexts: [], query_shapes: [], operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" }, compliance_constraints: [], risk_invariants: [] },
-    knowledgeMap: km2,
-    evidenceItems: [
-      { citation_id: 1, title: "x", url: "https://x", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" },
-      { citation_id: 2, title: "y", url: "https://y", source_type: "official_docs", score: 0.8, excerpt: "y", claims: [], relevance: "y" }
-    ],
-    comparisonMatrix: null
-  });
-  // pgvector net = 4 - 1 = 3; weaviate net = 1 - 3 = -2; lead = 5 → recommend pgvector
-  assert.equal(spec2.decision.mode, "recommended");
-  assert.equal(spec2.decision.recommendation.name, "pgvector");
-  setLlmJsonProvider(null);
-
-  // Sub-test 3: 2 survivors with close score → stays ranked_options
-  installProvider(() => ({
-    decision: {
-      id: "x",
-      title: "y",
-      status: "proposed",
-      mode: "ranked_options",
-      ranked_options: [
-        {
-          name: "pgvector",
-          label: "pgvector",
-          summary: "ok",
-          strong_axes: ["a", "b"],
-          weak_axes: ["c"],
-          evidence_citations: [1],
-          confidence: 0.7
-        },
-        {
-          name: "weaviate",
-          label: "Weaviate",
-          summary: "ok",
-          strong_axes: ["c", "d"],
-          weak_axes: ["a"],
-          evidence_citations: [2],
-          confidence: 0.7
-        }
-      ],
-      recommendation: null
-    },
-    domain_model: {},
-    evidence_summary: {}
-  }));
-
-  const spec3 = await synthesizeDecisionPhase({
-    context: { domain: "x", decision: "vector store", decision_kind: "concrete", domain_entities: [], bounded_contexts: [], query_shapes: [], operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" }, compliance_constraints: [], risk_invariants: [] },
-    knowledgeMap: km2,
-    evidenceItems: [
-      { citation_id: 1, title: "x", url: "https://x", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" },
-      { citation_id: 2, title: "y", url: "https://y", source_type: "official_docs", score: 0.8, excerpt: "y", claims: [], relevance: "y" }
-    ],
-    comparisonMatrix: null
-  });
-  // pgvector net = 2-1 = 1; weaviate net = 2-1 = 1; lead = 0 → stays ranked_options
-  assert.equal(spec3.decision.mode, "ranked_options");
-  assert.equal(spec3.decision.recommendation, null);
-  setLlmJsonProvider(null);
 }
 
 // ---------------------------------------------------------------------------
@@ -2126,7 +1690,8 @@ try {
             github_url: "https://github.com/cal-com/cal.com",
             docs_url: "https://cal.com/docs",
             engineering_blog_url: "https://cal.com/blog",
-            why_comparable: "Multi-tenant SaaS shipping its own auth + scheduling."
+            why_comparable: "Multi-tenant SaaS shipping its own auth + scheduling.",
+            evidence_strategy: "architecture"
           },
           {
             name: "onyx",
@@ -2134,20 +1699,31 @@ try {
             github_url: "https://github.com/onyx-dot-app/onyx",
             docs_url: "https://docs.onyx.app",
             engineering_blog_url: "",
-            why_comparable: "Self-hosted agent runtime with similar agent OS shape."
+            why_comparable: "Self-hosted agent runtime with similar agent OS shape.",
+            evidence_strategy: "both"
           },
           {
             name: "abandoned",
             label: "Abandoned Tool",
             github_url: "https://github.com/abandoned/dead-repo",
             why_comparable: "Was comparable; appears no longer maintained."
+            // no evidence_strategy → defaults to "architecture"
           },
           {
             name: "notion",
             label: "Notion",
             github_url: "",
             homepage_url: "https://notion.so",
-            why_comparable: "Closed-source SaaS at similar abstraction layer."
+            why_comparable: "Closed-source SaaS at similar abstraction layer.",
+            evidence_strategy: "adoption"
+          },
+          {
+            name: "bogus-strategy",
+            label: "Bogus Strategy Peer",
+            github_url: "",
+            homepage_url: "https://example.invalid",
+            why_comparable: "Verifies that an unknown evidence_strategy value defaults to architecture.",
+            evidence_strategy: "made_up_value"
           }
         ]
       };
@@ -2182,6 +1758,21 @@ try {
     const onyxIdx = artifact.peers.findIndex((p) => p.name === "onyx");
     assert.ok(calIdx < onyxIdx, `cal-com should rank above onyx; got order ${artifact.peers.map((p) => p.name).join(", ")}`);
 
+    // evidence_strategy lands on each peer. Unknown / missing values default
+    // to "architecture" — they must never strand the peer in an undefined
+    // strategy state.
+    const byName = Object.fromEntries(artifact.peers.map((p) => [p.name, p]));
+    if (byName["cal-com"]) assert.equal(byName["cal-com"].evidence_strategy, "architecture");
+    if (byName.onyx) assert.equal(byName.onyx.evidence_strategy, "both");
+    if (byName.notion) assert.equal(byName.notion.evidence_strategy, "adoption");
+    if (byName["bogus-strategy"]) {
+      assert.equal(
+        byName["bogus-strategy"].evidence_strategy,
+        "architecture",
+        "unknown evidence_strategy must default to architecture"
+      );
+    }
+
     setLlmJsonProvider(null);
   } finally {
     globalThis.fetch = realFetch;
@@ -2190,71 +1781,327 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Batch B: concrete-mode validator drops pattern-shaped candidates
+// Adoption-strategy peers: when a peer's evidence_strategy is "adoption" or
+// "both", buildPeerResearchTasks calls the adoption_research_planner LLM
+// label to generate community-targeted queries (Reddit, HN, Twitter,
+// migration write-ups) instead of architecture-targeted ones. Architecture-
+// strategy peers keep today's behavior and skip the LLM call entirely.
 // ---------------------------------------------------------------------------
 
 {
-  installProvider((label) => {
-    assert.equal(label, "concrete_candidate_validator");
-    return {
-      verdicts: [
-        { name: "pgvector", verdict: "product", reason: "Named open-source Postgres extension." },
-        { name: "pinecone", verdict: "product", reason: "Named managed vector database." },
-        { name: "vector_rag", verdict: "pattern", reason: "Architecture pattern, not a specific product." },
-        { name: "postgres_centric_storage", verdict: "pattern", reason: "Storage approach, not a named product." }
-      ]
-    };
-  });
-  const km = {
-    promotion_rule: "test",
-    promoted_candidates: [
-      { name: "pgvector", label: "pgvector", evidence_count: 3, source_types: ["official_docs"], support: [], citations: [1], score: 1.2 },
-      { name: "pinecone", label: "Pinecone", evidence_count: 2, source_types: ["official_docs"], support: [], citations: [2], score: 0.9 },
-      { name: "vector_rag", label: "Vector RAG", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [3], score: 0.7 },
-      { name: "postgres_centric_storage", label: "Postgres-centric storage", evidence_count: 2, source_types: ["private_corpus"], support: [], citations: [4], score: 0.7 }
-    ],
-    insufficient_evidence_candidates: []
-  };
-  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-concrete-test-"));
+  const { buildPeerResearchTasks } = await import("../src/kernel.mjs");
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-peer-strategy-test-"));
+
   try {
-    const result = await validateConcreteCandidates({
-      context: { domain: "saas", decision: "vector store", decision_kind: "concrete" },
-      knowledgeMap: km,
-      outDir: tmpDir,
-      flags: {}
+    await writeJson(path.join(tmpDir, "peers.json"), {
+      version: "0.2.0",
+      decision: "knowledge store",
+      domain: "PKM",
+      peers: [
+        {
+          name: "neo4j",
+          label: "Neo4j",
+          github_url: "https://github.com/neo4j/neo4j",
+          docs_url: "https://neo4j.com/docs",
+          engineering_blog_url: "https://neo4j.com/blog",
+          why_comparable: "Mature graph DB peer.",
+          evidence_strategy: "architecture"
+        },
+        {
+          name: "obsidian",
+          label: "Obsidian",
+          github_url: "",
+          homepage_url: "https://obsidian.md",
+          why_comparable: "Closed-source PKM with huge adoption signal.",
+          evidence_strategy: "adoption"
+        },
+        {
+          name: "logseq",
+          label: "Logseq",
+          github_url: "https://github.com/logseq/logseq",
+          why_comparable: "Open-core PKM with both architecture docs and adoption community.",
+          evidence_strategy: "both"
+        }
+      ]
     });
-    assert.equal(result.demoted.length, 2, `expected 2 patterns demoted, got: ${JSON.stringify(result.demoted)}`);
-    const keptNames = result.knowledgeMap.promoted_candidates.map((c) => c.name).sort();
-    assert.deepEqual(keptNames, ["pgvector", "pinecone"]);
-    // Demoted candidates moved to insufficient with non_product_in_concrete_mode:
-    const moved = result.knowledgeMap.insufficient_evidence_candidates.filter(
-      (c) => c.promotion_status === "non_product_in_concrete_mode"
+
+    let adoptionCalls = 0;
+    installProvider((label) => {
+      if (label === "adoption_research_planner") {
+        adoptionCalls += 1;
+        return {
+          queries: [
+            "fixture: peer reddit users architecture experience knowledge store",
+            "fixture: peer hacker news comments knowledge store",
+            "fixture: site:reddit.com peer pkm"
+          ]
+        };
+      }
+      throw new Error(`unexpected label ${label}`);
+    });
+
+    const result = await buildPeerResearchTasks({
+      context: { decision: "knowledge store", domain: "PKM" },
+      outDir: tmpDir
+    });
+    assert.equal(result.status, "ok");
+    assert.equal(result.tasks.length, 3);
+
+    const tasksByPeer = Object.fromEntries(result.tasks.map((t) => [t.peer_target, t]));
+    // Architecture peer keeps today's behavior — no LLM call, queries hit
+    // github + blog.
+    const neoQs = tasksByPeer.neo4j.search_queries.join(" | ");
+    assert.ok(neoQs.includes("site:github.com"), `neo4j should keep architecture queries: ${neoQs}`);
+    assert.ok(!neoQs.includes("fixture:"), "architecture peer must not call adoption planner");
+    assert.equal(tasksByPeer.neo4j.evidence_strategy, "architecture");
+
+    // Adoption peer routes to the LLM planner — queries come from the fixture.
+    const obsQs = tasksByPeer.obsidian.search_queries.join(" | ");
+    assert.ok(obsQs.includes("fixture:"), `obsidian must use adoption queries: ${obsQs}`);
+    assert.equal(tasksByPeer.obsidian.evidence_strategy, "adoption");
+    assert.ok(
+      tasksByPeer.obsidian.title.toLowerCase().includes("adoption"),
+      "adoption peer's task title should reflect adoption framing"
     );
-    assert.equal(moved.length, 2);
-    assert.ok(moved.some((m) => m.name === "vector_rag"));
-    assert.ok(moved.some((m) => m.name === "postgres_centric_storage"));
-  } finally {
+
+    // "both" peer gets architecture queries first, then adoption queries,
+    // capped at PEER_TASK_MAX_QUERIES (5).
+    const logseqQs = tasksByPeer.logseq.search_queries;
+    assert.ok(logseqQs.length <= 5, `both-strategy peer capped at 5 queries; got ${logseqQs.length}`);
+    assert.ok(
+      logseqQs.some((q) => q.includes("site:github.com")),
+      "both-strategy peer must include architecture queries"
+    );
+    assert.ok(
+      logseqQs.some((q) => q.includes("fixture:")),
+      "both-strategy peer must include adoption queries"
+    );
+    assert.equal(tasksByPeer.logseq.evidence_strategy, "both");
+
+    // The adoption planner fired exactly twice — once for adoption, once for
+    // both. The architecture peer must not have invoked it.
+    assert.equal(adoptionCalls, 2, `expected 2 adoption_research_planner calls, got ${adoptionCalls}`);
+
     setLlmJsonProvider(null);
+  } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
-
-  // Family mode = no-op
-  const familyResult = await validateConcreteCandidates({
-    context: { domain: "saas", decision: "retrieval topology", decision_kind: "family" },
-    knowledgeMap: km,
-    outDir: ".",
-    flags: {}
-  });
-  assert.equal(familyResult.skipped, true);
-  assert.equal(familyResult.demoted.length, 0);
 }
 
 // ---------------------------------------------------------------------------
-// Batch B: clarification profiles — suggestProfiles ranks by signals
+// classifySource: community_discussion class with platform tagging.
+//   reddit.com/r/<sub> → community_discussion + platform: "reddit"
+//   news.ycombinator.com/item?id=N → community_discussion + platform: "hackernews"
+//   twitter.com / x.com → community_discussion + platform: "twitter"
+//   stackoverflow.com / stackexchange.com → community_discussion + platform: "stackexchange"
 // ---------------------------------------------------------------------------
 
 {
-  const { suggestProfiles, profileById, profileAnswersAsText } = await import(
+  const { classifyCommunityPlatform, extractCommunityPlatformDetails } = await import(
+    "../src/kernel.mjs"
+  );
+
+  assert.equal(
+    classifySource("https://www.reddit.com/r/LocalLLaMA/comments/abc/"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifyCommunityPlatform("https://www.reddit.com/r/LocalLLaMA/comments/abc/"),
+    "reddit"
+  );
+  assert.equal(
+    extractCommunityPlatformDetails("https://www.reddit.com/r/LocalLLaMA/comments/abc/", "reddit")
+      .subreddit,
+    "LocalLLaMA"
+  );
+
+  assert.equal(
+    classifySource("https://news.ycombinator.com/item?id=12345"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifyCommunityPlatform("https://news.ycombinator.com/item?id=12345"),
+    "hackernews"
+  );
+  assert.equal(
+    extractCommunityPlatformDetails(
+      "https://news.ycombinator.com/item?id=12345",
+      "hackernews"
+    ).story_id,
+    "12345"
+  );
+
+  assert.equal(classifySource("https://twitter.com/foo/status/1"), "community_discussion");
+  assert.equal(classifySource("https://x.com/foo/status/1"), "community_discussion");
+  assert.equal(classifyCommunityPlatform("https://twitter.com/foo/status/1"), "twitter");
+  assert.equal(classifyCommunityPlatform("https://x.com/foo/status/1"), "twitter");
+
+  assert.equal(
+    classifySource("https://stackoverflow.com/questions/12345"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifySource("https://serverfault.stackexchange.com/questions/1"),
+    "community_discussion"
+  );
+  assert.equal(
+    classifyCommunityPlatform("https://stackoverflow.com/questions/12345"),
+    "stackexchange"
+  );
+
+  // Non-community URLs unaffected:
+  assert.equal(classifySource("https://github.com/foo/bar"), "mature_oss");
+  assert.equal(classifySource("https://docs.example.com/"), "official_docs");
+}
+
+// ---------------------------------------------------------------------------
+// Adoption axes are only added to the comparison matrix when the evidence
+// pool contains at least one community_discussion source. Architecture-only
+// runs do not get polluted with empty ecosystem_traction / integration_breadth
+// / practitioner_pain_points columns.
+// ---------------------------------------------------------------------------
+
+{
+  const baseContext = {
+    domain: "test",
+    decision: "test",
+    query_shapes: [],
+    operational_envelope: {
+      latency: "not_specified",
+      cost: "not_specified",
+      scale: "not_specified",
+      availability: "not_specified"
+    },
+    compliance_constraints: []
+  };
+
+  // No community evidence → adoption axes are NOT added.
+  const axesPure = deriveComparisonAxes(baseContext, {
+    evidenceItems: [
+      { source_type: "official_docs" },
+      { source_type: "mature_oss" }
+    ]
+  });
+  const pureIds = axesPure.map((a) => a.id);
+  assert.ok(
+    !pureIds.includes("ecosystem_traction"),
+    `pure architecture run must not add ecosystem_traction; got: ${pureIds.join(", ")}`
+  );
+  assert.ok(!pureIds.includes("integration_breadth"));
+  assert.ok(!pureIds.includes("practitioner_pain_points"));
+
+  // At least one community_discussion source → adoption axes ARE added.
+  const axesAdopt = deriveComparisonAxes(baseContext, {
+    evidenceItems: [
+      { source_type: "official_docs" },
+      { source_type: "community_discussion" }
+    ]
+  });
+  const adoptIds = axesAdopt.map((a) => a.id);
+  assert.ok(adoptIds.includes("ecosystem_traction"));
+  assert.ok(adoptIds.includes("integration_breadth"));
+  assert.ok(adoptIds.includes("practitioner_pain_points"));
+}
+
+// ---------------------------------------------------------------------------
+// Community-source quote rule: extractClaims relaxes the literal-substring
+// requirement for source_type: "community_discussion". A paraphrased summary
+// is allowed when ≥ 60% of significant tokens from the quote appear in the
+// excerpt. Non-community sources keep the strict substring rule.
+// ---------------------------------------------------------------------------
+
+{
+  const redditExcerpt =
+    "I have been using Obsidian for three years to manage my notes. The plugin ecosystem is enormous: " +
+    "I run Dataview, Templater, and the calendar plugin daily. Performance gets sluggish past 10000 notes.";
+
+  installProvider((label) => {
+    if (label !== "source_claim_extractor") {
+      throw new Error(`community extractor fixture: unexpected label ${label}`);
+    }
+    return {
+      claims: [
+        // Paraphrased — NOT a substring, but every significant token appears.
+        {
+          claim: "Obsidian's plugin ecosystem is large and includes Dataview and Templater.",
+          quote: "Obsidian plugin ecosystem enormous includes Dataview Templater calendar",
+          architecture_family: "Obsidian",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.8
+        },
+        // Tokens completely unrelated to excerpt — should be dropped.
+        {
+          claim: "Obsidian costs $200/year.",
+          quote: "Obsidian subscription pricing premium tier enterprise license",
+          architecture_family: "Obsidian",
+          polarity: "neutral",
+          relevance: "on_topic",
+          confidence: 0.5
+        }
+      ]
+    };
+  });
+
+  const communityClaims = await extractClaims({
+    context: { domain: "PKM", decision: "knowledge store" },
+    task: { id: "t1", title: "obsidian", objective: "Compare PKM tools" },
+    source: {
+      title: "r/ObsidianMD thread",
+      url: "https://www.reddit.com/r/ObsidianMD/comments/xyz/",
+      source_type: "community_discussion",
+      excerpt: redditExcerpt
+    }
+  });
+  assert.equal(
+    communityClaims.length,
+    1,
+    `community source should accept paraphrased quote; got: ${JSON.stringify(communityClaims, null, 2)}`
+  );
+  assert.equal(communityClaims[0].claim, "Obsidian's plugin ecosystem is large and includes Dataview and Templater.");
+  setLlmJsonProvider(null);
+
+  // Non-community source with the SAME paraphrased quote — the strict
+  // substring rule rejects it.
+  installProvider((label) => {
+    if (label !== "source_claim_extractor") {
+      throw new Error(`strict extractor fixture: unexpected label ${label}`);
+    }
+    return {
+      claims: [
+        {
+          claim: "Obsidian's plugin ecosystem is large.",
+          quote: "Obsidian plugin ecosystem enormous includes Dataview Templater calendar",
+          architecture_family: "Obsidian",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.8
+        }
+      ]
+    };
+  });
+  const strictClaims = await extractClaims({
+    context: { domain: "PKM", decision: "knowledge store" },
+    task: { id: "t1", title: "obsidian", objective: "Compare PKM tools" },
+    source: {
+      title: "Obsidian docs",
+      url: "https://docs.obsidian.md/plugins",
+      source_type: "official_docs",
+      excerpt: redditExcerpt
+    }
+  });
+  assert.equal(strictClaims.length, 0, "non-community source must enforce literal substring rule");
+  setLlmJsonProvider(null);
+}
+
+
+// ---------------------------------------------------------------------------
+// Clarification profiles — suggestProfiles ranks by signals, profiles carry
+// flat tag arrays (not structured answers).
+// ---------------------------------------------------------------------------
+
+{
+  const { suggestProfiles, profileById, profileTagsAsText } = await import(
     "../src/clarification-profiles.mjs"
   );
 
@@ -2277,13 +2124,160 @@ try {
   });
   assert.ok(enterpriseSuggestions.some((p) => p.id === "enterprise_regulated"));
 
-  // profileById + profileAnswersAsText render correctly
+  // profileById carries a flat tags array; profileTagsAsText renders them.
   const profile = profileById("pre_pmf_solo");
   assert.ok(profile && profile.label.toLowerCase().includes("pre-pmf"));
-  const text = profileAnswersAsText(profile);
-  assert.ok(text.includes("## Clarification answers"));
-  assert.ok(text.includes("latency"));
-  assert.ok(text.includes("scale"));
+  assert.ok(Array.isArray(profile.tags) && profile.tags.length > 0, "profile carries tags array");
+  assert.ok(profile.tags.includes("phase:pre_pmf"));
+  assert.ok(profile.tags.includes("deployment:self_hosted_preferred"));
+  const text = profileTagsAsText(profile);
+  assert.ok(text.includes("## Context tags"));
+  assert.ok(text.includes("phase:pre_pmf"));
+}
+
+// ---------------------------------------------------------------------------
+// extractDecisionContext writes decision-context.json (annotations, never
+// filters). The notes are surfaced via the context object for synthesis.
+// ---------------------------------------------------------------------------
+
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-decision-context-test-"));
+
+  installProvider((label) => {
+    assert.equal(label, "decision_context_extractor");
+    return {
+      notes: [
+        {
+          id: "self_hosted_preferred",
+          category: "deployment",
+          statement: "Self-hosted on Docker Compose is the primary deploy model.",
+          evidence_from_input: "self-hosted is the primary deploy model"
+        },
+        {
+          id: "soc2_planned",
+          category: "compliance",
+          statement: "SOC2 Type I planned in 12 months.",
+          evidence_from_input: "SOC2 in 12 months"
+        }
+      ]
+    };
+  });
+
+  const result = await extractDecisionContext({
+    context: { domain: "saas", decision: "vector store" },
+    content: "PRD: self-hosted is the primary deploy model. SOC2 in 12 months.",
+    outDir: tmpDir,
+    flags: {},
+    tags: ["phase:early_revenue", "team:3-10"]
+  });
+  assert.equal(result.notes.length, 2);
+  assert.equal(result.notes[0].id, "self_hosted_preferred");
+  assert.deepEqual(result.tags, ["phase:early_revenue", "team:3-10"]);
+  // File persisted so a re-run picks it up without an LLM call.
+  const persisted = JSON.parse(await readFile(path.join(tmpDir, "decision-context.json"), "utf8"));
+  assert.equal(persisted.notes.length, 2);
+  assert.ok(Array.isArray(persisted.tags));
+  setLlmJsonProvider(null);
+
+  // Second call: cached from disk, no LLM call.
+  installProvider(() => {
+    throw new Error("LLM should NOT be called when decision-context.json exists");
+  });
+  const cached = await extractDecisionContext({
+    context: { domain: "saas", decision: "vector store" },
+    content: "irrelevant",
+    outDir: tmpDir,
+    flags: {}
+  });
+  assert.equal(cached.notes.length, 2);
+  setLlmJsonProvider(null);
+
+  await rm(tmpDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// proposeFollowUpQuestions: derives 2-3 sharper sub-decision questions from
+// matrix axis variance.
+// ---------------------------------------------------------------------------
+
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-followup-test-"));
+
+  installProvider((label) => {
+    assert.equal(label, "follow_up_question_proposer");
+    return {
+      follow_ups: [
+        {
+          axis: "deployment_model",
+          spread_score: 0.82,
+          question: "Pick between self-hosted (Memgraph, Neo4j community) and managed (Neo4j Aura, Stardog Cloud) for the graph store.",
+          suggested_command: "adr deep-research --decision 'Self-hosted vs managed graph store' --domain 'kg' --out .adr-runs/graph-store-deployment"
+        },
+        {
+          axis: "pricing_model",
+          spread_score: 0.6,
+          question: "Compare predictable per-instance pricing vs query-based pricing for the graph store.",
+          suggested_command: "adr deep-research --decision 'Pricing model for managed graph store' --domain 'kg' --out .adr-runs/graph-store-pricing"
+        }
+      ]
+    };
+  });
+
+  const spec = {
+    decision: {
+      mode: "ranked_options",
+      ranked_options: [
+        { name: "memgraph", label: "Memgraph", strong_axes: ["deployment_model"], weak_axes: ["pricing_model"] },
+        { name: "neo4j_aura", label: "Neo4j Aura", strong_axes: ["pricing_model"], weak_axes: ["deployment_model"] }
+      ]
+    }
+  };
+  const comparisonMatrix = {
+    axes: [
+      { id: "deployment_model", label: "Deployment model" },
+      { id: "pricing_model", label: "Pricing model" },
+      { id: "ecosystem_health", label: "Ecosystem health" }
+    ],
+    cells: [
+      { candidate: "memgraph", axis: "deployment_model", verdict: "strong" },
+      { candidate: "neo4j_aura", axis: "deployment_model", verdict: "weak" },
+      { candidate: "memgraph", axis: "pricing_model", verdict: "weak" },
+      { candidate: "neo4j_aura", axis: "pricing_model", verdict: "strong" },
+      { candidate: "memgraph", axis: "ecosystem_health", verdict: "mixed" },
+      { candidate: "neo4j_aura", axis: "ecosystem_health", verdict: "mixed" }
+    ]
+  };
+
+  const result = await proposeFollowUpQuestions({
+    context: { domain: "kg", decision: "graph store" },
+    spec,
+    comparisonMatrix,
+    outDir: tmpDir
+  });
+  assert.equal(result.follow_ups.length, 2);
+  assert.equal(result.follow_ups[0].axis, "deployment_model");
+  assert.ok(result.follow_ups[0].question.length > 10);
+  assert.ok(result.follow_ups[0].suggested_command.includes("adr deep-research"));
+  // Persisted artifact:
+  const persisted = JSON.parse(await readFile(path.join(tmpDir, "follow-up-questions.json"), "utf8"));
+  assert.equal(persisted.follow_ups.length, 2);
+
+  setLlmJsonProvider(null);
+
+  // Deferred mode → empty follow-ups, no LLM call.
+  installProvider(() => {
+    throw new Error("LLM should NOT be called when mode=deferred");
+  });
+  const deferredResult = await proposeFollowUpQuestions({
+    context: { domain: "kg", decision: "graph store" },
+    spec: { decision: { mode: "deferred", ranked_options: [] } },
+    comparisonMatrix: null,
+    outDir: tmpDir
+  });
+  assert.equal(deferredResult.follow_ups.length, 0);
+  setLlmJsonProvider(null);
+
+  await rm(tmpDir, { recursive: true, force: true });
 }
 
 console.log("kernel regression tests ok");

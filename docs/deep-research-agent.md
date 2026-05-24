@@ -241,7 +241,6 @@ npm run adr:adk -- examples/logistics-contract-mesh/product-context.md \
 - `--no-enforce-citation-audit`: opt out of the default downgrade when selected-topology citations are unsupported.
 - `--skip-claim-audit`: do not scan generated ADR/report/eval artifacts for uncited material claims.
 - `--plan-approval` (LangGraph runtime only): pause after planning so the operator can edit `research-plan.json` and resume programmatically.
-- `--strict-clarification`: stop before research if the PRD is too thin.
 
 ### Optional env
 
@@ -253,8 +252,9 @@ Outputs:
 ```text
 events.jsonl
 state.json
-clarification.json
 strategic-context.json
+decision-context.json
+peers.json                         (when --include-peers)
 research-plan.json
 research-plan.adaptive-<n>.json    (one per gap-filling cycle, if any)
 research-plan.adversarial-<n>.json (one per adversarial cycle, if any)
@@ -271,6 +271,7 @@ architecture.spec.json
 domain-evaluation-pack.json
 agent-guardrails.md
 execution-handoff.json
+follow-up-questions.json
 sources.md
 cost.json
 source-snapshots/

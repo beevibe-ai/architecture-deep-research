@@ -156,7 +156,6 @@ async function discoverPatterns({ inputPath, flags = {}, chained = false } = {})
       const peersArtifact = await findPeers({
         decision,
         domain: flags.domain || "(unspecified)",
-        decisionKind: flags["decision-kind"],
         seed: flags.seed || flags["peer-seed"] || null,
         prd: markdown,
         issueBody,

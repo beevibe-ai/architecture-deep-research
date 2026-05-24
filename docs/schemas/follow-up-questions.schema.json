@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/follow-up-questions.schema.json",
+  "title": "Beevibe Architecture Deep Research Follow-up Questions",
+  "description": "Sharper sub-decision questions derived from comparison-matrix axis variance. Each follow-up names a high-spread axis, a question that splits the options on that axis, and a pre-filled `adr deep-research` command the user can paste to chase it.",
+  "type": "object",
+  "required": ["version", "follow_ups"],
+  "properties": {
+    "version": { "type": "string" },
+    "decision": { "type": "string" },
+    "domain": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "mode": {
+      "type": "string",
+      "enum": ["ranked_options", "deferred"]
+    },
+    "follow_ups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["axis", "question"],
+        "properties": {
+          "axis": {
+            "type": "string",
+            "description": "Axis id from the comparison matrix (e.g. 'deployment_model', 'pricing_model')."
+          },
+          "spread_score": {
+            "type": "number",
+            "description": "Variance score across candidate verdicts on this axis. Higher = the axis genuinely discriminates."
+          },
+          "question": {
+            "type": "string",
+            "description": "Sharp 1-sentence sub-decision question that splits the options on this axis."
+          },
+          "suggested_command": {
+            "type": "string",
+            "description": "Pre-filled `adr deep-research` command the user can paste to chase the sub-decision."
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

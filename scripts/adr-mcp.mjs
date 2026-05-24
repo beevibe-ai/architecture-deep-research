@@ -108,12 +108,6 @@ const tools = [
           type: "string",
           description: "Short name for the architecture decision being made."
         },
-        decision_kind: {
-          type: "string",
-          enum: ["family", "concrete"],
-          description:
-            "Optional override for the decision kind. \"family\" = picking an architecture pattern/topology (e.g. 'retrieval topology'). \"concrete\" = picking a specific product/vendor/library/service (e.g. 'auth provider', 'queue library'). When omitted, ADR infers from the decision name. Concrete mode adds vendor-grade axes (pricing, lock-in, SDK quality, on-prem, ecosystem) to the comparison matrix and tells the synthesizer to commit to a specific product rather than a pattern."
-        },
         out_dir: {
           type: "string",
           description: "Output directory for all run artifacts."
@@ -134,16 +128,6 @@ const tools = [
         issue_body: {
           type: "string",
           description: "Optional issue body to seed the discover stage when discover_first=true."
-        },
-        clarification_answers: {
-          type: "string",
-          description:
-            "Free-text answers to the clarification questions ADR raised on a prior call. Pass when re-invoking after a needs_clarification response so the run can proceed. The answers are appended to the PRD before strategic-context extraction, so latency / scale / compliance signals feed the comparison matrix."
-        },
-        no_clarify: {
-          type: "boolean",
-          description:
-            "Skip the clarification gate entirely and accept a lower-confidence run. Use only when the caller has already decided that the current PRD context is enough — clarification is blocking by default in the new flow."
         },
         include_peers: {
           type: "boolean",
@@ -245,26 +229,11 @@ async function handleDeepResearch(args) {
   if (args.issue_body) flags["issue-body"] = args.issue_body;
   if (typeof args.max_cycles === "number") flags["max-cycles"] = String(args.max_cycles);
   if (typeof args.max_sources === "number") flags["max-sources"] = String(args.max_sources);
-  if (args.decision_kind) flags["decision-kind"] = args.decision_kind;
-  if (args.clarification_answers) flags["clarification-answers"] = args.clarification_answers;
-  if (args.no_clarify) flags["no-clarify"] = true;
   if (args.include_peers) flags["include-peers"] = true;
   if (typeof args.max_peers === "number") flags["max-peers"] = String(args.max_peers);
   if (args.seed) flags.seed = args.seed;
 
   const drResult = await deepResearch({ inputPath: args.input_path || null, flags });
-
-  // Clarification gate blocked the run — surface the questions so the host
-  // can prompt the user and re-invoke with `clarification_answers`.
-  if (drResult && drResult.status === "needs_clarification") {
-    return textResult({
-      status: "needs_clarification",
-      out_dir: drResult.out_dir,
-      questions: drResult.questions,
-      next_step:
-        "Answer these questions and re-invoke adr_deep_research with `clarification_answers` set to the answers as text. Set `no_clarify: true` to force the run with the current PRD context instead."
-    });
-  }
 
   // Read back the handoff so the caller sees the result without a second tool
   // call. Some hosts (Claude Code) display the response inline and this gives

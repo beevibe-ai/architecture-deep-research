@@ -19,6 +19,8 @@ import { callLlmJson, githubApi, nowIso, parseGithubRepoUrl, VERSION } from "../
 
 const DEFAULT_MAX_PEERS = 5;
 const STALE_REPO_AFTER_DAYS = 18 * 30;
+const EVIDENCE_STRATEGIES = new Set(["architecture", "adoption", "both"]);
+const DEFAULT_EVIDENCE_STRATEGY = "architecture";
 
 function slugify(value) {
   return String(value || "")
@@ -62,6 +64,20 @@ async function enumeratePeers({ decision, domain, decisionKind, seed, prd, issue
       "  engineering_blog_url — engineering blog root when known",
       "  why_comparable    — one sentence; specifically WHY this peer is",
       "                      comparable for THIS decision, not generic similarity",
+      "  evidence_strategy — one of: \"architecture\" | \"adoption\" | \"both\".",
+      "                      Pick based on observable signals:",
+      "                        architecture — peer has a public github repo with",
+      "                          active commits AND an engineering blog OR public",
+      "                          architecture docs. Examples: Neo4j, Memgraph,",
+      "                          ArangoDB, Weaviate.",
+      "                        adoption — peer is closed-source or has no public",
+      "                          architecture-revealing docs, but has substantial",
+      "                          community adoption (large user base, vibrant",
+      "                          subreddit, frequent HN appearances). Examples:",
+      "                          Obsidian, Roam Research, Mem.ai, Notion.",
+      "                        both — peer has both: open core / public source AND",
+      "                          large adoption community. Examples: Logseq,",
+      "                          Supabase.",
       "",
       "Be precise:",
       "- For a vector-store decision in an agent OS, peers are agent OSes /",
@@ -72,11 +88,14 @@ async function enumeratePeers({ decision, domain, decisionKind, seed, prd, issue
       "  Plane, Documenso, NocoDB) — NOT auth library vendors themselves.",
       "- Bias toward products at similar maturity/scale to the seed. A solo",
       "  founder seed should look at startup-scale peers, not Salesforce.",
+      "- Closed-source / adoption-strategy peers are explicitly welcome. They",
+      "  carry real signal (community size, plugin ecosystem, \"we tried X\"",
+      "  threads) even when their architecture isn't publicly documented.",
       "",
       `Cap at ${maxPeers ?? DEFAULT_MAX_PEERS * 2} peers total (we'll rank + trim).`,
       "Do not invent products. Do not include products you only think exist.",
       "",
-      "Output JSON: { peers: [{ name, label, github_url, homepage_url, docs_url, engineering_blog_url, why_comparable }] }."
+      "Output JSON: { peers: [{ name, label, github_url, homepage_url, docs_url, engineering_blog_url, why_comparable, evidence_strategy }] }."
     ]
       .filter(Boolean)
       .join("\n"),
@@ -101,6 +120,11 @@ async function enumeratePeers({ decision, domain, decisionKind, seed, prd, issue
     .filter((p) => p && typeof p === "object" && typeof p.label === "string" && p.label.trim())
     .map((p) => {
       const name = slugify(String(p.name || p.label || "").trim());
+      const rawStrategy =
+        typeof p.evidence_strategy === "string" ? p.evidence_strategy.trim().toLowerCase() : "";
+      const evidence_strategy = EVIDENCE_STRATEGIES.has(rawStrategy)
+        ? rawStrategy
+        : DEFAULT_EVIDENCE_STRATEGY;
       return {
         name: name || slugify(p.label),
         label: String(p.label).trim(),
@@ -109,7 +133,8 @@ async function enumeratePeers({ decision, domain, decisionKind, seed, prd, issue
         docs_url: typeof p.docs_url === "string" ? p.docs_url.trim() : "",
         engineering_blog_url:
           typeof p.engineering_blog_url === "string" ? p.engineering_blog_url.trim() : "",
-        why_comparable: typeof p.why_comparable === "string" ? p.why_comparable.trim() : ""
+        why_comparable: typeof p.why_comparable === "string" ? p.why_comparable.trim() : "",
+        evidence_strategy
       };
     })
     .filter((p) => p.name && p.label);
@@ -147,16 +172,18 @@ function isStaleRepo(signal) {
 }
 
 function rankPeers(peers, maxPeers) {
-  // Score: stars (log-scaled) + recency bonus. Closed-source peers (no
-  // github_url) score lower but stay in the pool — they're often genuinely
-  // comparable (Linear, Notion) even without signal.
+  // Score: stars (log-scaled) + recency bonus. The closed-source penalty
+  // only applies to architecture-strategy peers — for adoption / both peers
+  // (Obsidian, Roam, Mem.ai) being closed-source is *why* they're adoption-
+  // strategy, and the adoption signal substitutes for source-code evidence.
   const scored = peers.map((peer) => {
     const stars = peer.signal?.stars || 0;
     const last = peer.signal?.last_commit_at ? Date.parse(peer.signal.last_commit_at) : 0;
     const ageDays = last ? (Date.now() - last) / (1000 * 60 * 60 * 24) : 365 * 5;
     const recencyBonus = Math.max(0, 1 - ageDays / (365 * 2)); // 1.0 at fresh, 0 at 2y old
     const starsScore = Math.log10((stars || 1) + 1);
-    const closedSourcePenalty = peer.github_url ? 0 : -0.5;
+    const strategy = String(peer.evidence_strategy || "architecture").toLowerCase();
+    const closedSourcePenalty = peer.github_url || strategy !== "architecture" ? 0 : -0.5;
     return {
       ...peer,
       _rank_score: Number((starsScore + recencyBonus + closedSourcePenalty).toFixed(3))

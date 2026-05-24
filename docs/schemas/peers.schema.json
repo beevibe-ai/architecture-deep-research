@@ -45,6 +45,11 @@
             "type": "string",
             "description": "One sentence explaining why this peer is comparable for the decision being made."
           },
+          "evidence_strategy": {
+            "type": "string",
+            "enum": ["architecture", "adoption", "both"],
+            "description": "How the deep-research stage should research this peer. 'architecture' targets engineering blogs, github, docs internals. 'adoption' targets community signal (Reddit, HN, Twitter, plugin ecosystems) for closed-source / lightly-documented peers that still carry adoption signal. 'both' emits both query sets."
+          },
           "signal": {
             "type": "object",
             "description": "GitHub-derived momentum signal. Used to rank + drop dead repos. Missing for closed-source peers.",

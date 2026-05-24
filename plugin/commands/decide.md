@@ -8,7 +8,7 @@ Use when the user is making an architecture decision and wants ADR to run the fu
 
 The run takes 3–6 minutes. **You MUST stream progress to the user as events land — silent waiting is bad UX.** This command uses background bash + `tail -F` + the `Monitor` tool to surface each event in chat as it happens, instead of blocking on the MCP tool until completion.
 
-## Step 1 — Confirm the decision name AND the decision kind
+## Step 1 — Confirm the decision name
 
 Ask **one** question (skip if the user already named it):
 
@@ -16,24 +16,7 @@ Ask **one** question (skip if the user already named it):
 
 Capture as `<DECISION>`. Derive `<SLUG>` by lowercasing and replacing non-alphanum with `-`. Derive `<DOMAIN>` from the repo's README / package.json — if you can't tell, ask.
 
-Then decide the **decision kind**. There are two:
-
-- **`family`** — the user is picking an architecture pattern / topology (e.g. "retrieval topology", "event bus architecture", "consistency model"). Candidates are patterns.
-- **`concrete`** — the user is picking a specific product / vendor / library / service (e.g. "auth provider", "queue library", "logging service", "OAuth vendor"). Candidates are named products.
-
-Auto-detect from the decision name. ADR's CLI applies the same heuristic when `--decision-kind` is omitted, but you should ask the user to confirm rather than assume — this is the difference between "ADR picks 'token-based auth'" and "ADR picks 'Clerk'", and that mismatch is exactly the failure mode this feature exists to fix.
-
-Use `AskUserQuestion` with the user's `<DECISION>` filled in:
-
-> Question: "For '<DECISION>', do you want to pick an architecture pattern (family) or a specific product/vendor (concrete)?"
->
-> Options:
-> - **Family — architecture pattern** (e.g. token-based auth, graph retrieval)
-> - **Concrete — specific product** (e.g. Clerk, BullMQ, Stripe)
-
-Capture as `<KIND>` (either `family` or `concrete`).
-
-If the user picks **concrete** but the run is going to be expensive, briefly tell them: "Concrete mode adds vendor-grade axes (pricing, lock-in, SDK quality, on-prem, ecosystem health). The matrix will be wider; the synthesis will commit to a specific product."
+ADR no longer distinguishes "family" from "concrete" decisions. The synthesizer treats the option space the same way regardless — whatever candidates the live evidence promotes (architecture patterns, specific products, or a mix) end up in `ranked_options`. The reader picks.
 
 ## Step 1.5 — Ask whether to include peer products
 
@@ -74,7 +57,6 @@ npx -y --package=github:beevibe-ai/architecture-deep-research adr \
   --repo . \
   --domain "<DOMAIN>" \
   --decision "<DECISION>" \
-  --decision-kind <KIND> \
   --out .adr-runs/<SLUG>
 ```
 
@@ -107,10 +89,8 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `discover_completed` | ✓  Discover stage complete |
 | `run_started` | 🚀  Deep-research started — `<domain>`: `<decision>` |
 | `strategic_context_created` | ✓  Strategic context: `query_shapes.length` entities, `bounded_contexts.length` query shapes |
-| `run_waiting_for_clarification` | ❓  Clarification needed — go to **Step 6.5** |
-| `constraints_loaded_from_disk` | ✓  Constraints loaded from existing `constraints.json` (`constraint_count` items) |
-| `constraints_extraction_failed` | ⚠  Constraint extraction failed — proceeding without hard filter |
-| `constraint_filter_failed` | ⚠  Constraint filter failed — keeping all candidates |
+| `decision_context_loaded_from_disk` | ✓  Decision context loaded from existing `decision-context.json` (`note_count` notes) |
+| `decision_context_extraction_failed` | ⚠  Decision context extraction failed — proceeding without annotations |
 | `research_plan_created` | 🌐  Planned `task_count` research tasks (`peer_task_count` peer-targeted) |
 | `research_batch_started` | 🔎  Dispatching parallel research agents (max `max_parallel`) |
 | `research_agent_started` | &nbsp;&nbsp;🔍  task: `<title>` |
@@ -146,33 +126,46 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 
 These carry **concrete content** the user wants to see. Render each as a 2-6 line block with the header on its own line, then the items indented. Do not collapse to a single line.
 
-**`constraints_extracted`** — header `✓  Extracted N constraints (M must_have, K preferred)` then one bullet per `constraints[]`:
+**`decision_context_extracted`** — header `✓  Extracted N context notes (K tags)` then one bullet per `notes[]`:
 ```
-✓  Extracted 3 constraints (2 must_have, 1 preferred)
-  • [must_have] Self-hosted is the primary deploy model
+✓  Extracted 3 context notes (3 tags)
+  Tags: phase:pre_pmf, deployment:self_hosted_single_vm, cost_sensitivity:high
+  • [deployment] Self-hosted is the primary deploy model
     └ from: "self-hosted is the primary deploy model"
-  • [must_have] Must fit existing Docker Compose stack
+  • [deployment] Should fit existing Docker Compose stack
     └ from: "fits the existing Docker Compose"
-  • [preferred] Prefer low cost at low scale
+  • [cost] Budget-sensitive at early stage
     └ from: "budget-sensitive at early stage"
 ```
 
-**`constraint_filter_completed`** — header `🚫 Hard-constraint filter: kept N, eliminated K` then one bullet per `eliminated[]`:
+These are annotations on the option space, not filters. They flow to synthesis as soft context and appear in the ADR.md header.
+
+**`decision_context_gaps_detected`** — header `⚠  Detected N context gaps (run continues)` then one bullet per gap. **This is informational, not a blocker** — the run proceeds and the follow-up question stage at the end will surface what to sharpen on the next run:
 ```
-🚫  Hard-constraint filter: kept 3, eliminated 1
-  ✗ Pinecone — failed "Self-hosted is the primary deploy model"
-    └ Cloud-only managed service; cannot run inside Docker Compose.
-  Survivors: pgvector, weaviate, milvus
+⚠  Detected 4 context gaps (run continues)
+  • What latency target do you need? (p95 / p99)
+  • How many tenants in production today vs in 12 months?
+  • Which compliance regimes apply? (SOC2 / HIPAA / GDPR / none)
+  • Self-hosted only, or is managed cloud acceptable?
 ```
 
-**`peers_found`** — header `🤝 Found N peer products` then one bullet per peer:
+**`follow_up_questions_proposed`** — header `✓  Proposed N follow-up questions` then one bullet per `follow_ups[]`:
+```
+✓  Proposed 3 follow-up questions
+  • [deployment_model] (spread 0.84) Self-hosted or managed? The matrix splits cleanly on this axis.
+    └ adr deep-research --discover-first --repo . --domain "<DOMAIN>" --decision "self-hosted vector store" --out .adr-runs/<SLUG>-self-hosted
+  • [pricing_model] (spread 0.71) Per-vector or per-query pricing? Pinecone bills per dimension; pgvector is free.
+    └ adr deep-research --discover-first --repo . --domain "<DOMAIN>" --decision "vector store at >10M vectors budget envelope" --out .adr-runs/<SLUG>-budget
+```
+
+**`peers_found`** — header `🤝 Found N peer products` then one bullet per peer (with `evidence_strategy` shown — `architecture`, `adoption`, or `both`):
 ```
 🤝  Found 5 peer products
-  • Cal.com (★33k, TypeScript) — Multi-tenant SaaS shipping its own auth + scheduling
-  • Onyx (★12k, Python) — Self-hosted agent runtime with similar agent OS shape
-  • AnythingLLM (★22k, JavaScript) — Self-hosted RAG / chat OS
-  • Open WebUI (★45k, Python) — Self-hosted LLM front-end with multi-user support
-  • Notion (closed-source) — SaaS at similar abstraction layer
+  • Cal.com (★33k, TypeScript) [architecture] — Multi-tenant SaaS shipping its own auth + scheduling
+  • Onyx (★12k, Python) [architecture] — Self-hosted agent runtime with similar agent OS shape
+  • Obsidian (closed-source) [adoption] — Read via community signal (r/ObsidianMD, plugin ecosystem)
+  • Roam Research (closed-source) [adoption] — Read via community signal (migration write-ups)
+  • Notion (closed-source) [both] — SaaS at similar abstraction layer; mixed query set
 ```
 
 **`peer_research_tasks_added`** — header `🎯 Added N peer-targeted research tasks` then bullets:
@@ -207,16 +200,17 @@ These carry **concrete content** the user wants to see. Render each as a 2-6 lin
   • weaviate — weak on fits_existing_stack: "Requires its own container alongside Postgres [9]"
 ```
 
-**`synthesis_completed`** — header + recommendation reasoning + per-option summary:
+**`synthesis_completed`** — header + per-option summary:
 ```
-✓  Synthesis done — mode=recommended, recommendation=pgvector
-  Why: Only viable option after constraint filtering. Hedging would be dishonest here — every other promoted candidate failed at least one must-have constraint.
+✓  Synthesis done — mode=ranked_options, 2 options
   Options:
     • pgvector (strong on fits_existing_stack, cost_envelope, p95_latency)
       └ Pick when: existing Postgres deployment, low-single-digit-M vectors
     • weaviate (strong on hybrid_search; weak on fits_existing_stack)
       └ Pick when: hybrid search is mandatory and Postgres is not in the stack
 ```
+
+A `mode=ranked_options` run with `ranked_options[].length === 1` just means ADR found one option in this space — it's still the reader's call. A `mode=deferred` run means no candidate cleared the promotion gate; re-run with sharper context.
 
 **`critique_completed`** — header + top issues:
 ```
@@ -249,53 +243,30 @@ Unknown event types: print as `<event_type>` with no message body. Don't lose th
 
 The only exception: when the same event_type fires very rapidly (e.g. `research_source_fetching` for 8 URLs in a single round), it's OK to render them on consecutive lines without skipping any.
 
-## Step 6.5 — Handle the clarification gate (only if `run_waiting_for_clarification` fires)
+## Step 6.5 — Clarification is non-blocking
 
-The clarification gate is **blocking by default**. When it fires, the deep-research task will exit having only written `strategic-context.json`, `clarification.json`, and `state.json` (status: `needs_clarification`). The matrix, synthesis, and handoff stages do NOT run — burning the evidence budget on a guaranteed-low-confidence answer is the failure mode this gate exists to prevent.
+ADR no longer halts the run on thin context. If `decision_context_gaps_detected` fires, the run continues — burning the evidence budget on a thin PRD is the lesser failure mode compared to forcing the user through a clarification dialog before they've seen anything.
 
-1. Kill the `tail -F` background task — it will hang otherwise.
-2. Read the questions:
+What you do as the slash command:
 
-```bash
-cat .adr-runs/<SLUG>/clarification.json
-```
+1. Surface the gap event when it lands (multi-line render — see the table above) so the user knows what's missing.
+2. **Don't kill the tail. Don't re-invoke.** Let the run finish.
+3. After the run, the `follow_up_questions_proposed` event carries pre-filled `adr deep-research` commands targeting the matrix's highest-spread axes. Show them to the user as quick-pick next steps for a sharper run.
 
-3. Ask the user with `AskUserQuestion`. Use one question per `AskUserQuestion` call only if there are 1–4 questions and they have natural options; for free-form latency / scale / compliance values use a single open question with the whole list shown to the user as context, then read their full text reply.
-4. Re-invoke `adr deep-research` with `--clarification-answers '<text>'`, threading every answer the user gave. Use the **same** `--out` so events.jsonl keeps accumulating:
-
-```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr \
-  deep-research --discover-first \
-  --repo . \
-  --domain "<DOMAIN>" \
-  --decision "<DECISION>" \
-  --decision-kind <KIND> \
-  --out .adr-runs/<SLUG> \
-  --clarification-answers "$(cat <<'EOF'
-- Latency target: <user answer>
-- Expected scale: <user answer>
-- Compliance: <user answer>
-- ...
-EOF
-)"
-```
-
-5. Restart the `tail -F` task and resume streaming events. The strategic-context extraction will re-run with the answers folded in, and the gate will not re-block.
-
-**Do NOT default to `--no-clarify`** — the user has to opt out of clarification explicitly. The point of the gate is that running with no answers wastes 3+ minutes of evidence collection to land on a `deferred` run with no viable options.
+If the user wants to add context before the run completes, the right move is to cancel the current run, edit `.adr-runs/<SLUG>/decision-context.json` to add notes, and re-run with the same `--out` — `adr` will pick up the edited file as-is.
 
 ## Step 7 — When the deep-research task finishes
 
 You'll be notified when the background deep-research task completes (the one from Step 4, NOT the tail task). At that point:
 
 1. Stop the `tail -F` task (let it die naturally — it has no more input — or kill it explicitly via Bash).
-2. **Read `ADR.md` first.** This is the founder-facing artifact — the rendered tradeoffs, recommendation reasoning, References section, and "Evidence from your repo" section. It's what the user actually wants to read. The handoff JSON is for downstream coding agents.
+2. **Read `ADR.md` first.** This is the founder-facing artifact — decision-context header, per-option tradeoffs, "Evidence from your repo" section, "Follow-up Questions" section, and References. It's what the user actually wants to read. The handoff JSON is for downstream coding agents.
 
 ```bash
 cat .adr-runs/<SLUG>/ADR.md
 ```
 
-3. Then read `execution-handoff.json` ONLY if you need the structured `mode` / `recommendation` / `options[]` fields for the summary at Step 8, or to drive an implement-the-option flow at Step 9.
+3. Then read `execution-handoff.json` ONLY if you need the structured `mode` / `options[]` fields for the summary at Step 8, or to drive an implement-the-option flow at Step 9.
 
 ```bash
 cat .adr-runs/<SLUG>/execution-handoff.json
@@ -307,29 +278,24 @@ cat .adr-runs/<SLUG>/execution-handoff.json
 
 Read the handoff and branch on `mode`:
 
-- **`mode: "recommended"`** — one option dominates. Show:
+- **`mode: "ranked_options"`** — the option space is mapped. Show:
   ```
-  Recommended:  <recommendation.name>
-  Why:          <recommendation.why, one line>
-  Other options: <options[].name except the recommended one, comma-separated>
-  Matrix:       <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
-  Citations:    <verified_count>/<total_citations> verified
-  ```
-
-- **`mode: "ranked_options"`** — multiple viable options with genuine tradeoffs. Show:
-  ```
-  Mode:        ranked_options — no single recommendation
+  Mode:        ranked_options — ADR mapped the space, the reader picks
   Options:     <options[].name>, comma-separated
   Matrix:      <candidates>×<axes>, <empty_cells> empty, <strong_cells> strong
   Citations:   <verified_count>/<total_citations> verified
+  Follow-ups:  <follow_ups[].length> sharper sub-decisions proposed
   ```
-  Then offer: "Want me to walk through each option's tradeoffs from `ADR.md`?"
+  Then offer: "Want me to walk through each option's tradeoffs from `ADR.md`, or look at the follow-up questions?"
+
+  When `options[].length === 1`, frame it as "ADR found one option in this space" — not "the answer." The follow-up questions are how to widen the search if the lone survivor feels too thin.
 
 - **`mode: "deferred"`** — no viable options. Show:
   ```
-  Mode:       deferred — no viable options produced
+  Mode:       deferred — no candidate cleared the promotion gate
   Reason:     read critique.json
-  Next step:  re-run with sharper context, or run `adr supersede` once more evidence is available
+  Next step:  re-run with sharper context (see follow-up-questions.json),
+              or run `adr supersede` once more evidence is available
   ```
 
 If `critique_summary.recommend_human_review` is `true`, append:
@@ -345,13 +311,14 @@ Ask which the user wants:
 
 - Open `ADR.md` and walk through each option's tradeoffs
 - Walk the comparison matrix cell by cell
-- Implement under one option's contract (ask which option first if `mode == ranked_options`; honor that option's `required_invariants` and `forbidden_topologies` from `execution-handoff.json` -> `options[]`)
+- Look at `follow-up-questions.json` and pick a sharper sub-decision to run next
+- Implement under one option's contract (ask the user which option first — there is no default; honor that option's `required_invariants` and `forbidden_topologies` from `execution-handoff.json` -> `options[]`)
 
 ## Hard rules for the implement path
 
 If the user says "implement," `execution-handoff.json` carries per-option contracts under `options[]`. The agent's job:
 
-1. **Pick one option.** If `mode == "recommended"`, default to `recommendation.name` unless the user picks differently. If `mode == "ranked_options"`, ask which option before writing any code — there is no default.
+1. **Pick one option.** ADR does not pick for you — ask the user which option from `ranked_options[]` before writing any code.
 2. **Honor THAT option's `required_invariants`** in the code you write.
 3. **Never reach for anything in THAT option's `forbidden_topologies`.**
 4. Run against `domain-evaluation-pack.json` test cases before declaring done.

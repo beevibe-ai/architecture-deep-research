@@ -93,31 +93,12 @@ Required runtime:
 	  hitting their GitHub repo + docs + engineering blog. Peer findings flow
 	  into the evidence pool as regular citations.
 
-	Decision kind:
-	  --decision-kind family|concrete   override the auto-detection
-
-	  By default ADR infers the decision kind from the decision name:
-	    "auth provider" / "queue vendor" / "logging library"  → concrete
-	    "retrieval topology" / "event bus architecture"       → family
-
-	  Concrete mode compares specific products/vendors/libraries (Clerk,
-	  Auth0, BullMQ); family mode compares architecture patterns
-	  (token-based-auth, graph-retrieval). Concrete mode also adds
-	  vendor-grade axes (pricing, vendor lock-in, SDK quality, on-prem,
-	  ecosystem health) to the comparison matrix.
-
-	Clarification gate:
-	  Clarification is blocking by default. If the PRD lacks enough context
-	  (e.g. no latency / scale / compliance signals, or the PRD's "Open
-	  questions" section has un-answered bullets), the run will stop and
-	  print the questions instead of consuming evidence budget on a
-	  guaranteed-low-confidence run.
-
-	  --clarification-answers <text-or-path>   provide answers as a string or a path to a file
-	  --clarification-profile <id>             pick a pre-built profile instead of writing answers.
-	                                           Profiles: pre_pmf_solo, first_paying_customers,
-	                                           scaling_team_post_seed, enterprise_regulated.
-	  --no-clarify                              skip the gate; accept a lower-confidence run
+	Decision context:
+	  ADR no longer pre-classifies decisions as family vs concrete. Every run
+	  maps the full option space — patterns, vendors, deployment modes — and
+	  outputs a ranked option set. Missing PRD context surfaces as a non-
+	  blocking decision_context_gaps_detected event and as post-run follow-
+	  up questions, not as a blocking gate.
 
 	Cost / budget flags:
 	  --dry-run                     print the plan + cost estimate, do not run the expensive stages.
@@ -129,9 +110,7 @@ Required runtime:
 	  --skip-claim-audit            do not scan generated artifacts for uncited material claims
 	  --skip-resynthesis            do not re-synthesize after critique even if high-severity issues exist
 	  --skip-relevance-filter       do not drop off-topic candidates from the promoted pool
-	  --skip-constraint-extraction  do not extract hard constraints from the PRD
-	  --skip-constraint-filter      do not eliminate candidates that fail must_have constraints
-	  --skip-concrete-validation    do not demote pattern-shaped candidates in concrete mode`;
+	  --skip-decision-context       do not extract decision-context notes from the PRD`;
 }
 
 async function main() {
@@ -147,9 +126,7 @@ async function main() {
   // (evidence.json gets loaded from disk) and re-runs synthesis +
   // critique + audits + handoff. Reads run-config.json from the out_dir
   // to reconstruct the original flags + inputPath. Any flags passed at
-  // resume time override the persisted set, so a profile-based run that
-  // crashed can be resumed past the clarification gate with
-  // `--no-clarify` or a different `--clarification-profile`.
+  // resume time override the persisted set.
   if (command === "resume") {
     if (!inputPath) {
       console.error("Usage: adr resume <out_dir> [--flag value ...]");

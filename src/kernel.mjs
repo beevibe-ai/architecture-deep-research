@@ -27,40 +27,6 @@ function slugify(value) {
     .replace(/^_+|_+$/g, "");
 }
 
-// Two ADR decision modes:
-//   - "family":   choosing an architecture pattern / topology / approach
-//                 (e.g. "retrieval topology", "event bus architecture")
-//   - "concrete": choosing a specific product, vendor, library, service
-//                 (e.g. "auth provider", "logging library", "queue service")
-//
-// The synthesizer's selected_topology means different things in each mode:
-//   family mode   → an architecture family name ("graph_retrieval")
-//   concrete mode → a specific product name        ("Clerk")
-//
-// Inferred from the decision name if not explicitly supplied via the
-// --decision-kind CLI flag or decision_kind MCP arg.
-function inferDecisionKind(decision) {
-  const text = String(decision || "").toLowerCase();
-  // concrete-mode keywords: the decision names a slot to be filled by a
-  // specific product/vendor/library, not a pattern.
-  const concreteKeywords = [
-    "provider", "vendor", "service", "platform", "product", "solution",
-    "library", "sdk", "framework", "tool", "package"
-  ];
-  for (const kw of concreteKeywords) {
-    // word-boundary match so "service" doesn't match "microservice" (which
-    // would be a family-mode hit).
-    if (new RegExp(`\\b${kw}\\b`).test(text)) return "concrete";
-  }
-  return "family";
-}
-
-function normalizeDecisionKind(value, fallback) {
-  const v = String(value || "").toLowerCase().trim();
-  if (v === "family" || v === "concrete") return v;
-  return fallback;
-}
-
 function finiteNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -143,8 +109,7 @@ function toArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-async function buildStrategicContext({ sourcePath, content, domain, decision, decisionKind }) {
-  const resolvedKind = normalizeDecisionKind(decisionKind, inferDecisionKind(decision));
+async function buildStrategicContext({ sourcePath, content, domain, decision }) {
   const raw = await callLlmJson({
     label: "strategic_context_extractor",
     system: [
@@ -153,10 +118,7 @@ async function buildStrategicContext({ sourcePath, content, domain, decision, de
       "Do not invent entities, contexts, or constraints that are not supported by the text.",
       "Leave a field empty (empty array, or the string \"not_specified\" for operational envelope fields) rather than inferring from prior knowledge of similar domains.",
       "",
-      `This run's decision_kind is "${resolvedKind}".`,
-      resolvedKind === "concrete"
-        ? "Concrete mode: the user is picking a specific product / vendor / library / service (e.g. 'Clerk' for an auth provider, 'BullMQ' for a queue library). Downstream phases will compare named products. Your job here is only to extract the domain shape and constraints — do not enumerate vendors."
-        : "Family mode: the user is picking an architecture family / topology / pattern (e.g. 'graph_retrieval' for a retrieval topology). Downstream phases will compare patterns.",
+      "You are mapping the option space across all directions — topology, vendor, deployment, integration. Do not narrow prematurely.",
       "",
       "Output JSON with:",
       "- domain_entities: array of domain entity or aggregate names mentioned in or strongly implied by the text (PascalCase or as written).",
@@ -169,7 +131,6 @@ async function buildStrategicContext({ sourcePath, content, domain, decision, de
     user: JSON.stringify({
       domain,
       decision,
-      decision_kind: resolvedKind,
       product_context: content.slice(0, 24_000)
     })
   });
@@ -198,7 +159,6 @@ async function buildStrategicContext({ sourcePath, content, domain, decision, de
     },
     domain,
     decision,
-    decision_kind: resolvedKind,
     domain_entities: toArray(raw.domain_entities).map(String).filter(Boolean),
     bounded_contexts: toArray(raw.bounded_contexts).map(String).filter(Boolean),
     query_shapes: queryShapes,
@@ -275,7 +235,7 @@ function assessClarification(context, content) {
     questions: questions.slice(0, 8),
     action:
       questions.length > 0
-        ? "Re-run with --clarification-answers '<text>' (or edit the PRD), or pass --no-clarify to force a lower-confidence run."
+        ? "These gaps are recorded as decision context notes; the run continues. Edit the PRD and re-run if you want them folded into the analysis."
         : "Enough context for Architecture Deep Research."
   };
 }
@@ -364,7 +324,7 @@ const schemaByFilename = {
   "claim-audit.json": "../docs/schemas/claim-audit.schema.json",
   "citation-audit.json": "../docs/schemas/citation-audit.schema.json",
   "clarification.json": "../docs/schemas/clarification.schema.json",
-  "constraints.json": "../docs/schemas/constraints.schema.json",
+  "decision-context.json": "../docs/schemas/decision-context.schema.json",
   "comparison-matrix.json": "../docs/schemas/comparison-matrix.schema.json",
   "critique.json": "../docs/schemas/critique.schema.json",
   "discovered-constraints.json": "../docs/schemas/discovered-constraints.schema.json",
@@ -372,6 +332,7 @@ const schemaByFilename = {
   "domain-evaluation-pack.json": "../docs/schemas/domain-evaluation-pack.schema.json",
   "evidence.json": "../docs/schemas/evidence.schema.json",
   "execution-handoff.json": "../docs/schemas/execution-handoff.schema.json",
+  "follow-up-questions.json": "../docs/schemas/follow-up-questions.schema.json",
   "knowledge-map.json": "../docs/schemas/knowledge-map.schema.json",
   "peers.json": "../docs/schemas/peers.schema.json",
   "research-plan.json": "../docs/schemas/research-plan.schema.json",
@@ -584,7 +545,7 @@ async function callLlmJson({ system, user, label = "llm_json" }) {
         { role: "user", content: user }
       ]
     }),
-    signal: AbortSignal.timeout(Number(process.env.ADR_LLM_TIMEOUT_MS || 90_000))
+    signal: AbortSignal.timeout(Number(process.env.ADR_LLM_TIMEOUT_MS || 300_000))
   });
 
   if (!response.ok) {
@@ -604,7 +565,6 @@ async function callLlmJson({ system, user, label = "llm_json" }) {
 }
 
 async function buildResearchPlan(context, content) {
-  const kind = context.decision_kind || "family";
   const result = await callLlmJson({
     label: "research_plan_agent",
     system: [
@@ -614,10 +574,8 @@ async function buildResearchPlan(context, content) {
       "Do not rely on a static pattern library.",
       "Prefer official docs, mature OSS, engineering writeups, benchmark papers, and postmortems.",
       "",
-      `This run's decision_kind is "${kind}".`,
-      kind === "concrete"
-        ? "Concrete mode: candidates are SPECIFIC PRODUCTS / VENDORS / LIBRARIES, not architecture families. Generate tasks that (a) enumerate the 5-8 most credible product options for this decision, (b) investigate each named product's official docs, real-user case studies, pricing model, lock-in risk, and limitations. Search queries should include specific product names. source_targets should include vendor docs, product comparison pages, real engineering writeups about specific products, and postmortems naming specific products. Do NOT generate tasks about generic architecture patterns in this mode — the user already knows the pattern; they want the product."
-        : "Family mode: candidates are ARCHITECTURE FAMILIES / TOPOLOGIES / PATTERNS. Generate tasks that survey patterns, compare topologies, and dig into engineering trade-offs at the family level.",
+      "You are mapping the option space across all directions — topology, vendor, deployment, integration. Do not narrow prematurely.",
+      "Generate tasks that span the full space: patterns and topologies AND named products / vendors / libraries where applicable, deployment modes (self-hosted vs managed), and integration paths. Search queries should include both pattern names and specific product names when both are plausible. source_targets should include vendor docs, comparison writeups, engineering blogs, benchmarks, and postmortems.",
       "",
       "CRITICAL: every search_query MUST be a search string a human could paste",
       "into Google as-is and get useful results. Do NOT emit template placeholders",
@@ -631,7 +589,6 @@ async function buildResearchPlan(context, content) {
     user: JSON.stringify({
       domain: context.domain,
       decision: context.decision,
-      decision_kind: kind,
       strategic_context: context,
       product_context_excerpt: content.slice(0, 16_000)
     })
@@ -1572,9 +1529,42 @@ async function persistSourceSnapshot({ outDir, url, title, sourceType, fetchStat
 // promotion gate. Bias toward false negatives.
 const AGGREGATOR_DOMAIN_RE = /\b(geeksforgeeks\.org|tutorialspoint\.com|javatpoint\.com|journaldev\.com|simplilearn\.com|educative\.io|byjus\.com|netsuite\.com\/insights|btsta(?:gregator|ggregator)\.com|wisp\.(?:cms|app)|baeldung\.com|topcoder\.com)/i;
 
+// Community-discussion platforms — Reddit, HN, Twitter/X, Stack Exchange.
+// These aren't general web: they're community signal weighted by engagement
+// (upvotes, scores). Adoption-strategy peers depend on these for evidence
+// because their architecture isn't publicly documented but their adoption
+// stories are. Synthesis frames their claims as practitioner signal, not as
+// hard architectural facts.
+function classifyCommunityPlatform(url) {
+  if (!url) return null;
+  if (/(^|\/\/|\.)reddit\.com\//i.test(url)) return "reddit";
+  if (/(^|\/\/)news\.ycombinator\.com\//i.test(url)) return "hackernews";
+  if (/(^|\/\/|\.)(twitter\.com|x\.com)\//i.test(url)) return "twitter";
+  if (/(^|\/\/|\.)(stackoverflow\.com|stackexchange\.com)\//i.test(url)) return "stackexchange";
+  return null;
+}
+
+// Extract a community sub-platform identifier — subreddit for reddit, HN
+// story id for an /item?id=N link. Returned alongside `platform` so the
+// auditor and synthesis can refer to the specific thread the citation came
+// from. Best-effort; missing details are returned as undefined.
+function extractCommunityPlatformDetails(url, platform) {
+  const out = {};
+  if (!url) return out;
+  if (platform === "reddit") {
+    const m = String(url).match(/\/r\/([A-Za-z0-9_]+)/);
+    if (m) out.subreddit = m[1];
+  } else if (platform === "hackernews") {
+    const m = String(url).match(/[?&]id=(\d+)/);
+    if (m) out.story_id = m[1];
+  }
+  return out;
+}
+
 function classifySource(url) {
   if (!url) return "unknown";
   if (/^mcp:\/\//i.test(url)) return "private_corpus";
+  if (classifyCommunityPlatform(url)) return "community_discussion";
   if (AGGREGATOR_DOMAIN_RE.test(url)) return "aggregator";
   if (/docs\.|microsoft\.github\.io|langchain|llamaindex|neo4j\.com|cloud\.google|openai\.com\/docs/i.test(url)) {
     return "official_docs";
@@ -1594,6 +1584,11 @@ function sourceQuality(sourceType) {
     paper_or_benchmark: 0.85,
     private_corpus: 0.8,
     engineering_writeup: 0.78,
+    // community_discussion keeps general_web's weight for now (these URLs
+    // previously fell through to general_web). The class exists so synthesis
+    // and the auditor can treat them differently; scoring is a separate
+    // follow-up.
+    community_discussion: 0.45,
     general_web: 0.45,
     aggregator: 0.15,
     unknown: 0.25
@@ -1655,6 +1650,22 @@ function normalizeForQuoteCheck(text) {
     .trim();
 }
 
+// Softer match for community-discussion sources where the quote is a
+// paraphrased summary of a discussion thread, not a literal substring.
+// Returns true when ≥ 60% of significant (≥4-char) tokens from the quote
+// appear in the excerpt. Picks the simpler ratio match over a full
+// semantic check — community-source claims still surface in synthesis,
+// just framed as practitioner signal rather than hard fact.
+function communityQuoteMatches(quote, excerpt) {
+  const tokens = normalizeForQuoteCheck(quote)
+    .split(/\W+/)
+    .filter((t) => t.length >= 4);
+  if (tokens.length === 0) return false;
+  const haystack = normalizeForQuoteCheck(excerpt);
+  const hits = tokens.filter((t) => haystack.includes(t)).length;
+  return hits / tokens.length >= 0.6;
+}
+
 async function extractClaims({ context, task, source }) {
   const result = await callLlmJson({
     label: "source_claim_extractor",
@@ -1662,7 +1673,6 @@ async function extractClaims({ context, task, source }) {
       "You extract architecture-decision evidence from sources for the decision focus:",
       `  domain:   "${context.domain}"`,
       `  decision: "${context.decision}"`,
-      `  kind:     ${context.decision_kind || "family"}`,
       "",
       "Return ONLY claims that are directly supported by the supplied excerpt.",
       "Do not add static architecture knowledge. Do not infer beyond the text.",
@@ -1684,17 +1694,18 @@ async function extractClaims({ context, task, source }) {
       "drops off_topic claims downstream. If most of the excerpt is off_topic,",
       "return an empty claims array — that is a valid answer.",
       "",
-      "ARCHITECTURE FAMILY — must be MACRO-level:",
-      "architecture_family must name a MACRO-level architectural family or, in",
-      "concrete decision-kind mode, a specific named product/vendor/library.",
-      "Roll up low-level concepts under their parent macro family. Examples:",
+      "ARCHITECTURE FAMILY — name the candidate this claim is about:",
+      "architecture_family names the candidate the claim discusses — either a",
+      "MACRO-level architectural family OR a specific named product / vendor /",
+      "library when the source talks about one. Roll up low-level concepts under",
+      "their parent macro family. Examples:",
       "- 'Leiden Community Detection', 'Hierarchical Clustering'",
       "  → architecture_family: 'GraphRAG'",
       "- 'Top-K Vector Search', 'HNSW Index', 'BM25 Reranker'",
       "  → architecture_family: 'Vector RAG'",
       "- 'ReAct Tool Use', 'Orchestrator-Worker'",
       "  → architecture_family: 'Agentic Retrieval'",
-      "- For a 'concrete' kind, prefer named products: 'Clerk', 'Auth0', 'WorkOS', 'BullMQ'.",
+      "- Specific products are first-class: 'Clerk', 'Auth0', 'WorkOS', 'BullMQ', 'pgvector', 'Pinecone'.",
       "",
       "Every architecture_family must be a plausible answer to the decision",
       `focus above. If a claim's family is not a plausible answer to "${context.decision}",`,
@@ -1712,7 +1723,6 @@ async function extractClaims({ context, task, source }) {
     user: JSON.stringify({
       domain: context.domain,
       decision: context.decision,
-      decision_kind: context.decision_kind || "family",
       task,
       source: {
         title: source.title,
@@ -1724,6 +1734,7 @@ async function extractClaims({ context, task, source }) {
   });
 
   const excerptHaystack = normalizeForQuoteCheck(source.excerpt);
+  const isCommunitySource = source.source_type === "community_discussion";
 
   return toArray(result.claims)
     .map((claim) => {
@@ -1747,11 +1758,19 @@ async function extractClaims({ context, task, source }) {
       // Off-topic claims are dropped: the extractor said the source talks
       // about a different decision than the one we're researching.
       if (claim.relevance === "off_topic") return false;
-      // Quote must be a literal substring of the excerpt (whitespace- and
-      // quote-mark-normalized). This is the grounding gate: it forces the
-      // extractor to admit when a source does not actually support a claim.
-      // Hallucinated quotes are dropped.
       if (!claim.quote || claim.quote.length < 10) return false;
+      // Community-discussion sources (Reddit, HN, Twitter, Stack Exchange)
+      // get a softer rule: the quote may be a paraphrased summary of a
+      // discussion thread, not a literal substring. We still confirm the
+      // quote captures the gist via a token-ratio match — see
+      // communityQuoteMatches — but we don't demand verbatim text.
+      if (isCommunitySource) {
+        return communityQuoteMatches(claim.quote, source.excerpt);
+      }
+      // Architecture / docs / OSS sources keep the literal-substring rule.
+      // It's the grounding gate that forces the extractor to admit when a
+      // source does not actually support a claim. Hallucinated quotes are
+      // dropped.
       const needle = normalizeForQuoteCheck(claim.quote);
       if (!excerptHaystack.includes(needle)) return false;
       return true;
@@ -1873,6 +1892,17 @@ async function gatherEvidenceForQuery({
       sourceText
     });
 
+    // Tag community-discussion sources with their platform + sub-identifier
+    // (subreddit for reddit, story_id for HN). The auditor and synthesis
+    // both branch on source_type === "community_discussion"; the
+    // community_meta object lets downstream code reference the specific
+    // thread the citation came from.
+    const communityPlatform =
+      source_type === "community_discussion" ? classifyCommunityPlatform(result.url) : null;
+    const communityMeta = communityPlatform
+      ? { platform: communityPlatform, ...extractCommunityPlatformDetails(result.url, communityPlatform) }
+      : null;
+
     const partial = {
       task_id: task.id,
       title: result.title || result.url,
@@ -1883,6 +1913,7 @@ async function gatherEvidenceForQuery({
       source_type,
       source_quality: sourceQuality(source_type),
       relevance: task.objective,
+      ...(communityMeta ? { community_meta: communityMeta } : {}),
       ...sourceSnapshot
     };
     const claims = await extractClaims({ context, task, source: partial });
@@ -2283,40 +2314,6 @@ function deriveComparisonAxes(context, options = {}) {
     });
   }
 
-  // Concrete-mode decisions compare specific products. Add vendor-grade axes
-  // that the LLM cell-filler can score against. These are no-ops in family
-  // mode (family-level evidence rarely speaks to vendor-specific concerns
-  // like pricing or lock-in).
-  if (context.decision_kind === "concrete") {
-    axes.push(
-      {
-        id: "pricing_model",
-        label: "Pricing model + free tier",
-        rationale: "Cost structure, free tier limits, predictability at scale."
-      },
-      {
-        id: "vendor_lock_in",
-        label: "Vendor lock-in risk",
-        rationale: "Data portability, proprietary APIs, exit cost."
-      },
-      {
-        id: "sdk_integration_quality",
-        label: "SDK + integration quality",
-        rationale: "Maturity of official SDKs, integration patterns, developer experience."
-      },
-      {
-        id: "on_prem_self_host",
-        label: "Self-host / on-prem availability",
-        rationale: "Can the product run inside the user's own infrastructure?"
-      },
-      {
-        id: "ecosystem_health",
-        label: "Ecosystem + community health",
-        rationale: "Active maintainers, community size, momentum, recent incidents."
-      }
-    );
-  }
-
   // Discovered stack from `adr discover` becomes a first-class axis. If the
   // user's repo already runs Postgres, a candidate that builds on Postgres
   // (pgvector) gets credit for "fits the existing stack"; a candidate that
@@ -2354,6 +2351,34 @@ function deriveComparisonAxes(context, options = {}) {
       rationale: `Team has explicitly rejected this${reason ? ` — ${reason}` : ""}. Cited: ${
         cites.length > 0 ? cites.join(", ") : "(no citations recorded)"
       }`
+    });
+  }
+
+  // Adoption-mode axes: only added when the evidence pool actually contains
+  // at least one community_discussion source. Architecture-mode runs (no
+  // adoption peers) skip these — otherwise pure-architecture matrices fill
+  // up with empty cells the synthesis has no evidence to score against.
+  const hasCommunityEvidence = toArray(options.evidenceItems).some(
+    (item) => item && item.source_type === "community_discussion"
+  );
+  if (hasCommunityEvidence) {
+    axes.push({
+      id: "ecosystem_traction",
+      label: "Ecosystem traction",
+      rationale:
+        "Community size + plugin/extension count, scored from community_discussion evidence."
+    });
+    axes.push({
+      id: "integration_breadth",
+      label: "Integration breadth",
+      rationale:
+        "How many integrations or how broadly the option is adopted across the practitioner community."
+    });
+    axes.push({
+      id: "practitioner_pain_points",
+      label: "Practitioner pain points",
+      rationale:
+        "What users actually complain about in community threads. Scored from community_discussion evidence."
     });
   }
 
@@ -2522,7 +2547,11 @@ async function buildComparisonMatrix({
   discoveredAntipatterns = [],
   discoveredStack = []
 }) {
-  const axes = deriveComparisonAxes(context, { discoveredAntipatterns, discoveredStack });
+  const axes = deriveComparisonAxes(context, {
+    discoveredAntipatterns,
+    discoveredStack,
+    evidenceItems
+  });
   const candidates = candidatesFromKnowledgeMap(knowledgeMap);
   if (candidates.length === 0 || axes.length === 0) {
     return {
@@ -2714,22 +2743,21 @@ async function synthesizeArchitectureSpec({
   const HUMAN_REVIEW = "requires_human_architecture_review";
   const RANKED_OPTIONS_SENTINEL = "ranked_options";
 
-  const kind = context.decision_kind || "family";
+  const decisionContextNotes = toArray(context.decision_context_notes);
+
   const isResynth = Boolean(priorCritique && priorSpec);
   const result = await callLlmJson({
     label: isResynth ? "architecture_synthesis_agent_resynth" : "architecture_synthesis_agent",
     system: [
       "You are the Architecture Deep Research synthesis agent.",
       "",
-      "Your job is NOT to pick a single winning architecture. Architecture",
-      "decisions are tradeoffs. Your job is to produce a RANKED OPTION SET",
-      "with explicit, evidence-grounded tradeoffs, plus an optional",
-      "recommendation ONLY when the comparison matrix shows one option",
-      "clearly dominates.",
+      "Your job is to MAP THE OPTION SPACE. Architecture decisions span",
+      "multiple facets — topology, vendor, deployment, integration — and",
+      "you produce a RANKED OPTION SET with explicit, evidence-grounded",
+      "tradeoffs across all of them. You do NOT pick a winner.",
       "",
-      kind === "concrete"
-        ? "Each option in this run is a SPECIFIC PRODUCT / VENDOR / LIBRARY (e.g. \"Clerk\", \"Auth0\", \"BullMQ\")."
-        : "Each option in this run is an architecture FAMILY / PATTERN.",
+      "Each option may be an architecture family, a specific product /",
+      "vendor / library, a deployment mode, or any combination thereof — whatever the evidence pool actually surfaced.",
       "",
       "RANKED OPTIONS — the primary output:",
       "For each promoted_candidate from the knowledge_map, produce one option:",
@@ -2754,38 +2782,27 @@ async function synthesizeArchitectureSpec({
       "included in ranked_options — they appear in candidate_topologies as",
       "decision: \"rejected\" (or \"deferred\").",
       "",
-      "MODE — decide how decisive to be:",
-      "- \"recommended\": ONE option clearly dominates. It must be strong on",
-      "  multiple axes that matter for this decision AND the others must be",
-      "  weak or no_evidence on at least one critical axis. Populate",
-      "  recommendation = {name, why, when_this_breaks}. when_this_breaks",
-      "  lists the conditions under which the user should pick a different",
-      "  option from ranked_options.",
-      "- \"ranked_options\": multiple options are viable with genuine",
-      "  tradeoffs. No single option dominates. Set recommendation = null.",
-      "  Do NOT invent a recommendation to seem decisive.",
-      "- \"deferred\": no candidates cleared the promotion gate. Set",
-      "  ranked_options = [] and recommendation = null. This run did not",
-      "  produce enough evidence to identify viable options.",
+      "MODE — exactly two values:",
+      "- \"ranked_options\": always output the option space as ranked_options",
+      "  with their tradeoffs. Set recommendation = null. Do NOT invent a",
+      "  recommendation. The user picks among the options using the decision",
+      "  context notes and the post-run follow-up questions.",
+      "- \"deferred\": the pool is too thin or off-topic. Set ranked_options",
+      "  = [] and recommendation = null. This run did not produce enough",
+      "  evidence to identify viable options.",
       "",
-      "COMMITMENT RULE — hedging is dishonest when the field narrows:",
-      "The user already had their constraints applied via the hard-constraint",
-      "filter BEFORE you saw this candidate pool. Every option here passed",
-      "their must-haves. So:",
-      "  - If only 1 option survived, you MUST recommend it. There is",
-      "    nothing else to hedge against.",
-      "  - If 2 options survived and one dominates on the axes the user",
-      "    actually cares about, recommend it. \"Both have tradeoffs\" is the",
-      "    wrong answer when the user told you which tradeoffs they accept.",
-      "  - Only fall to \"ranked_options\" when 3+ options survive AND the",
-      "    dominance pattern is genuinely ambiguous across multiple axes.",
-      "",
-      "Refusing to recommend in a narrow field rewards intellectual hedging",
-      "over making the call the evidence supports. Don't do that.",
+      "Do NOT emit \"recommended\". Even a lone-survivor pool of n=1 stays",
+      "as ranked_options — the surrounding context (cost, deployment, team",
+      "shape) determines whether that one option is right, and that's the",
+      "reader's call, not the synthesizer's.",
       "",
       promotedNames.length > 0
-        ? `Promoted candidates available for ranked_options: [${promotedNames.map((n) => `"${n}"`).join(", ")}]. (Already filtered against hard constraints — every option here passed the user's must-haves.)`
+        ? `Promoted candidates available for ranked_options: [${promotedNames.map((n) => `"${n}"`).join(", ")}].`
         : "NO candidates cleared the promotion gate. mode MUST be \"deferred\".",
+      "",
+      decisionContextNotes.length > 0
+        ? `Decision context notes from the user (annotations, NOT filters): ${decisionContextNotes.map((n) => `"${n.statement || ""}"`).slice(0, 8).join("; ")}. Reflect these in when_to_pick / when_not_to_pick where they apply, but do NOT drop options just because an option fails one of them.`
+        : "",
       "",
       "EVIDENCE GROUNDING:",
       "- Use comparison_matrix as the primary input. An axis is \"strong\" for",
@@ -2798,10 +2815,16 @@ async function synthesizeArchitectureSpec({
       "  option's properties. Do not put private_corpus citation_ids in any",
       "  option's evidence_citations array or in the decision's top-level",
       "  evidence_citations.",
+      "- When citing a claim sourced from source_type: \"community_discussion\",",
+      "  frame it as ADOPTION / PRACTITIONER signal — e.g. \"r/LocalLLaMA",
+      "  practitioners report X\" or \"HN discussion notes Y\" — not as a hard",
+      "  architectural fact. Still cite these claims (they are real evidence of",
+      "  what teams choose and why), but in the comparison matrix they",
+      "  primarily contribute to adoption-mode axes (ecosystem_traction,",
+      "  integration_breadth, team_adoption_pattern, practitioner_pain_points)",
+      "  — not to latency / consistency / throughput axes.",
       "",
-      kind === "concrete"
-        ? "Concrete-mode rules: each option is a specific product. when_to_pick / when_not_to_pick should reference vendor-specific concerns (pricing model, vendor lock-in, SDK quality, on-prem availability, ecosystem health) alongside fit-for-purpose."
-        : "Family-mode rules: each option is an architecture family. forbidden_topologies (per option) should list families/patterns that conflict with that option's invariants.",
+      "Each option's when_to_pick / when_not_to_pick should reference whatever the matrix and evidence actually surface — fit-for-purpose, deployment mode, vendor concerns (pricing / lock-in / SDK quality / on-prem availability / ecosystem) when relevant, and pattern-level invariants when relevant. forbidden_topologies (per option) lists families / patterns / products that conflict with that option's invariants.",
       "",
       ...(isResynth
         ? [
@@ -2810,11 +2833,8 @@ async function synthesizeArchitectureSpec({
             "the option set:",
             "- If the critique says two options are duplicates, merge them.",
             "- If the critique says an option's strong_axes is unsupported by",
-            "  its citations, weaken that option (demote from recommended,",
-            "  add the failure mode to weak_axes).",
-            "- If the critique says the recommendation isn't actually backed",
-            "  by dominant axes, drop the recommendation (set mode =",
-            "  \"ranked_options\", recommendation = null).",
+            "  its citations, weaken that option (add the failure mode to",
+            "  weak_axes).",
             "- If the critique says an obvious option is missing from the",
             "  matrix, you cannot add it here — note in summary that further",
             "  research is needed.",
@@ -2823,7 +2843,7 @@ async function synthesizeArchitectureSpec({
           ]
         : []),
       "Output JSON: {decision: {id, title, status, mode, ranked_options, recommendation, summary}, domain_model, evidence_summary}."
-    ].join("\n"),
+    ].filter(Boolean).join("\n"),
     user: JSON.stringify({
       context,
       knowledge_map: knowledgeMap,
@@ -2895,97 +2915,37 @@ async function synthesizeArchitectureSpec({
     });
   }
 
-  // Parse the recommendation. The model may return null, an object, or a
-  // hallucinated name; normalize to either null or {name, why, when_this_breaks}
-  // where name is constrained to the ranked_options set.
+  // Mode is one of "ranked_options" | "deferred". The synthesizer no longer
+  // emits "recommended"; the option space is always mapped and the reader
+  // picks. recommendation is always null in the new schema, but we keep the
+  // field on the spec to preserve the back-compat shape for downstream
+  // consumers.
   const rankedNames = new Set(rankedOptions.map((o) => o.name));
-  const rawRec = result.decision?.recommendation;
-  let recommendation = null;
-  if (rawRec && typeof rawRec === "object" && rawRec.name) {
-    const recName = slugify(String(rawRec.name));
-    if (rankedNames.has(recName)) {
-      recommendation = {
-        name: recName,
-        why: String(rawRec.why || "").trim(),
-        when_this_breaks: toArray(rawRec.when_this_breaks).map(String).filter(Boolean).slice(0, 6)
-      };
-    }
-  }
+  const recommendation = null;
 
-  // Derive mode. Honor the model's declared mode when consistent with the
-  // parsed structure; override when the structure says otherwise.
-  let mode;
-  if (rankedOptions.length === 0) {
-    mode = "deferred";
-    recommendation = null;
-  } else if (recommendation) {
-    mode = "recommended";
-  } else {
-    mode = "ranked_options";
-  }
-
-  // Commitment safety net: when the field genuinely narrows (after hard-
-  // constraint filtering), refusing to recommend is dishonest. The synthesizer
-  // prompt is told this, but it still over-defaults to "ranked_options" some
-  // fraction of the time. Deterministic post-processing forces commitment when:
-  //   1. Only 1 option survived — always recommend it. There is nothing to
-  //      hedge against; the user's constraints already narrowed the field.
-  //   2. 2 options survived AND one has a clear lead on net strong_axes
-  //      (strong_axes.length - weak_axes.length differs by >=2) — recommend
-  //      the leader. Close 2-way ties stay as ranked_options.
-  if (mode === "ranked_options") {
-    if (rankedOptions.length === 1) {
-      const only = rankedOptions[0];
-      mode = "recommended";
-      recommendation = {
-        name: only.name,
-        why: `Only viable option after constraint filtering. Hedging would be dishonest here — every other promoted candidate failed at least one must-have constraint or did not survive critique.`,
-        when_this_breaks: [
-          "If you relax a must-have constraint in constraints.json and re-run, additional options may surface."
-        ]
-      };
-    } else if (rankedOptions.length === 2) {
-      const score = (o) => toArray(o.strong_axes).length - toArray(o.weak_axes).length;
-      const sorted = [...rankedOptions].sort((a, b) => score(b) - score(a));
-      const lead = score(sorted[0]) - score(sorted[1]);
-      if (lead >= 2) {
-        mode = "recommended";
-        recommendation = {
-          name: sorted[0].name,
-          why: `Of the two surviving options, ${sorted[0].label || sorted[0].name} leads on ${score(sorted[0])} net strong axes vs ${sorted[1].label || sorted[1].name}'s ${score(sorted[1])}.`,
-          when_this_breaks: [
-            `If ${sorted[1].label || sorted[1].name}'s weak axes (${toArray(sorted[1].weak_axes).join(", ") || "none recorded"}) turn out not to matter for your case, the gap closes.`
-          ]
-        };
-      }
-    }
-  }
+  const mode = rankedOptions.length === 0 ? "deferred" : "ranked_options";
 
   // Back-compat: selected_topology. New code reads decision.mode +
-  // ranked_options + recommendation directly, but a lot of tooling and the
-  // citation-audit pipeline keys off selected_topology. Map cleanly:
-  //   recommended    → recommendation.name
+  // ranked_options directly, but a lot of tooling and the citation-audit
+  // pipeline keys off selected_topology. Map cleanly:
   //   ranked_options → literal "ranked_options"
   //   deferred       → "requires_human_architecture_review"
-  let selectedTopology;
-  if (mode === "recommended") selectedTopology = recommendation.name;
-  else if (mode === "ranked_options") selectedTopology = RANKED_OPTIONS_SENTINEL;
-  else selectedTopology = HUMAN_REVIEW;
+  const selectedTopology =
+    mode === "ranked_options" ? RANKED_OPTIONS_SENTINEL : HUMAN_REVIEW;
 
   // candidate_topologies retains its existing shape but is now driven by
-  // ranked_options. Every ranked option becomes a candidate with
-  // decision: "selected" when recommended, else "considered". Promoted
+  // ranked_options. Every ranked option becomes a candidate with decision:
+  // "considered" — synthesis no longer commits to a winner. Promoted
   // candidates that the synthesizer DID NOT include in ranked_options are
   // recorded as "rejected" (the synthesizer chose not to surface them).
   const candidates = [];
   for (const opt of rankedOptions) {
-    const isRecommended = recommendation && recommendation.name === opt.name;
     candidates.push({
       name: opt.name,
       label: opt.label,
       fit: opt.summary,
       risks: opt.risks,
-      decision: isRecommended ? "selected" : "considered",
+      decision: "considered",
       evidence_citations: opt.evidence_citations,
       confidence: opt.confidence
     });
@@ -3003,26 +2963,17 @@ async function synthesizeArchitectureSpec({
     });
   }
 
-  // Roll-up invariants / forbidden topologies for the back-compat fields.
-  // When mode=recommended, mirror the recommended option. Else empty —
-  // the caller must read per-option from ranked_options.
-  let rollupInvariants = [];
-  let rollupForbidden = [];
-  if (mode === "recommended") {
-    const recOption = rankedOptions.find((o) => o.name === recommendation.name);
-    if (recOption) {
-      rollupInvariants = recOption.required_invariants;
-      rollupForbidden = recOption.forbidden_topologies;
-    }
-  }
+  // Roll-up invariants / forbidden topologies for the back-compat fields are
+  // always empty under exploratory mode — callers must read per-option from
+  // ranked_options.
+  const rollupInvariants = [];
+  const rollupForbidden = [];
 
   const decisionSummary = result.decision?.summary
     ? String(result.decision.summary)
     : mode === "deferred"
       ? "No candidates cleared the promotion gate. ADR did not produce viable options for this decision."
-      : mode === "recommended"
-        ? `One option (${recommendation.name}) dominates the comparison matrix; ${rankedOptions.length - 1} other viable options are recorded with their tradeoffs.`
-        : `${rankedOptions.length} viable options identified with genuine tradeoffs. The right choice depends on team-side constraints.`;
+      : `${rankedOptions.length} viable options identified with genuine tradeoffs. The right choice depends on team-side constraints not visible to ADR.`;
 
   return {
     version: VERSION,
@@ -3080,7 +3031,6 @@ async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatri
     };
   }
 
-  const kind = context.decision_kind || "family";
   const result = await callLlmJson({
     label: "evaluation_pack_agent",
     system: [
@@ -3091,7 +3041,7 @@ async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatri
       "option claimed. It is NOT a generic test suite — it must be specific",
       "to this decision, this option set, and these claimed strong_axes.",
       "",
-      `Decision: "${context.decision}" (kind: ${kind})`,
+      `Decision: "${context.decision}"`,
       `Domain: "${context.domain}"`,
       `Mode: ${mode}`,
       "",
@@ -3110,14 +3060,10 @@ async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatri
       "      (a test that all options must pass)",
       "    * test a CONCRETE behavior with measurable acceptance_criteria",
       "    * NOT be a generic \"is the API up\" test",
-      "  Examples by decision kind:",
-      "    family / 'retrieval topology': multi-hop accuracy, citation lineage",
-      "      depth, abstention rate on out-of-corpus queries, latency at p95",
-      "    concrete / 'auth provider': tenant isolation under concurrent writes,",
-      "      MFA enrollment flow, session revocation latency, SSO/SAML round",
-      "      trip, on-prem deployment smoke if relevant",
-      "    family / 'event bus topology': message ordering under partition,",
-      "      at-least-once vs exactly-once, DLQ shape, replay-from-offset",
+      "  Anchor each test to the option's claimed strong_axes / weak_axes. Examples:",
+      "    'retrieval topology': multi-hop accuracy, citation lineage depth, abstention rate on out-of-corpus queries, latency at p95.",
+      "    'auth provider': tenant isolation under concurrent writes, MFA enrollment flow, session revocation latency, SSO/SAML round trip, on-prem deployment smoke if relevant.",
+      "    'event bus topology': message ordering under partition, at-least-once vs exactly-once, DLQ shape, replay-from-offset.",
       "- 3 to 6 metrics. Each one has a numeric target and a definition. Use",
       "  rates in [0,1] for the well-known keys (deterministic_lineage_rate,",
       "  boundary_spill_tolerance, unsupported_answer_rate). Add",
@@ -3230,7 +3176,6 @@ function normalizeEvaluationCases(testCases) {
 function buildGuardrails(spec) {
   const mode = spec.decision?.mode || "deferred";
   const rankedOptions = toArray(spec.decision?.ranked_options);
-  const recommendation = spec.decision?.recommendation || null;
   const allowedAgenticUse = toArray(spec.guardrails?.allowed_agentic_use);
 
   // Deferred: no options were produced. Be honest — there is nothing for a
@@ -3252,14 +3197,10 @@ enforce.
 `;
   }
 
-  const header = mode === "recommended"
-    ? `Recommended option: **${recommendation.name}** (one of ${rankedOptions.length} viable options below).`
-    : `Mode: **ranked_options** — ${rankedOptions.length} viable options with genuine tradeoffs. The caller picks one option and applies the matching block below.`;
+  const header = `Mode: **ranked_options** — ${rankedOptions.length} viable options with genuine tradeoffs. The caller picks one option and applies the matching block below.`;
 
   const optionBlocks = rankedOptions
     .map((opt) => {
-      const isRec = recommendation && recommendation.name === opt.name;
-      const recTag = isRec ? " *(recommended)*" : "";
       const pickWhen = (opt.when_to_pick || [])
         .map((item) => `- ${item}`)
         .join("\n") || "- (model did not provide \"when to pick\" conditions)";
@@ -3273,7 +3214,7 @@ enforce.
         .map((item) => `- ${item}`)
         .join("\n") || "- (none specified)";
       const evidence = (opt.evidence_citations || []).map((id) => `[${id}]`).join(", ") || "none";
-      return `## Option: \`${opt.name}\`${recTag} — ${opt.label}
+      return `## Option: \`${opt.name}\` — ${opt.label}
 
 ${opt.summary || ""}
 
@@ -3295,17 +3236,9 @@ ${evidence}
     })
     .join("\n---\n\n");
 
-  const recommendationBlock = mode === "recommended"
-    ? `## Recommendation: \`${recommendation.name}\`
+  const recommendationBlock = `## No recommendation
 
-${recommendation.why}
-
-**This recommendation breaks if:**
-${(recommendation.when_this_breaks || []).map((item) => `- ${item}`).join("\n") || "- (none specified)"}
-`
-    : `## No recommendation
-
-The comparison matrix did not show a clear winner. All options above are
+ADR maps the option space; it does not pick a winner. All options above are
 viable; the choice depends on team-side constraints that ADR cannot know
 (existing infrastructure, hiring plans, vendor relationships, budget
 envelope). Pick the option whose "Pick this when" conditions match your
@@ -3344,29 +3277,24 @@ without producing a superseding ADR.
 function buildADR(context, spec, knowledgeMap, evidenceItems = []) {
   const mode = spec.decision?.mode || "deferred";
   const rankedOptions = toArray(spec.decision?.ranked_options);
-  const recommendation = spec.decision?.recommendation || null;
   const rejected = spec.candidate_topologies.filter(
     (candidate) => candidate.decision === "rejected"
   );
 
-  const headline = mode === "recommended"
-    ? `**Recommendation:** \`${recommendation.name}\`. ${rankedOptions.length - 1} other viable option(s) recorded below with their tradeoffs.`
-    : mode === "ranked_options"
-      ? `**${rankedOptions.length} viable options identified — no single recommendation.** The choice depends on team-side constraints. See tradeoffs below.`
-      : `**No viable options yet.** The evidence collected did not produce candidates with sufficient backing.`;
+  const headline = mode === "ranked_options"
+    ? `**${rankedOptions.length} viable options identified — no single recommendation.** ADR maps the option space; the choice depends on team-side context. See tradeoffs below.`
+    : `**No viable options yet.** The evidence collected did not produce candidates with sufficient backing.`;
 
   const optionSections = rankedOptions
     .map((opt, index) => {
-      const isRec = recommendation && recommendation.name === opt.name;
       const rank = index + 1;
-      const recTag = isRec ? " — *recommended*" : "";
       const summary = opt.summary || "";
       const pickWhen = (opt.when_to_pick || []).map((item) => `- ${item}`).join("\n");
       const avoidWhen = (opt.when_not_to_pick || []).map((item) => `- ${item}`).join("\n");
       const strong = (opt.strong_axes || []).join(", ") || "—";
       const weak = (opt.weak_axes || []).join(", ") || "—";
       const evidence = (opt.evidence_citations || []).map((id) => `[${id}]`).join(", ") || "none";
-      return `### Option ${rank}: ${opt.label}${recTag}
+      return `### Option ${rank}: ${opt.label}
 
 ${summary}
 
@@ -3384,23 +3312,12 @@ ${avoidWhen || "- (model did not provide \"when NOT to pick\" conditions)"}
     })
     .join("\n\n");
 
-  const recommendationSection = mode === "recommended"
+  const recommendationSection = mode === "ranked_options"
     ? `## Recommendation
 
-**Recommended:** \`${recommendation.name}\`
-
-${recommendation.why}
-
-**This recommendation breaks if:**
-
-${(recommendation.when_this_breaks || []).map((item) => `- ${item}`).join("\n") || "- (none specified)"}
+**No single recommendation.** ADR maps the option space; it does not pick a winner. All ${rankedOptions.length} options above have genuine tradeoffs that depend on team-side context ADR cannot see (existing infrastructure, hiring plans, vendor relationships, budget envelope). Pick the option whose "Pick this when" conditions match your situation.
 `
-    : mode === "ranked_options"
-      ? `## Recommendation
-
-**No single recommendation.** All ${rankedOptions.length} options above have genuine tradeoffs that depend on team-side constraints ADR cannot know (existing infrastructure, hiring plans, vendor relationships, budget envelope). Pick the option whose "Pick this when" conditions match your situation.
-`
-      : `## Recommendation
+    : `## Recommendation
 
 **No viable options yet.** The evidence collected did not produce candidates with sufficient backing. Re-run with sharper context, or run \`adr supersede\` once more evidence is available.
 `;
@@ -3437,27 +3354,6 @@ Promotion rule: ${knowledgeMap.promotion_rule}
 
 Promoted candidates:
 ${knowledgeMap.promoted_candidates.map((item) => `- ${item.label}: citations ${item.citations.map((id) => `[${id}]`).join(", ")}`).join("\n") || "- No candidate passed promotion gates."}
-
-${(() => {
-  const eliminatedByConstraint = toArray(knowledgeMap.insufficient_evidence_candidates).filter(
-    (c) => c.promotion_status === "eliminated_by_hard_constraint"
-  );
-  if (eliminatedByConstraint.length === 0) return "";
-  const lines = eliminatedByConstraint
-    .map((c) => {
-      const failures = toArray(c.constraint_failures)
-        .map((f) => `  - **${f.constraint_statement}** — ${f.reason}`)
-        .join("\n");
-      return `### ${c.label || titleCase(c.name)}\n\nFailed must-have constraints:\n${failures || "  - (no failure detail recorded)"}`;
-    })
-    .join("\n\n");
-  return `## Eliminated by hard constraints
-
-These cleared the evidence promotion gate but failed at least one must_have constraint from \`constraints.json\`. They were removed from the candidate pool before the comparison matrix was built — not included as "weak options" — because the user's stated constraints rule them out structurally. Relax the corresponding constraint and re-run to reconsider.
-
-${lines}
-`;
-})()}
 
 ${rejected.length > 0 ? `## Candidates considered but not surfaced as options
 
@@ -3714,14 +3610,11 @@ Sources are preserved as evidence items before synthesis. Downstream adapters sh
 function synthesizeResearchReport({ context, plan, spec, evidenceItems, researchResults, knowledgeMap }) {
   const topEvidence = evidenceItems.slice(0, 10);
   const mode = spec.decision?.mode || "deferred";
-  const recommendation = spec.decision?.recommendation || null;
   const rankedOptions = toArray(spec.decision?.ranked_options);
 
-  const decisionLine = mode === "recommended"
-    ? `ADR recommends **${recommendation.name}** for **${context.domain}**, alongside ${rankedOptions.length - 1} other viable option(s) recorded with their tradeoffs in \`ADR.md\`.`
-    : mode === "ranked_options"
-      ? `ADR identified **${rankedOptions.length} viable options** for **${context.domain}**. No single recommendation — see \`ADR.md\` for per-option tradeoffs.`
-      : `ADR did not produce viable options for **${context.domain}**. See \`critique.json\` and re-run with sharper context.`;
+  const decisionLine = mode === "ranked_options"
+    ? `ADR identified **${rankedOptions.length} viable options** for **${context.domain}**. ADR maps the option space; the reader picks. See \`ADR.md\` for per-option tradeoffs and \`follow-up-questions.json\` for the sharper sub-decisions surfaced by matrix variance.`
+    : `ADR did not produce viable options for **${context.domain}**. See \`critique.json\` and re-run with sharper context.`;
 
   return `# Architecture Deep Research Report
 
@@ -3868,49 +3761,6 @@ async function prepareRun({ inputPath, flags, chained = false }) {
   const outDir = path.resolve(flags.out);
   let content = await readFile(path.resolve(inputPath), "utf8");
 
-  // `--clarification-answers` lets the caller unblock the clarification gate
-  // by passing the answers as text (or a path to a text file). The answers
-  // are appended to `content` before strategic-context extraction so any
-  // latency / scale / compliance signals land in the matrix. When provided,
-  // the gate does not re-block — the caller has explicitly accepted the
-  // run with what they supplied.
-  const answersFlag = flags["clarification-answers"];
-  let clarificationAnswers = null;
-  if (typeof answersFlag === "string" && answersFlag.length > 0) {
-    let answersText = answersFlag;
-    try {
-      const resolved = path.resolve(answersFlag);
-      const stats = await stat(resolved);
-      if (stats.isFile()) {
-        answersText = await readFile(resolved, "utf8");
-      }
-    } catch {
-      // Not a file path — treat as inline text.
-    }
-    if (answersText && answersText.trim().length > 0) {
-      clarificationAnswers = answersText.trim();
-      content = `${content}\n\n## Clarification answers\n\n${clarificationAnswers}\n`;
-    }
-  }
-
-  // `--clarification-profile <id>` lets solo founders pick a pre-built
-  // profile (pre_pmf_solo, first_paying_customers, scaling_team_post_seed,
-  // enterprise_regulated) instead of answering 6 free-form questions.
-  // Same effect as --clarification-answers but uses a curated answer block
-  // shipped with the package.
-  const profileFlag = flags["clarification-profile"];
-  if (typeof profileFlag === "string" && profileFlag.length > 0 && !clarificationAnswers) {
-    const { profileById, profileAnswersAsText } = await import("./clarification-profiles.mjs");
-    const profile = profileById(profileFlag);
-    if (profile) {
-      const profileText = profileAnswersAsText(profile);
-      clarificationAnswers = profileText;
-      content = `${content}\n\n${profileText}\n`;
-    } else {
-      console.warn(`[adr] --clarification-profile "${profileFlag}" is not a known profile; ignoring.`);
-    }
-  }
-
   // Clobber guard: if outDir contains a completed run, refuse to overwrite
   // unless the caller explicitly opts in. Fresh runs append to events.jsonl
   // and writeJson the final artifacts — without this guard, a re-run bills
@@ -3964,11 +3814,7 @@ async function prepareRun({ inputPath, flags, chained = false }) {
   // Persist run-config.json so `adr resume <out_dir>` can re-invoke with
   // the original flag set. Only write on a fresh run (resume re-reads it).
   // Persists every flag the caller passed (minus `resume` itself, which
-  // is set by the resume command, not the original invocation). A hand-
-  // picked allowlist used to drop --clarification-profile,
-  // --clarification-answers, --no-clarify, --skip-* flags, etc., so
-  // resume invocations of profile-based runs went back to the clarification
-  // gate with no way to override.
+  // is set by the resume command, not the original invocation).
   if (!flags.resume) {
     try {
       const { resume: _ignoredResume, ...persistedFlags } = flags;
@@ -3993,78 +3839,21 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     input_path: inputPath,
     domain: flags.domain,
     decision: flags.decision,
-    ...(chained ? { chained_from: "discover" } : {}),
-    ...(clarificationAnswers ? { clarification_answers_provided: true } : {})
+    ...(chained ? { chained_from: "discover" } : {})
   });
 
   const context = await buildStrategicContext({
     sourcePath: inputPath,
     content,
     domain: flags.domain,
-    decision: flags.decision,
-    decisionKind: flags["decision-kind"]
+    decision: flags.decision
   });
-  // assessClarification doesn't know whether the user already provided
-  // answers — it just inspects the post-append content. When
-  // --clarification-answers was provided, suppress the needs_clarification
-  // signal entirely so the second run doesn't emit the same prompt-the-user
-  // event that the first run did. The categorical check is also less
-  // meaningful after answers were threaded in.
-  const rawClarification = assessClarification(context, content);
-  let clarification = clarificationAnswers
-    ? {
-        ...rawClarification,
-        needs_clarification: false,
-        questions: [],
-        action: "Clarification answers were provided on this run; gate suppressed."
-      }
-    : rawClarification;
 
-  // Suggest matching pre-built profiles when the gate fires. Reads
-  // discover-side signals (contributor count, codebase age, compliance
-  // signals) when present and picks 1-3 profiles. The user can then
-  // pass --clarification-profile <id> instead of writing free-form
-  // answers.
-  if (clarification.needs_clarification && !clarificationAnswers) {
-    try {
-      const { suggestProfiles } = await import("./clarification-profiles.mjs");
-      let signals = { discoveredConstraints: null, complianceSignals: [], contributorCount: 0, codebaseAgeDays: 0 };
-      try {
-        const discoveredConstraints = JSON.parse(
-          await readFile(path.join(outDir, "discovered-constraints.json"), "utf8")
-        );
-        signals.complianceSignals = toArray(discoveredConstraints?.compliance_signals);
-      } catch {
-        // No discover step ran — that's fine.
-      }
-      try {
-        const discoveredPrinciples = JSON.parse(
-          await readFile(path.join(outDir, "discovered-principles.json"), "utf8")
-        );
-        const summary = discoveredPrinciples?.scan_summary || {};
-        signals.contributorCount = Number(summary.contributors_count || 0);
-        signals.codebaseAgeDays = Number(summary.codebase_age_days || 0);
-      } catch {
-        // ditto
-      }
-      const profiles = suggestProfiles(signals);
-      if (profiles.length > 0) {
-        clarification = {
-          ...clarification,
-          suggested_profiles: profiles.map((p) => ({
-            id: p.id,
-            label: p.label,
-            description: p.description
-          })),
-          action:
-            "Answer with --clarification-answers '<text>', OR pick a profile with --clarification-profile <id>, OR --no-clarify to force a low-confidence run."
-        };
-      }
-    } catch {
-      // Profile-suggestion failures should never block the run.
-    }
-  }
-
+  // Detect missing context but DO NOT halt. Surface the gaps as a
+  // non-blocking event so the streaming UI can show them; the run still
+  // proceeds. Follow-up questions are also derived post-run from matrix
+  // axis variance.
+  const clarification = assessClarification(context, content);
   await writeJson(path.join(outDir, "strategic-context.json"), context);
   await writeJson(path.join(outDir, "clarification.json"), clarification);
   await appendEvent(outDir, "strategic_context_created", {
@@ -4072,46 +3861,28 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     bounded_contexts: context.bounded_contexts,
     needs_clarification: clarification.needs_clarification
   });
-
-  // Clarification is a hard gate by default. Three ways to satisfy it:
-  //   1. Supply enough context in the PRD that no questions are generated.
-  //   2. Pass --clarification-answers '<text>' (or a path to a text file).
-  //   3. Pass --no-clarify to explicitly accept a lower-confidence run.
-  // --strict-clarification is the legacy flag name; accepted as a no-op.
-  const optOut = Boolean(flags["no-clarify"]) || Boolean(clarificationAnswers);
-  const needsClarification = clarification.needs_clarification && !optOut;
-
-  if (needsClarification) {
-    await writeJson(path.join(outDir, "state.json"), {
-      version: VERSION,
-      status: "needs_clarification",
-      completed_at: nowIso(),
-      handoff_boundary: "adr_not_started_due_to_missing_context"
+  if (clarification.needs_clarification && clarification.questions.length > 0) {
+    await appendEvent(outDir, "decision_context_gaps_detected", {
+      gap_count: clarification.questions.length,
+      gaps: clarification.questions
     });
-    await appendEvent(outDir, "run_waiting_for_clarification", {
-      questions: clarification.questions
-    });
-    return {
-      runtime,
-      outDir,
-      content,
-      context,
-      clarification,
-      needsClarification,
-      constraints: null
-    };
   }
 
-  // Hard constraints — extracted ONCE per outDir (file-cached). After this
-  // returns, deep-research uses constraints.constraints[].severity to filter
-  // the candidate pool. The user can edit constraints.json between runs and
-  // the file will be picked up unchanged on re-invocation.
-  const constraints = await extractHardConstraints({
+  // Decision context notes — extracted ONCE per outDir (file-cached).
+  // These are annotations on the option space, never filters. The user can
+  // edit decision-context.json between runs and the file will be picked up
+  // unchanged on re-invocation.
+  const decisionContext = await extractDecisionContext({
     context,
     content,
     outDir,
     flags
   });
+
+  // Thread decision-context notes onto the context object so the synthesis
+  // prompt can surface them as soft annotations.
+  context.decision_context_notes = decisionContext.notes;
+  context.decision_context_tags = decisionContext.tags;
 
   return {
     runtime,
@@ -4119,16 +3890,113 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     content,
     context,
     clarification,
-    needsClarification,
-    constraints
+    needsClarification: false,
+    decisionContext
   };
+}
+
+// Per-task max queries — used to cap "both"-strategy peers so they don't
+// blow the per-peer query budget by emitting architecture + adoption sets in
+// full. Architecture queries win the cap (peer's architecture, when public,
+// is the highest-signal evidence).
+const PEER_TASK_MAX_QUERIES = 5;
+
+// Architecture-strategy queries: today's behavior. Targets engineering blogs,
+// public github, ARCHITECTURE.md / docs. Use when the peer's architecture is
+// publicly documented.
+function architecturePeerQueries({ label, decision, peer }) {
+  return [
+    `${label} ${decision} architecture`,
+    `${label} ${decision} site:github.com`,
+    peer.engineering_blog_url
+      ? `${label} ${decision} blog`
+      : `${label} how they built ${decision}`
+  ];
+}
+
+// Adoption-strategy queries: targets community signal — Reddit, HN, Twitter,
+// reverse-engineering posts, migration write-ups. Use when the peer is
+// closed-source or otherwise lacks public architecture docs but carries real
+// adoption signal (Obsidian, Roam, Mem.ai, Notion).
+//
+// The LLM picks relevant subreddits / communities per topic — we don't
+// hardcode a subreddit list because the right community varies per decision.
+async function adoptionPeerQueries({ context, peer }) {
+  const label = peer.label || peer.name;
+  const decisionAspect = context.decision;
+  const useCase = context.domain || decisionAspect;
+  try {
+    const raw = await callLlmJson({
+      label: "adoption_research_planner",
+      system: [
+        "You are the adoption-research query planner for Architecture Deep Research.",
+        "",
+        "This peer is closed-source or lacks public architecture docs, but it",
+        "carries real ADOPTION signal — community size, plugin ecosystems,",
+        "\"we tried X and switched to Y\" threads, reverse-engineering posts,",
+        "practitioner pain points. Your job is to generate search queries that",
+        "target that signal, not engineering blogs.",
+        "",
+        "Generate 4-6 queries that route to community discussion (Reddit, HN,",
+        "Twitter/X, Stack Exchange) and migration / reverse-engineering write-ups.",
+        "",
+        "Include a mix of these shapes (adapt the exact wording to the peer +",
+        "decision; do not just template-fill):",
+        "  - <peer> reddit users architecture experience <decision_aspect>",
+        "  - <peer> hacker news comments <decision_aspect>",
+        "  - site:reddit.com <peer> <use_case>",
+        "  - site:news.ycombinator.com <peer>",
+        "  - site:twitter.com <peer> <decision_aspect>",
+        "  - how does <peer> store data / <peer> internals reverse engineering",
+        "  - <peer> vs <known_competitor> migration",
+        "",
+        "Pick the relevant subreddit / community when one is well-known for",
+        "this decision (e.g. r/LocalLLaMA for local LLM tools, r/ObsidianMD",
+        "for Obsidian). Do not hardcode a single subreddit — choose what fits",
+        "the peer + decision.",
+        "",
+        "Output JSON: { queries: [string] }."
+      ].join("\n"),
+      user: JSON.stringify({
+        peer: {
+          name: peer.name,
+          label,
+          why_comparable: peer.why_comparable || ""
+        },
+        decision_aspect: decisionAspect,
+        use_case: useCase,
+        domain: context.domain
+      })
+    });
+    const queries = toArray(raw.queries)
+      .map((q) => String(q || "").trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    if (queries.length > 0) return queries;
+  } catch {
+    // Fall through to a deterministic fallback so a planner failure never
+    // strands an adoption-strategy peer with zero queries.
+  }
+  // Fallback: deterministic adoption-shaped queries built without the LLM.
+  return [
+    `${label} reddit users architecture experience ${decisionAspect}`,
+    `${label} hacker news comments ${decisionAspect}`,
+    `site:reddit.com ${label} ${useCase}`,
+    `site:news.ycombinator.com ${label}`,
+    `how does ${label} store data`
+  ];
 }
 
 // Build research tasks targeting peer products from peers.json (when present).
 // Real users picking architectures look at 3-5 similar products to see what
 // they did. One task per peer, narrowly scoped to how that peer handles the
-// SPECIFIC decision (not their entire architecture). Sources are the peer's
-// GitHub repo + docs + engineering blog when known.
+// SPECIFIC decision (not their entire architecture).
+//
+// Query shape branches on evidence_strategy:
+//   architecture: github repo + docs + engineering blog (today's behavior)
+//   adoption:     reddit / HN / twitter / migration write-ups
+//   both:         merged set, capped at PEER_TASK_MAX_QUERIES
+//                 (architecture wins ties).
 async function buildPeerResearchTasks({ context, outDir }) {
   let peersArtifact;
   try {
@@ -4144,7 +4012,7 @@ async function buildPeerResearchTasks({ context, outDir }) {
     return { tasks: [], status: "peers_json_empty" };
   }
 
-  const tasks = peers.map((peer, index) => {
+  const tasks = await Promise.all(peers.map(async (peer, index) => {
     const sources = [
       peer.github_url,
       peer.docs_url,
@@ -4154,25 +4022,49 @@ async function buildPeerResearchTasks({ context, outDir }) {
       .map((s) => String(s || "").trim())
       .filter(Boolean);
     const label = peer.label || peer.name;
+    const strategy =
+      typeof peer.evidence_strategy === "string"
+        ? peer.evidence_strategy.trim().toLowerCase()
+        : "architecture";
+
+    let search_queries;
+    if (strategy === "adoption") {
+      search_queries = await adoptionPeerQueries({ context, peer });
+    } else if (strategy === "both") {
+      const archQs = architecturePeerQueries({ label, decision: context.decision, peer });
+      const adoptQs = await adoptionPeerQueries({ context, peer });
+      // Architecture queries first so when the cap fires they survive.
+      search_queries = [...archQs, ...adoptQs].slice(0, PEER_TASK_MAX_QUERIES);
+    } else {
+      search_queries = architecturePeerQueries({ label, decision: context.decision, peer });
+    }
+
+    const isAdoptionShape = strategy === "adoption" || strategy === "both";
+    const objective = isAdoptionShape
+      ? `Find ADOPTION evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles ${context.decision}: community discussion, practitioner pain points, plugin / integration ecosystem, "we tried X and switched to Y" threads. ${label} is researched via Reddit / HN / Twitter / reverse-engineering posts because its architecture isn't publicly documented but its adoption signal is real.`
+      : `Find evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles the specific decision aspect: ${context.decision}. Look at their public repo, ARCHITECTURE.md, docs, and engineering blog. Extract their specific choice (e.g. pgvector vs Pinecone, BullMQ vs Trigger.dev) with the citation pointing at the file or URL where they made that choice.`;
+
+    const success_criteria = isAdoptionShape
+      ? [
+          `Identify what ${label}'s practitioner community says about ${context.decision} — ecosystem traction, integration breadth, common pain points.`,
+          `Capture concrete adoption signals (subreddit size, plugin counts, migration stories) when the cited sources expose them.`
+        ]
+      : [
+          `Identify the specific ${context.decision} ${label} uses, with a citation to ${peer.github_url || peer.docs_url || "their public docs"}.`,
+          `Capture quantitative signals (scale, version, deployment shape) when ${label}'s sources expose them.`
+        ];
+
     return {
       id: `peer_${slugify(peer.name)}_${index + 1}`,
-      title: `Peer architecture: how ${label} handles ${context.decision}`,
-      objective: `Find evidence of how ${label} (${peer.why_comparable || "a comparable product"}) handles the specific decision aspect: ${context.decision}. Look at their public repo, ARCHITECTURE.md, docs, and engineering blog. Extract their specific choice (e.g. pgvector vs Pinecone, BullMQ vs Trigger.dev) with the citation pointing at the file or URL where they made that choice.`,
-      search_queries: [
-        `${label} ${context.decision} architecture`,
-        `${label} ${context.decision} site:github.com`,
-        peer.engineering_blog_url
-          ? `${label} ${context.decision} blog`
-          : `${label} how they built ${context.decision}`
-      ],
+      title: `Peer ${isAdoptionShape ? "adoption" : "architecture"}: how ${label} handles ${context.decision}`,
+      objective,
+      search_queries,
       source_targets: sources,
-      success_criteria: [
-        `Identify the specific ${context.decision} ${label} uses, with a citation to ${peer.github_url || peer.docs_url || "their public docs"}.`,
-        `Capture quantitative signals (scale, version, deployment shape) when ${label}'s sources expose them.`
-      ],
-      peer_target: peer.name
+      success_criteria,
+      peer_target: peer.name,
+      evidence_strategy: strategy === "adoption" || strategy === "both" ? strategy : "architecture"
     };
-  });
+  }));
   return { tasks, status: "ok" };
 }
 
@@ -4277,26 +4169,23 @@ async function buildAdaptiveResearchPlan({ context, knowledgeMap, evidenceItems 
   };
 }
 
-// Extract structured hard constraints from the PRD + clarification answers.
+// Extract decision-context notes from the PRD + clarification answers.
 //
-// Today, "self-hosted only" lands in the PRD as English prose and the
-// synthesizer treats it as a soft preference. It should be a structural
-// filter — Pinecone (cloud-only) must never appear in ranked_options if the
-// user said self-hosted is the deploy model. This stage parses the input
-// into structured constraints with severities that the candidate pool can
-// be filtered against before the matrix is built.
+// These notes are ANNOTATIONS, never filters. "Self-hosted only" lands here
+// as a context note attached to each option's deployment annotation, not as
+// a pre-filter that drops candidates. The reader (or the team specialist)
+// decides which notes are dealbreakers for their context — ADR's job is to
+// map the option space, not narrow it.
 //
-// If constraints.json already exists in outDir (user edited it), it is used
-// as-is — no fresh extraction. This is the same "edit-and-re-run" UX as
-// pdr.draft.md.
-async function extractHardConstraints({ context, content, outDir, flags }) {
-  const constraintsPath = path.join(outDir, "constraints.json");
+// Persists as decision-context.json. If the file already exists in outDir
+// (user edited it), it is used as-is — same edit-and-re-run UX as pdr.draft.md.
+async function extractDecisionContext({ context, content, outDir, flags, tags = [] }) {
+  const contextPath = path.join(outDir, "decision-context.json");
   try {
-    const existing = JSON.parse(await readFile(constraintsPath, "utf8"));
-    if (existing && Array.isArray(existing.constraints)) {
-      await appendEvent(outDir, "constraints_loaded_from_disk", {
-        constraint_count: existing.constraints.length,
-        must_have_count: existing.constraints.filter((c) => c.severity === "must_have").length
+    const existing = JSON.parse(await readFile(contextPath, "utf8"));
+    if (existing && Array.isArray(existing.notes)) {
+      await appendEvent(outDir, "decision_context_loaded_from_disk", {
+        note_count: existing.notes.length
       });
       return existing;
     }
@@ -4304,512 +4193,118 @@ async function extractHardConstraints({ context, content, outDir, flags }) {
     // File doesn't exist or is corrupt — extract fresh below.
   }
 
-  if (flags && flags["skip-constraint-extraction"]) {
-    return { version: VERSION, decision: context.decision, domain: context.domain, constraints: [] };
+  if (flags && flags["skip-decision-context"]) {
+    return {
+      version: VERSION,
+      decision: context.decision,
+      domain: context.domain,
+      tags,
+      notes: []
+    };
   }
 
   let raw;
   try {
     raw = await callLlmJson({
-      label: "hard_constraint_extractor",
+      label: "decision_context_extractor",
       system: [
-        "You are the hard-constraint extractor for Architecture Deep Research.",
+        "You are the decision-context extractor for Architecture Deep Research.",
         "",
-        `Decision: "${context.decision}" (kind: ${context.decision_kind || "family"})`,
+        `Decision: "${context.decision}"`,
         `Domain: "${context.domain}"`,
         "",
-        "Read the user's PRD + clarification answers. Extract constraints that",
-        "discriminate candidates — i.e. statements that would let you say 'this",
-        "candidate is OUT' if violated. NOT every requirement is a hard",
-        "constraint.",
+        "Read the user's PRD + clarification answers. Extract CONTEXT NOTES",
+        "that describe the user's situation and would help a reader weigh the",
+        "tradeoffs across the option space. These are NOT filters. They will",
+        "be shown alongside the ranked options so the reader sees which",
+        "options fit and which don't, but ADR will not drop any candidate on",
+        "the basis of these notes. The user picks among the options.",
         "",
-        "WHAT QUALIFIES AS must_have (eliminates candidates):",
-        "  Only structural constraints about HOW the system is deployed or",
-        "  WHERE the data lives. These genuinely rule candidates in or out.",
-        "    ✓ deployment: 'self-hosted only', 'must run in Docker Compose',",
-        "      'no managed services', 'no SaaS'",
-        "    ✓ data residency / compliance: 'data must stay in EU', 'SOC2 Type II",
-        "      required', 'GDPR right-to-deletion required', 'air-gapped'",
-        "    ✓ cost ceiling: 'must run on $X/mo per tenant', 'must be free at",
-        "      our scale'",
-        "    ✓ infra constraint: 'must integrate with our existing Postgres',",
-        "      'no new container processes'",
-        "    ✓ region / latency floor: 'p95 < 50ms', 'must serve EU + APAC",
-        "      from local regions'",
+        "Examples of context notes (extract these):",
+        "  - deployment: 'Self-hosted on Docker Compose; no managed services for now.'",
+        "  - data residency: 'Data must stay in EU; right-to-deletion required.'",
+        "  - cost: 'Budget under $50/mo at current scale; free tier preferred.'",
+        "  - integration: 'Existing Postgres + Next.js stack we want to extend.'",
+        "  - region / latency: 'p95 < 200ms for user-facing queries.'",
+        "  - team / phase: 'Solo founder, pre-PMF, time-to-ship dominates.'",
+        "  - compliance: 'SOC2 Type II required in 12 months.'",
         "",
-        "WHAT DOES NOT QUALIFY AS must_have (these are not constraints, they",
-        "are features the chosen candidate must support — they describe the",
-        "APPLICATION, not what eliminates candidate options):",
-        "    ✗ 'must support agent persistent identities' — this is an app",
-        "      requirement; multiple candidates can support it",
-        "    ✗ 'must enable human-in-the-loop workflows' — same",
-        "    ✗ 'must support multi-tenant filtering' — almost every candidate",
-        "      can support this; it doesn't eliminate anyone",
-        "    ✗ 'must store embeddings with metadata' — table-stakes for any",
-        "      vector store",
-        "    ✗ feature lists, capabilities, behaviors of the resulting system",
-        "  These either become matrix axes (scored, not filtered) or they're",
-        "  implementation details for the chosen candidate. Do NOT extract",
-        "  them as constraints at all unless the user said something like",
-        "  'cannot use any product that does not support X'.",
+        "Note shape:",
+        "  { id (kebab-case slug),",
+        "    category (deployment | compliance | cost | region | integration | data | team | phase),",
+        "    statement (the user's words, one sentence),",
+        "    evidence_from_input (verbatim quote from PRD or clarification answers) }",
         "",
-        "Severity ladder:",
-        "  - must_have: structural deployment / data / cost / compliance /",
-        "    region constraint. Eliminates candidates. Language signals:",
-        "    'must', 'only', 'required', 'cannot use', 'no managed', 'no",
-        "    SaaS', 'the primary deploy model is'. Be conservative.",
-        "  - preferred: explicit preference but not a hard rule. Influences",
-        "    scoring, does not filter. Language: 'prefer', 'ideally', 'would",
-        "    rather'.",
-        "  - nice_to_have: stated interest with no commitment.",
+        "Quote evidence_from_input verbatim. Do not invent notes.",
         "",
-        "DECISION SCOPE — does this constraint apply at THIS decision layer?",
-        "Add `decision_scope_relevant: boolean` to every constraint. Ask:",
-        "'Can candidates for this specific decision plausibly satisfy or violate",
-        `this constraint?' For a "${context.decision}" decision:`,
-        "  ✓ decision_scope_relevant: true — constraints the candidate options",
-        "    can themselves choose to satisfy. Vector store decision: 'self-",
-        "    hosted only', 'fits Docker Compose', 'integrates with Postgres'.",
-        "  ✗ decision_scope_relevant: false — application-layer requirements",
-        "    that span the whole system, not just this layer. Vector store",
-        "    decision: 'must support persistent agent identities', 'must",
-        "    enable human-in-the-loop workflows', 'must integrate with our",
-        "    React frontend' — none of these are vector-store concerns even",
-        "    if the user wrote them as 'must'.",
-        "When in doubt, mark decision_scope_relevant: false and let the",
-        "synthesis stage use it as scoring input rather than as a hard filter.",
-        "Add a short `decision_scope_reason` explaining the verdict.",
+        "Cap at 10 notes. Skip generic application-layer requirements",
+        "('must support tenant isolation', 'must support agent identities') —",
+        "those are features of the system the chosen option supports, not",
+        "context that helps the reader choose between options.",
         "",
-        "For each constraint, also produce a yes/no check_question that ADR",
-        "will ask of each candidate during filtering. Example:",
-        "  statement: 'Self-hosted is the primary deploy model.'",
-        "  check_question: 'Does <CANDIDATE> support self-hosted deployment?'",
-        "",
-        "Constraint shape:",
-        "  { id (kebab-case slug), statement (the user's words),",
-        "    severity, check_question, evidence_from_input (verbatim quote),",
-        "    category (deployment / compliance / cost / region / integration / data) }",
-        "",
-        "Quote evidence_from_input verbatim. Do not invent constraints.",
-        "",
-        "Cap at 4 must_have constraints. If you find yourself extracting more",
-        "than 4, you're probably labeling app-level requirements as must_have —",
-        "downgrade most to preferred. Real architectural decisions rarely have",
-        "more than 3-4 genuine structural constraints.",
-        "",
-        "Output JSON: { constraints: [{id, statement, severity, check_question, evidence_from_input, category, decision_scope_relevant, decision_scope_reason}] }."
+        "Output JSON: { notes: [{id, category, statement, evidence_from_input}] }."
       ].join("\n"),
       user: JSON.stringify({
         domain: context.domain,
         decision: context.decision,
-        decision_kind: context.decision_kind || "family",
         prd_content: content.slice(0, 20_000)
       })
     });
   } catch (error) {
-    await appendEvent(outDir, "constraints_extraction_failed", {
+    await appendEvent(outDir, "decision_context_extraction_failed", {
       error: String(error?.message || error)
     });
-    return { version: VERSION, decision: context.decision, domain: context.domain, constraints: [] };
+    return {
+      version: VERSION,
+      decision: context.decision,
+      domain: context.domain,
+      tags,
+      notes: []
+    };
   }
 
-  const constraints = toArray(raw.constraints)
+  const notes = toArray(raw.notes)
     .map((c, i) => {
       if (!c || typeof c !== "object") return null;
-      const severity = String(c.severity || "").trim().toLowerCase();
-      if (!["must_have", "preferred", "nice_to_have"].includes(severity)) return null;
       const statement = String(c.statement || "").trim();
-      const check = String(c.check_question || "").trim();
-      if (!statement || !check) return null;
-      // Default: assume the LLM extractor was thoughtful and scope-flagged
-      // when relevant. If unset, default to true (don't silently weaken
-      // every constraint).
-      const scopeRelevant =
-        typeof c.decision_scope_relevant === "boolean" ? c.decision_scope_relevant : true;
+      if (!statement) return null;
       return {
-        id: slugify(String(c.id || statement).slice(0, 64)) || `constraint_${i + 1}`,
-        statement,
-        severity,
-        check_question: check,
-        evidence_from_input: String(c.evidence_from_input || "").trim(),
+        id: slugify(String(c.id || statement).slice(0, 64)) || `note_${i + 1}`,
         category: String(c.category || "").trim(),
-        decision_scope_relevant: scopeRelevant,
-        decision_scope_reason: String(c.decision_scope_reason || "").trim()
+        statement,
+        evidence_from_input: String(c.evidence_from_input || "").trim()
       };
     })
     .filter(Boolean)
-    .slice(0, 8);
+    .slice(0, 10);
 
   const out = {
     version: VERSION,
     decision: context.decision,
     domain: context.domain,
     extracted_at: nowIso(),
-    constraints
+    tags: toArray(tags).map(String).filter(Boolean),
+    notes
   };
 
-  await writeJson(constraintsPath, out);
-  await appendEvent(outDir, "constraints_extracted", {
-    constraint_count: constraints.length,
-    must_have_count: constraints.filter((c) => c.severity === "must_have").length,
-    preferred_count: constraints.filter((c) => c.severity === "preferred").length,
-    // Concrete content: every constraint with its severity and the
-    // verbatim user statement that produced it. This is what makes the
-    // filter feel intelligible — "must_have: Self-hosted deployment
-    // (from 'self-hosted is the primary deploy model')".
-    constraints: constraints.map((c) => ({
-      id: c.id,
-      severity: c.severity,
-      statement: c.statement,
-      evidence: String(c.evidence_from_input || "").slice(0, 200)
-    }))
+  await writeJson(contextPath, out);
+  await appendEvent(outDir, "decision_context_extracted", {
+    note_count: notes.length,
+    tag_count: out.tags.length,
+    notes: notes.map((n) => ({
+      id: n.id,
+      category: n.category,
+      statement: n.statement,
+      evidence: String(n.evidence_from_input || "").slice(0, 200)
+    })),
+    tags: out.tags
   });
   return out;
 }
 
-// Filter the promoted-candidate pool against must_have constraints. Each
-// (candidate × must_have) pair gets one LLM verdict batched together. A
-// candidate that fails ANY must_have is eliminated — not "weak on", out.
-// Their evidence stays in the pool (other candidates may still cite it) but
-// they no longer appear in promoted_candidates or the comparison matrix.
-async function applyConstraintFilter({ context, knowledgeMap, constraints, outDir, flags }) {
-  if (flags && flags["skip-constraint-filter"]) {
-    return { knowledgeMap, eliminated: [], skipped: true };
-  }
-  // Filter only on must_have constraints that ALSO pass the decision-scope
-  // check. App-layer requirements ("must support agent identities") that
-  // the extractor flagged decision_scope_relevant: false don't eliminate
-  // candidates — they stay in constraints.json for transparency and feed
-  // the synthesis stage as scoring inputs.
-  const allMustHaves = toArray(constraints?.constraints).filter((c) => c.severity === "must_have");
-  const mustHaves = allMustHaves.filter((c) => c.decision_scope_relevant !== false);
-  const outOfScopeMustHaves = allMustHaves.filter((c) => c.decision_scope_relevant === false);
-  if (outOfScopeMustHaves.length > 0) {
-    await appendEvent(outDir, "constraints_out_of_scope_skipped", {
-      out_of_scope_count: outOfScopeMustHaves.length,
-      out_of_scope: outOfScopeMustHaves.map((c) => ({
-        id: c.id,
-        statement: c.statement,
-        reason: c.decision_scope_reason || "marked out-of-scope by extractor"
-      }))
-    });
-  }
-  const promoted = toArray(knowledgeMap?.promoted_candidates);
-  if (mustHaves.length === 0 || promoted.length === 0) {
-    return { knowledgeMap, eliminated: [], skipped: false };
-  }
-
-  // Batch all (candidate × must_have) pairs into a single LLM call.
-  const pairs = [];
-  for (const candidate of promoted) {
-    for (const constraint of mustHaves) {
-      pairs.push({
-        candidate_name: candidate.name,
-        candidate_label: candidate.label,
-        candidate_top_claims: (candidate.support || []).slice(0, 3).map((s) => s.claim),
-        candidate_source_types: candidate.source_types,
-        constraint_id: constraint.id,
-        constraint_statement: constraint.statement,
-        constraint_check: constraint.check_question
-      });
-    }
-  }
-
-  let raw;
-  try {
-    raw = await callLlmJson({
-      label: "hard_constraint_filter",
-      system: [
-        "You are the hard-constraint filter for Architecture Deep Research.",
-        "",
-        `Decision: "${context.decision}" (kind: ${context.decision_kind || "family"})`,
-        "",
-        "For each (candidate, must_have_constraint) pair below, answer:",
-        "  verdict: 'pass' | 'fail' | 'unsure'",
-        "  reason: one short sentence",
-        "",
-        "Be strict on 'fail' but only when you are confident the candidate",
-        "structurally cannot satisfy the constraint. Examples:",
-        "  candidate 'Pinecone' + constraint 'self-hosted only' → fail",
-        "    (Pinecone is cloud-only — this is not a configuration question)",
-        "  candidate 'pgvector' + constraint 'self-hosted only' → pass",
-        "    (Postgres extension, runs anywhere Postgres runs)",
-        "  candidate 'Weaviate' + constraint 'fits Docker Compose' → unsure",
-        "    (technically yes, but requires its own container; might or might",
-        "    not match the user's intent)",
-        "",
-        "'unsure' is KEPT — bias toward keeping when in doubt. Only 'fail'",
-        "eliminates the candidate.",
-        "",
-        "Return EXACTLY one verdict per input pair, keyed by candidate_name",
-        "AND constraint_id together. Do not omit, merge, or invent pairs.",
-        "",
-        "Output JSON: { verdicts: [{candidate_name, constraint_id, verdict, reason}] }."
-      ].join("\n"),
-      user: JSON.stringify({ pairs })
-    });
-  } catch (error) {
-    await appendEvent(outDir, "constraint_filter_failed", {
-      error: String(error?.message || error)
-    });
-    return { knowledgeMap, eliminated: [], skipped: false };
-  }
-
-  // Index verdicts by `${candidate_name}::${constraint_id}` for lookup.
-  const verdictIndex = new Map();
-  for (const v of toArray(raw.verdicts)) {
-    if (!v || typeof v !== "object") continue;
-    const name = slugify(String(v.candidate_name || ""));
-    const cid = slugify(String(v.constraint_id || ""));
-    if (!name || !cid) continue;
-    const verdict = String(v.verdict || "").trim().toLowerCase();
-    if (!["pass", "fail", "unsure"].includes(verdict)) continue;
-    verdictIndex.set(`${name}::${cid}`, { verdict, reason: String(v.reason || "") });
-  }
-
-  const eliminated = [];
-  const survivors = [];
-  for (const candidate of promoted) {
-    const slug = slugify(candidate.name);
-    const failures = [];
-    for (const constraint of mustHaves) {
-      const v = verdictIndex.get(`${slug}::${slugify(constraint.id)}`);
-      if (v && v.verdict === "fail") {
-        failures.push({
-          constraint_id: constraint.id,
-          constraint_statement: constraint.statement,
-          reason: v.reason
-        });
-      }
-    }
-    if (failures.length > 0) {
-      eliminated.push({ name: candidate.name, label: candidate.label, failures });
-    } else {
-      survivors.push(candidate);
-    }
-  }
-
-  // Safety net: if constraint filtering eliminated ALL candidates, the
-  // must_have set is too aggressive (typically because the LLM extractor
-  // promoted app-level requirements to must_have). Falling through with an
-  // empty pool would break the synthesis stage. Instead, abort the filter,
-  // keep the original pool, log the issue, and let the synthesis stage see
-  // the constraints as scoring inputs only. The user can edit
-  // constraints.json to downgrade severities and re-run.
-  if (survivors.length === 0) {
-    await appendEvent(outDir, "constraint_filter_aborted_empty_pool", {
-      must_have_count: mustHaves.length,
-      would_have_eliminated: eliminated.map((e) => e.name),
-      reason: "Every promoted candidate failed at least one must_have constraint. The constraint set is likely too aggressive — edit constraints.json to downgrade non-deployment-grade constraints to 'preferred', then re-run. Keeping the original pool for this run."
-    });
-    return { knowledgeMap, eliminated: [], skipped: false, aborted_empty: true };
-  }
-
-  if (eliminated.length === 0) {
-    await appendEvent(outDir, "constraint_filter_completed", {
-      must_have_count: mustHaves.length,
-      candidates_kept: survivors.length,
-      candidates_eliminated: 0
-    });
-    return { knowledgeMap, eliminated: [], skipped: false };
-  }
-
-  const eliminatedSet = new Set(eliminated.map((e) => slugify(e.name)));
-  const movedToEliminated = promoted
-    .filter((c) => eliminatedSet.has(slugify(c.name)))
-    .map((c) => ({
-      ...c,
-      promotion_status: "eliminated_by_hard_constraint",
-      constraint_failures:
-        eliminated.find((e) => slugify(e.name) === slugify(c.name))?.failures || []
-    }));
-
-  const updated = {
-    ...knowledgeMap,
-    promoted_candidates: survivors,
-    insufficient_evidence_candidates: [
-      ...toArray(knowledgeMap.insufficient_evidence_candidates),
-      ...movedToEliminated
-    ]
-  };
-
-  await appendEvent(outDir, "constraint_filter_completed", {
-    must_have_count: mustHaves.length,
-    candidates_kept: survivors.length,
-    candidates_eliminated: eliminated.length,
-    // Concrete content: each eliminated candidate with WHICH constraint
-    // it failed and the reason. "Pinecone — failed self-hosted-only
-    // (cloud-only managed service)" beats "eliminated 1 candidate".
-    eliminated: eliminated.map((e) => ({
-      name: e.name,
-      label: e.label,
-      failures: e.failures.map((f) => ({
-        constraint: f.constraint_statement,
-        reason: String(f.reason || "").slice(0, 200)
-      }))
-    })),
-    survivors: survivors.map((s) => s.name)
-  });
-
-  return { knowledgeMap: updated, eliminated, skipped: false };
-}
-
-// Decision-relevance filter on the candidate pool.
-//
-// The promotion gate keys off evidence_count + source_type. It does not ask
-// whether each architecture_family is a plausible ANSWER to the decision
-// being made. So a discover phase that tags the project's existing nextjs /
-// postgres / rest_api stack as private_corpus evidence contaminates the
-// candidate pool when the decision is "auth provider" — nextjs isn't an auth
-// provider, but it cleared the gate because it had cited evidence.
-//
-// One LLM JSON call against all promoted candidates at once. Off-topic
-// candidates are demoted out of promoted_candidates (they keep their
-// evidence but no longer count as viable options).
-// Concrete-mode candidate validation.
-//
-// When the user asked for a product/vendor decision (--decision-kind concrete),
-// the candidate pool should contain NAMED PRODUCTS, not architecture
-// patterns. But the extractor sometimes leaks pattern-shaped names through:
-// `vector_rag`, `postgres_centric_storage`, `token_based_auth`. Those are
-// the wrong shape of answer — the user asked "which auth provider?" and got
-// "token-based auth" back as if it were one.
-//
-// This stage runs only in concrete mode. One LLM batched call labels each
-// candidate as product | pattern | unsure. Pattern-shaped names get demoted
-// to insufficient_evidence with reason "non_product_in_concrete_mode".
-async function validateConcreteCandidates({ context, knowledgeMap, outDir, flags }) {
-  if ((context.decision_kind || "family") !== "concrete") {
-    return { knowledgeMap, demoted: [], skipped: true };
-  }
-  if (flags && flags["skip-concrete-validation"]) {
-    return { knowledgeMap, demoted: [], skipped: true };
-  }
-  const promoted = toArray(knowledgeMap?.promoted_candidates);
-  if (promoted.length === 0) {
-    return { knowledgeMap, demoted: [], skipped: false };
-  }
-
-  let raw;
-  try {
-    raw = await callLlmJson({
-      label: "concrete_candidate_validator",
-      system: [
-        "You are the concrete-mode candidate validator for Architecture Deep Research.",
-        "",
-        `The user is making a concrete decision: "${context.decision}" (kind: concrete).`,
-        "Concrete means they want a NAMED PRODUCT / VENDOR / LIBRARY / SERVICE,",
-        "not an architecture pattern.",
-        "",
-        "For each candidate below, label it:",
-        "  - product:   a specific named product, vendor, library, or service",
-        "               (e.g., 'Clerk', 'Auth0', 'pgvector', 'BullMQ', 'Pinecone',",
-        "               'WorkOS', 'Stripe', 'SuperTokens')",
-        "  - pattern:   an architecture family / topology / generic pattern",
-        "               (e.g., 'vector_rag', 'token_based_auth', 'postgres_centric_storage',",
-        "               'graph_retrieval', 'serverless_functions')",
-        "  - unsure:    you can't tell from the name alone",
-        "",
-        "Signals of pattern-shaped names: ends in _rag, _storage, _search, _retrieval,",
-        "_centric_*, _native_*, _based, _topology, _architecture, _design. Multi-word",
-        "snake_case descriptive phrases are usually patterns.",
-        "",
-        "Signals of product-shaped names: short, brand-like, capitalizable, has a",
-        "github_url or vendor homepage. Lowercase with no underscores often product",
-        "(pgvector, redis, kafka).",
-        "",
-        "'unsure' is kept (we bias toward keeping). Only 'pattern' demotes.",
-        "",
-        "Output JSON: { verdicts: [{ name, verdict, reason }] }."
-      ].join("\n"),
-      user: JSON.stringify({
-        decision: context.decision,
-        candidates: promoted.map((c) => ({
-          name: c.name,
-          label: c.label,
-          top_claims: (c.support || []).slice(0, 2).map((s) => s.claim)
-        }))
-      })
-    });
-  } catch (error) {
-    await appendEvent(outDir, "concrete_validation_failed", {
-      error: String(error?.message || error)
-    });
-    return { knowledgeMap, demoted: [], skipped: false };
-  }
-
-  const verdicts = new Map();
-  for (const v of toArray(raw.verdicts)) {
-    if (!v || typeof v !== "object") continue;
-    const name = slugify(String(v.name || ""));
-    if (!name) continue;
-    const verdict = String(v.verdict || "").trim().toLowerCase();
-    if (!["product", "pattern", "unsure"].includes(verdict)) continue;
-    verdicts.set(name, { verdict, reason: String(v.reason || "") });
-  }
-
-  const demoted = [];
-  const kept = [];
-  for (const candidate of promoted) {
-    const slug = slugify(candidate.name);
-    const v = verdicts.get(slug);
-    if (v && v.verdict === "pattern") {
-      demoted.push({ name: candidate.name, label: candidate.label, reason: v.reason });
-      continue;
-    }
-    kept.push(candidate);
-  }
-
-  if (demoted.length === 0) {
-    await appendEvent(outDir, "concrete_validation_completed", {
-      candidates_kept: kept.length,
-      candidates_demoted: 0
-    });
-    return { knowledgeMap, demoted: [], skipped: false };
-  }
-
-  // When concrete-mode validation would empty the pool, that's an honest
-  // signal — every candidate the deep-research stage promoted is a pattern,
-  // not a product. The user asked for concrete and got nothing concrete.
-  // Halt by clearing promoted_candidates so synthesis defers, then emit a
-  // loud event explaining why. Previously this branch returned the original
-  // pool unchanged ("advisory abort"), which let synthesis recommend a
-  // pattern in concrete mode — a silent contract violation.
-  if (kept.length === 0) {
-    await appendEvent(outDir, "concrete_validation_aborted_empty_pool", {
-      would_have_demoted: demoted.map((d) => d.name),
-      reason: "Every promoted candidate is pattern-shaped, not product-shaped. The decision is concrete-mode but no real products surfaced. The run will defer rather than recommend a pattern. Consider re-running with --decision-kind family, or sharpen the PRD to name specific products."
-    });
-    // fall through to the demotion path below so promoted_candidates → []
-  }
-
-  const demotedSet = new Set(demoted.map((d) => slugify(d.name)));
-  const movedToInsufficient = promoted
-    .filter((c) => demotedSet.has(slugify(c.name)))
-    .map((c) => ({
-      ...c,
-      promotion_status: "non_product_in_concrete_mode",
-      validation_reason:
-        demoted.find((d) => slugify(d.name) === slugify(c.name))?.reason || ""
-    }));
-
-  const updated = {
-    ...knowledgeMap,
-    promoted_candidates: kept,
-    insufficient_evidence_candidates: [
-      ...toArray(knowledgeMap.insufficient_evidence_candidates),
-      ...movedToInsufficient
-    ]
-  };
-
-  await appendEvent(outDir, "concrete_validation_completed", {
-    candidates_kept: kept.length,
-    candidates_demoted: demoted.length,
-    demoted: demoted.map((d) => ({ name: d.name, reason: d.reason }))
-  });
-
-  return { knowledgeMap: updated, demoted, skipped: false };
-}
+// REMOVED: applyConstraintFilter, validateConcreteCandidates.
+// Constraints are now context notes (annotations only). Concrete vs family
+// no longer exists as a binary. See extractDecisionContext above.
 
 async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags }) {
   if (flags && flags["skip-relevance-filter"]) {
@@ -4827,7 +4322,7 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
       system: [
         "You are the candidate-relevance filter for Architecture Deep Research.",
         "",
-        `The decision being made is: "${context.decision}" (decision_kind: ${context.decision_kind || "family"}).`,
+        `The decision being made is: "${context.decision}".`,
         `Domain: "${context.domain}".`,
         "",
         "You receive a list of architecture-family candidates that cleared the",
@@ -4855,7 +4350,6 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
       ].join("\n"),
       user: JSON.stringify({
         decision: context.decision,
-        decision_kind: context.decision_kind || "family",
         domain: context.domain,
         candidates: promoted.map((c) => ({
           name: c.name,
@@ -5581,10 +5075,18 @@ async function verifyCitationsPhase({
       claim_context: i.claim_context,
       reason: String(i.reason || "").slice(0, 200)
     }));
+  // Count how many of the audited citations came from community-discussion
+  // sources (Reddit, HN, Twitter, Stack Exchange). Surfaced so a run that
+  // leans heavily on practitioner signal is visible to the reader.
+  const communitySourceCount = toArray(audit.items).filter((i) => {
+    const ev = evidenceById.get(Number(i.citation_id));
+    return ev && ev.source_type === "community_discussion";
+  }).length;
   await appendEvent(outDir, "citation_audit_completed", {
     total_citations: totalCitations,
     verified_count: verifiedCount,
     unsupported_count: unsupportedCount,
+    community_source_count: communitySourceCount,
     unsupported_details: unsupportedDetails
   });
   return audit;
@@ -5663,6 +5165,181 @@ function applyCitationAudit({ spec, citationAudit, flags }) {
   return { spec: downgradedSpec, downgraded: true, unsupportedSelected };
 }
 
+// Compute per-axis verdict variance ("spread") across candidates in the
+// comparison matrix. Higher spread = the axis genuinely discriminates
+// options and is a good candidate for a sharper follow-up sub-decision.
+function computeAxisSpread(matrix) {
+  if (!matrix || !Array.isArray(matrix.cells) || !Array.isArray(matrix.axes)) return [];
+  // Weight verdicts so insufficient_evidence and no_evidence count as the
+  // same "uncertain" signal; strong/weak are the two opinionated ends.
+  const verdictValue = (v) => {
+    if (v === "strong") return 1;
+    if (v === "weak") return -1;
+    if (v === "mixed") return 0;
+    return null; // no_evidence / insufficient_evidence / empty
+  };
+  const cellsByAxis = new Map();
+  for (const cell of matrix.cells) {
+    const axisId = cell.axis;
+    if (!cellsByAxis.has(axisId)) cellsByAxis.set(axisId, []);
+    cellsByAxis.get(axisId).push(cell);
+  }
+  const spreads = [];
+  for (const axis of matrix.axes) {
+    const cells = cellsByAxis.get(axis.id) || [];
+    if (cells.length < 2) continue;
+    const values = cells.map((c) => verdictValue(c.verdict));
+    const known = values.filter((v) => v !== null);
+    const unknownCount = values.length - known.length;
+    let score;
+    if (known.length === 0) {
+      // Every cell is no_evidence — high uncertainty, surface as a follow-up.
+      score = 0.6 + Math.min(unknownCount / 10, 0.3);
+    } else {
+      const mean = known.reduce((s, v) => s + v, 0) / known.length;
+      const variance =
+        known.reduce((s, v) => s + (v - mean) * (v - mean), 0) / known.length;
+      const std = Math.sqrt(variance); // 0..1 for our verdict scale
+      const unknownPenalty = unknownCount / values.length;
+      score = std + 0.3 * unknownPenalty;
+    }
+    spreads.push({
+      axis_id: axis.id,
+      axis_label: axis.label,
+      spread_score: Number(score.toFixed(3)),
+      cell_count: cells.length,
+      unknown_count: unknownCount
+    });
+  }
+  return spreads.sort((a, b) => b.spread_score - a.spread_score);
+}
+
+// Propose 2-3 sharper sub-decision questions based on matrix axis variance.
+// Runs AFTER the citation audit and BEFORE the handoff write. Persisted as
+// follow-up-questions.json and appended to ADR.md as "## Follow-up Questions".
+async function proposeFollowUpQuestions({ context, spec, comparisonMatrix, outDir }) {
+  const rankedOptions = toArray(spec.decision?.ranked_options);
+  const mode = spec.decision?.mode || "deferred";
+  if (mode === "deferred" || rankedOptions.length === 0 || !comparisonMatrix) {
+    const empty = {
+      version: VERSION,
+      decision: context.decision,
+      domain: context.domain,
+      generated_at: nowIso(),
+      mode,
+      follow_ups: []
+    };
+    await writeJson(path.join(outDir, "follow-up-questions.json"), empty);
+    await appendEvent(outDir, "follow_up_questions_proposed", { count: 0, axes: [] });
+    return empty;
+  }
+
+  const spreads = computeAxisSpread(comparisonMatrix).slice(0, 3);
+  if (spreads.length === 0) {
+    const empty = {
+      version: VERSION,
+      decision: context.decision,
+      domain: context.domain,
+      generated_at: nowIso(),
+      mode,
+      follow_ups: []
+    };
+    await writeJson(path.join(outDir, "follow-up-questions.json"), empty);
+    await appendEvent(outDir, "follow_up_questions_proposed", { count: 0, axes: [] });
+    return empty;
+  }
+
+  let raw;
+  try {
+    raw = await callLlmJson({
+      label: "follow_up_question_proposer",
+      system: [
+        "You propose sharper sub-decision questions for Architecture Deep Research.",
+        "",
+        "The main run produced a ranked option set across the option space. For",
+        "each high-spread axis below — where candidates landed at different",
+        "verdicts, suggesting a real sub-decision lives on that axis — write a",
+        "concise question that splits the options on THAT axis, plus a pre-",
+        "filled `adr deep-research` command the user can paste to chase it.",
+        "",
+        "For each input axis emit:",
+        "  axis: the axis id from the input",
+        "  spread_score: the input spread score, unchanged",
+        "  question: 1 sentence, sharp, names the split (e.g., 'Pick between self-hosted (Memgraph, Neo4j community) and managed (Neo4j Aura, Stardog Cloud) for the graph store.')",
+        "  suggested_command: a complete `adr deep-research --decision '...' --domain '...' --out .adr-runs/<slug>` command. Use a short slug for the out dir.",
+        "",
+        "Keep questions grounded in the candidates the matrix actually contains.",
+        "Do not invent vendors. The question is a sub-decision of the parent",
+        "decision; preserve domain.",
+        "",
+        "Output JSON: { follow_ups: [{ axis, spread_score, question, suggested_command }] }."
+      ].join("\n"),
+      user: JSON.stringify({
+        parent_decision: context.decision,
+        parent_domain: context.domain,
+        ranked_options: rankedOptions.map((o) => ({
+          name: o.name,
+          label: o.label,
+          strong_axes: o.strong_axes,
+          weak_axes: o.weak_axes
+        })),
+        high_spread_axes: spreads,
+        matrix_axes: (comparisonMatrix.axes || []).map((a) => ({ id: a.id, label: a.label }))
+      })
+    });
+  } catch (error) {
+    await appendEvent(outDir, "follow_up_questions_failed", {
+      error: String(error?.message || error)
+    });
+    const empty = {
+      version: VERSION,
+      decision: context.decision,
+      domain: context.domain,
+      generated_at: nowIso(),
+      mode,
+      follow_ups: []
+    };
+    await writeJson(path.join(outDir, "follow-up-questions.json"), empty);
+    return empty;
+  }
+
+  const spreadByAxis = new Map(spreads.map((s) => [s.axis_id, s]));
+  const followUps = toArray(raw.follow_ups)
+    .map((f) => {
+      if (!f || typeof f !== "object") return null;
+      const axis = String(f.axis || "").trim();
+      const question = String(f.question || "").trim();
+      const suggested = String(f.suggested_command || "").trim();
+      if (!axis || !question) return null;
+      const spread = spreadByAxis.get(axis);
+      return {
+        axis,
+        spread_score: spread
+          ? spread.spread_score
+          : clampNumber(f.spread_score, { min: 0, max: 2, fallback: 0 }),
+        question,
+        suggested_command: suggested
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+
+  const artifact = {
+    version: VERSION,
+    decision: context.decision,
+    domain: context.domain,
+    generated_at: nowIso(),
+    mode,
+    follow_ups: followUps
+  };
+  await writeJson(path.join(outDir, "follow-up-questions.json"), artifact);
+  await appendEvent(outDir, "follow_up_questions_proposed", {
+    count: followUps.length,
+    axes: followUps.map((f) => f.axis)
+  });
+  return artifact;
+}
+
 async function writeRunArtifacts({
   context,
   plan,
@@ -5674,6 +5351,7 @@ async function writeRunArtifacts({
   critique,
   citationAudit,
   comparisonMatrix,
+  followUps = null,
   flags = {}
 }) {
   await appendEvent(outDir, "evaluation_pack_started", {
@@ -5733,7 +5411,21 @@ async function writeRunArtifacts({
     researchResults,
     knowledgeMap
   });
-  const adrMarkdown = buildADR(context, spec, knowledgeMap, evidenceItems);
+  const baseAdrMarkdown = buildADR(context, spec, knowledgeMap, evidenceItems);
+  const followUpsSection = (followUps && toArray(followUps.follow_ups).length > 0)
+    ? `\n## Follow-up Questions\n\nThe matrix surfaced these sub-decisions where candidates landed at different verdicts. Each one is a sharper question to chase next; the suggested command pre-fills \`adr deep-research\` for you.\n\n${toArray(followUps.follow_ups).map((f, i) => `### ${i + 1}. ${f.question}\n\n*Axis:* \`${f.axis}\` (spread ${f.spread_score})\n\n${f.suggested_command ? "```bash\n" + f.suggested_command + "\n```" : "_(no suggested command)_"}`).join("\n\n")}\n`
+    : "";
+  const adrMarkdown = baseAdrMarkdown + followUpsSection;
+  if (followUps) {
+    handoff = {
+      ...handoff,
+      artifacts: { ...handoff.artifacts, follow_up_questions: "follow-up-questions.json" },
+      follow_up_questions_summary: {
+        count: toArray(followUps.follow_ups).length,
+        axes: toArray(followUps.follow_ups).map((f) => f.axis)
+      }
+    };
+  }
   const claimAudit = flags["skip-claim-audit"]
     ? null
     : await scanUncitedClaimsPhase({
@@ -5920,9 +5612,8 @@ async function _deepResearchImpl({ inputPath, flags }) {
         "include-peers": flags["include-peers"],
         "max-peers": flags["max-peers"],
         seed: flags.seed,
-        // Forward decision_kind + domain too so the discover stage can
-        // pass them to peer-finder for better peer relevance.
-        "decision-kind": flags["decision-kind"],
+        // Forward domain too so the discover stage can pass it to
+        // peer-finder for better peer relevance.
         domain: flags.domain
       },
       chained: true
@@ -5938,28 +5629,6 @@ async function _deepResearchImpl({ inputPath, flags }) {
     flags,
     chained: chainedFromDiscover
   });
-  if (prepared.needsClarification) {
-    const questions = prepared.clarification.questions || [];
-    console.log("");
-    console.log("Clarification needed before deep-research can run:");
-    console.log("");
-    questions.forEach((q, i) => {
-      console.log(`  ${i + 1}. ${q}`);
-    });
-    console.log("");
-    console.log("Two ways to unblock:");
-    console.log("  - Re-run with --clarification-answers '<text>'   (answers as text or a path to a file)");
-    console.log(`  - Edit ${path.resolve(resolvedInputPath)} to address the questions, then re-run`);
-    console.log("");
-    console.log("To skip the gate entirely: pass --no-clarify (you accept a lower-confidence run).");
-    console.log(`Full questions also written to ${path.join(prepared.outDir, "clarification.json")}`);
-    return {
-      status: "needs_clarification",
-      out_dir: prepared.outDir,
-      questions
-    };
-  }
-
   const plan = await planResearchPhase({
     context: prepared.context,
     content: prepared.content,
@@ -6064,38 +5733,6 @@ async function _deepResearchImpl({ inputPath, flags }) {
     });
   }
 
-  // Hard-constraint filter — must_have constraints eliminate candidates
-  // structurally, not by adding a "weak" cell. "Self-hosted only" drops
-  // Pinecone before the matrix ever sees it. Eliminated candidates move to
-  // insufficient_evidence_candidates tagged eliminated_by_hard_constraint
-  // with the failed constraint(s) attached.
-  const constraintResult = await applyConstraintFilter({
-    context: prepared.context,
-    knowledgeMap,
-    constraints: prepared.constraints,
-    outDir: prepared.outDir,
-    flags
-  });
-  if (constraintResult.eliminated.length > 0) {
-    knowledgeMap = constraintResult.knowledgeMap;
-    await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
-  }
-
-  // Concrete-mode candidate validator — when the user asked for a product
-  // (concrete) but the extractor leaked patterns (vector_rag,
-  // postgres_centric_storage), demote the pattern-shaped names. Family
-  // mode is a no-op.
-  const concreteValidation = await validateConcreteCandidates({
-    context: prepared.context,
-    knowledgeMap,
-    outDir: prepared.outDir,
-    flags
-  });
-  if (concreteValidation.demoted.length > 0) {
-    knowledgeMap = concreteValidation.knowledgeMap;
-    await writeJson(path.join(prepared.outDir, "knowledge-map.json"), knowledgeMap);
-  }
-
   // Decision-relevance filter on the candidate pool — drop families that
   // cleared the evidence gate but are not plausible answers to the decision.
   // This catches the discover-phase contamination class of bug (nextjs ends
@@ -6164,11 +5801,6 @@ async function _deepResearchImpl({ inputPath, flags }) {
   await appendEvent(prepared.outDir, "synthesis_completed", {
     mode: rawSpec.decision?.mode,
     ranked_options_count: synthOptions.length,
-    has_recommendation: Boolean(rawSpec.decision?.recommendation),
-    recommendation_name: rawSpec.decision?.recommendation?.name || null,
-    recommendation_why: rawSpec.decision?.recommendation?.why
-      ? String(rawSpec.decision.recommendation.why).slice(0, 360)
-      : null,
     options: synthOptions
   });
 
@@ -6277,6 +5909,18 @@ async function _deepResearchImpl({ inputPath, flags }) {
     });
   }
 
+  // Follow-up question proposer — runs AFTER citation audit, BEFORE handoff
+  // write. Looks at matrix axis variance, picks the top 2-3 axes, asks the
+  // LLM to write a sharper sub-decision question + pre-filled command per
+  // axis. Persisted as follow-up-questions.json; also appended to ADR.md
+  // by writeRunArtifacts.
+  const followUps = await proposeFollowUpQuestions({
+    context: prepared.context,
+    spec: auditedSpec,
+    comparisonMatrix,
+    outDir: prepared.outDir
+  });
+
   const result = await writeRunArtifacts({
     context: prepared.context,
     plan,
@@ -6288,15 +5932,12 @@ async function _deepResearchImpl({ inputPath, flags }) {
     critique,
     citationAudit,
     comparisonMatrix,
+    followUps,
     flags
   });
 
   console.log(`Deep research artifacts written to ${prepared.outDir}`);
-  if (result.mode === "recommended") {
-    console.log(
-      `Recommendation: ${result.recommendation.name} (one of ${result.rankedOptions.length} viable options)`
-    );
-  } else if (result.mode === "ranked_options") {
+  if (result.mode === "ranked_options") {
     console.log(
       `Ranked options: ${result.rankedOptions.length} viable options, no single recommendation`
     );
@@ -6394,7 +6035,6 @@ async function discoverPatterns(input) {
 
 export {
   VERSION,
-  inferDecisionKind,
   applyCitationAudit,
   activeLlmProvider,
   activeSearchProviders,
@@ -6408,10 +6048,13 @@ export {
   buildExecutionHandoff,
   buildGuardrails,
   buildKnowledgeMap,
+  buildPeerResearchTasks,
   buildResearchPlan,
   buildStrategicContext,
   callLlmJson,
+  classifyCommunityPlatform,
   classifySource,
+  extractCommunityPlatformDetails,
   compareTopologiesPhase,
   critiqueDecisionPhase,
   deepResearch,
@@ -6419,10 +6062,8 @@ export {
   digestPaper,
   discoverPatterns,
   executeResearchPhase,
-  applyConstraintFilter,
-  validateConcreteCandidates,
   extractClaims,
-  extractHardConstraints,
+  extractDecisionContext,
   filterPromotedByRelevance,
   openUrl,
   getLlmJsonProvider,
@@ -6435,6 +6076,7 @@ export {
   parseGithubRepoUrl,
   planResearchPhase,
   prepareRun,
+  proposeFollowUpQuestions,
   research,
   resetLlmCost,
   runResearchAgents,
