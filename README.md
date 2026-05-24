@@ -1,12 +1,40 @@
-# Beevibe Architecture Deep Research
+# Beevibe AI CTO
 
-**Live, evidence-only research for system-design decisions.**
+**The decision layer your coding agents are missing.**
+
+Coding agents are excellent execution engines. They edit files, run tests, iterate quickly. The failures sit one layer above the code:
+
+- **Design-implement drift.** The architecture gets settled. Code gets written. A week later nobody knows which parts of the original spec are still true — the drift is real but unmapped.
+- **AI introduces antipatterns the team already rejected.** Claude / Cursor write fast and don't know your team explicitly migrated off Kafka in 2024. The decision is in `docs/adr/0003.md`; the AI never read it.
+- **Stateless PR reviews.** The team lead is the only living memory of the architecture. Every PR re-derives context from scratch. Review burden compounds with team growth.
+
+Beevibe AI CTO closes that loop. ADR (Architecture Deep Research) — the flagship feature, fully shipped — makes the decision. Three additional capabilities feed back to keep the decision honest as code lands.
+
+```text
+       ┌──────────────────────────────────────────────────────────────┐
+       │                                                              │
+       ↓                                                              │
+  ▶ decide  ────▶  ▶ guard  ────▶  ▶ review  ────▶  ▶ drift  ─────────┘
+   adr decide       adr guard       adr review      adr drift
+   (shipped)        (next)          (next)          (next)
+```
+
+**Flagship: Architecture Deep Research (`adr decide`).** Live, evidence-only research that produces a ranked option set with explicit tradeoffs, per-option contracts, and a citation audit. The rest of this README is the deep-dive.
+
+**Next capabilities (in development):**
+- **`adr guard`** — Claude Code hook + pre-commit check. Streams `agent-guardrails.md` + the team's `discovered-principles.json` antipatterns into the coding agent's context at write time. Blocks new code that re-introduces a rejected pattern, with a citation back to the file:line where the team rejected it.
+- **`adr review <PR#>`** — PR-time check against the spec + antipattern set. Returns: *does this PR stay inside the per-option contract? does it re-introduce a discovered antipattern? which ADR.md sections are the reviewer being asked to take on faith?* Posts as a PR comment, anchored to the saved ADR run.
+- **`adr drift <out_dir>`** — Periodic scan. Compares the current repo state against `architecture.spec.json` + per-option invariants from a prior ADR run. Reports drift items keyed to file:line, with three exits: update the code, auto-prep a `supersede` to update the spec, or accept the drift with explicit rationale (`drift-accepted.json`).
+
+Together, these are the AI CTO loop: the architecture decision is settled, the coding agent honors the contract, PRs get reviewed against the contract, drift gets detected and either fixed or owned. The team lead stops being the only memory.
+
+---
+
+## Architecture Deep Research (ADR) — the flagship
 
 ADR answers the question coding agents still handle badly:
 
 > Given this product, domain, data shape, compliance envelope, team maturity, and operating budget — which architecture family should we bet on before a coding agent writes the first file?
-
-Coding agents are excellent execution engines. They edit files, run tests, iterate quickly. The failure mode is one layer higher: they pick the easiest local implementation path before they understand the architecture family the product actually needs.
 
 ADR is the missing research layer for that decision.
 
@@ -483,12 +511,26 @@ A typical run is 3–6 minutes.
 
 Open-source core (Apache-2.0):
 
-- Live agentic research kernel.
+**Shipped (the ADR flagship):**
+- Live agentic research kernel — decide stage.
 - Discover stage and principle/anti-pattern integration into the comparison matrix.
+- Hard constraints with decision-scope-relevance + commitment threshold.
+- Concrete-mode candidate validation; relevance filter; quantitative cell content.
+- Peer-product research via `--include-peers`.
+- Clarification gate with pre-built profiles.
+- Cost transparency (`--dry-run`, `cost-estimate.json`, per-stage tally).
+- Crash-aware `state.json` + `adr resume <out_dir>`.
 - Artifact schemas validated end-to-end.
 - LangGraph and Google ADK adapters.
 - Claude Code plugin with MCP server + `/adr:decide`, `/adr:discover`, `/adr:doctor` commands.
 - Persistent local key store via `adr-doctor`.
 - Benchmark harness.
+
+**In development (the rest of the AI CTO loop):**
+- `adr drift <out_dir>` — periodic scan, compares current repo state against the saved spec, reports drift by file:line.
+- `adr review <PR#>` — PR-time check against the per-option contract + antipattern set.
+- `adr guard` — Claude Code hook + pre-commit check that streams team antipatterns into the coding agent's context at write time.
+
+The repo URL remains `beevibe-ai/architecture-deep-research` — that's where Beevibe AI CTO ships from. The product name is "Beevibe AI CTO"; ADR is the flagship feature; the upcoming three commands close the loop.
 
 The commercial Beevibe surface can layer curated corpora, managed researcher agents, org-level memory, and team governance on top.

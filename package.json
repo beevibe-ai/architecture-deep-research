@@ -1,7 +1,7 @@
 {
   "name": "@beevibe/architecture-deep-research",
   "version": "0.2.0",
-  "description": "Deep research for strategic system design decisions.",
+  "description": "Beevibe AI CTO — the decision layer your coding agents are missing. Flagship feature: ADR (Architecture Deep Research). Coming next: adr drift, adr review, adr guard.",
   "license": "Apache-2.0",
   "author": "Beevibe",
   "homepage": "https://github.com/beevibe-ai/architecture-deep-research",
@@ -9,6 +9,19 @@
     "type": "git",
     "url": "https://github.com/beevibe-ai/architecture-deep-research.git"
   },
+  "keywords": [
+    "beevibe",
+    "ai-cto",
+    "architecture",
+    "architecture-deep-research",
+    "adr",
+    "claude-code",
+    "mcp",
+    "coding-agent",
+    "design-implement-drift",
+    "pr-review",
+    "antipatterns"
+  ],
   "type": "module",
   "files": [
     "src",
