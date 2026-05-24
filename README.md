@@ -3,6 +3,7 @@
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/f07a64e7-563b-47a2-bba1-399215358f85" />
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/12b8a8a5-850c-4e4d-81c1-12b5bd7525d9" />
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/cec470bb-0411-45a1-b6e7-6029d82bcb33" />
+<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/f9ca2f06-4ebe-48f9-96f0-852b0632b149" />
 
 
 **The decision layer your coding agents are missing.**
