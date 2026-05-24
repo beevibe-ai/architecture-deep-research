@@ -75,9 +75,21 @@ async function extractPrinciples(scan, { decision, issueBody } = {}) {
       "- Omit architecture_family for project-internal patterns that do not map to a named",
       "  architecture family (e.g. 'monorepo_layout', 'esm_only', 'tap-tested').",
       "",
+      "Optional opposes_families field (patterns AND antipatterns):",
+      "- List 1-4 architecture_family slugs that this pattern would conflict with if the",
+      "  deep-research decision picked one of them. The kernel emits private_corpus",
+      "  opposing claims against each, so the matrix sees \"team already uses pgvector\"",
+      "  as opposing 'pinecone' and 'weaviate', not just supporting 'pgvector'.",
+      "  Examples:",
+      "    pattern 'shared_postgres_with_pgvector' → opposes_families: ['pinecone','weaviate','external_vector_db']",
+      "    pattern 'monolith_on_railway'           → opposes_families: ['microservices','service_mesh']",
+      "    pattern 'fly_io_for_deploy'             → opposes_families: ['vercel_serverless','aws_lambda']",
+      "  Only list families that are GENUINE alternatives in the same decision space.",
+      "  Do not invent slugs the deep-research run wouldn't recognize. Omit when unsure.",
+      "",
       "Output JSON with:",
-      "- patterns: [{ name: string, description: string, evidence_cite: [string], category?: string, architecture_family?: string }]",
-      "- antipatterns: [{ name: string, reason: string, evidence_cite: [string], category?: string, architecture_family?: string }]"
+      "- patterns: [{ name: string, description: string, evidence_cite: [string], category?: string, architecture_family?: string, opposes_families?: [string] }]",
+      "- antipatterns: [{ name: string, reason: string, evidence_cite: [string], category?: string, architecture_family?: string, opposes_families?: [string] }]"
     ].join("\n"),
     user: JSON.stringify({
       decision: decision || null,
@@ -99,6 +111,14 @@ async function extractPrinciples(scan, { decision, issueBody } = {}) {
         ...(p.category ? { category: String(p.category) } : {}),
         ...(typeof p.architecture_family === "string" && p.architecture_family.trim()
           ? { architecture_family: p.architecture_family.trim() }
+          : {}),
+        ...(Array.isArray(p.opposes_families) && p.opposes_families.length > 0
+          ? {
+              opposes_families: p.opposes_families
+                .filter((s) => typeof s === "string" && s.trim().length > 0)
+                .map((s) => s.trim())
+                .slice(0, 4)
+            }
           : {})
       }))
       .filter((p) => p.evidence_cite.length > 0),
@@ -111,6 +131,14 @@ async function extractPrinciples(scan, { decision, issueBody } = {}) {
         ...(p.category ? { category: String(p.category) } : {}),
         ...(typeof p.architecture_family === "string" && p.architecture_family.trim()
           ? { architecture_family: p.architecture_family.trim() }
+          : {}),
+        ...(Array.isArray(p.opposes_families) && p.opposes_families.length > 0
+          ? {
+              opposes_families: p.opposes_families
+                .filter((s) => typeof s === "string" && s.trim().length > 0)
+                .map((s) => s.trim())
+                .slice(0, 4)
+            }
           : {})
       }))
       .filter((p) => p.evidence_cite.length > 0)

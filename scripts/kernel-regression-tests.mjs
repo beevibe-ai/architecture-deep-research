@@ -1333,4 +1333,108 @@ try {
   assert.equal(classifySource("https://random-corp.example.com/posts"), "general_web");
 }
 
+// ---------------------------------------------------------------------------
+// Bidirectional private_corpus claims: when a discovered pattern lists
+// opposes_families, the discover stage emits ONE supporting item for its own
+// architecture_family AND one opposing item per opposes_families entry, each
+// with polarity: "rejects" and that family as architecture_family. This is
+// what lets "team uses pgvector" count as opposing evidence against pinecone
+// in the matrix, not just supporting evidence for pgvector.
+// ---------------------------------------------------------------------------
+
+{
+  const { discoveredEvidenceItems } = await import("../src/discover/discovered-evidence.mjs");
+
+  const items = discoveredEvidenceItems({
+    patterns: [
+      {
+        name: "shared_postgres_with_pgvector",
+        description: "Team stores embeddings in pgvector inside the existing Postgres.",
+        evidence_cite: ["packages/core/src/storage.ts", "ARCHITECTURE.md"],
+        architecture_family: "pgvector",
+        opposes_families: ["pinecone", "weaviate", "external_vector_db"]
+      },
+      {
+        name: "no_architecture_family_pattern",
+        description: "internal layout",
+        evidence_cite: ["foo.ts"]
+        // no architecture_family -> skipped entirely
+      }
+    ],
+    antipatterns: [
+      {
+        name: "deprecated_kafka_event_bus",
+        reason: "Team migrated off Kafka; ARCHITECTURE.md lists it as rejected.",
+        evidence_cite: ["docs/adr/0003.md"],
+        architecture_family: "kafka_event_bus",
+        opposes_families: ["service_mesh_with_kafka_dlq"]
+      }
+    ]
+  });
+
+  // Expected items:
+  //  - 1 supporting "pgvector" from the pattern
+  //  - 3 opposing items: pinecone, weaviate, external_vector_db
+  //  - 1 rejecting "kafka_event_bus" from the antipattern
+  //  - 1 opposing item: service_mesh_with_kafka_dlq
+  // = 6 total. The pattern with no architecture_family is dropped.
+  assert.equal(items.length, 6, `expected 6 items, got: ${items.map((i) => i.title).join(" | ")}`);
+
+  const byFamilyAndPolarity = items.map((item) => ({
+    family: item.claims[0].architecture_family,
+    polarity: item.claims[0].polarity
+  }));
+
+  // Pattern's own family supported:
+  assert.ok(
+    byFamilyAndPolarity.some((x) => x.family === "pgvector" && x.polarity === "supports"),
+    `expected supporting pgvector claim, got ${JSON.stringify(byFamilyAndPolarity)}`
+  );
+  // Opposed families each get a rejecting claim:
+  for (const opposed of ["pinecone", "weaviate", "external_vector_db"]) {
+    assert.ok(
+      byFamilyAndPolarity.some((x) => x.family === opposed && x.polarity === "rejects"),
+      `expected rejecting ${opposed} claim, got ${JSON.stringify(byFamilyAndPolarity)}`
+    );
+  }
+  // Antipattern's own family rejected:
+  assert.ok(
+    byFamilyAndPolarity.some((x) => x.family === "kafka_event_bus" && x.polarity === "rejects")
+  );
+  // Antipattern's additional opposed family rejected:
+  assert.ok(
+    byFamilyAndPolarity.some((x) => x.family === "service_mesh_with_kafka_dlq" && x.polarity === "rejects")
+  );
+
+  // Empty opposes_families is a no-op (no extra items, just the support claim):
+  const noOpposes = discoveredEvidenceItems({
+    patterns: [
+      {
+        name: "plain",
+        description: "no opposes",
+        evidence_cite: ["x.ts"],
+        architecture_family: "plain"
+      }
+    ],
+    antipatterns: []
+  });
+  assert.equal(noOpposes.length, 1);
+  assert.equal(noOpposes[0].claims[0].polarity, "supports");
+
+  // De-dup within a single pattern: same family listed twice in opposes_families
+  // only generates one opposing item.
+  const dedup = discoveredEvidenceItems({
+    patterns: [
+      {
+        name: "x",
+        evidence_cite: ["a.ts"],
+        architecture_family: "x_fam",
+        opposes_families: ["pinecone", "pinecone", "weaviate"]
+      }
+    ],
+    antipatterns: []
+  });
+  assert.equal(dedup.length, 3); // 1 supporting + 2 unique opposing
+}
+
 console.log("kernel regression tests ok");

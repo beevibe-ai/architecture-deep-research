@@ -93,6 +93,53 @@ function antipatternEvidenceItem(ap, index) {
   };
 }
 
+// Build a synthetic opposing evidence item: same source provenance as the
+// supporting pattern/antipattern that produced it, but with architecture_family
+// pointing at the OPPOSED family and polarity: "rejects". This is how
+// "team already uses pgvector" becomes opposing evidence against pinecone /
+// weaviate candidates in the matrix, not just supporting evidence for pgvector.
+function opposingEvidenceItem({ kind, source, opposedFamily, index }) {
+  const sourceName = source.name;
+  const sourceFamily = source.architecture_family;
+  const isPattern = kind === "pattern";
+  return {
+    citation_id: index,
+    task_id: SYNTHETIC_TASK_ID,
+    title: isPattern
+      ? `Team pattern '${sourceName}' opposes ${opposedFamily}`
+      : `Team antipattern '${sourceName}' opposes ${opposedFamily}`,
+    url: `${privateUrl(source)}#opposes-${opposedFamily}`,
+    query: "discover_synthetic_private_corpus",
+    provider: "discover",
+    excerpt: isPattern
+      ? `Team's '${sourceName}' pattern (architecture_family: ${sourceFamily}) conflicts with '${opposedFamily}' — these are alternatives in the same decision space. Cited: ${source.evidence_cite.join(", ")}.`
+      : `Team's rejection of '${sourceName}' (architecture_family: ${sourceFamily}) also weighs against '${opposedFamily}' for the same reasons. Cited: ${source.evidence_cite.join(", ")}.`,
+    source_type: "private_corpus",
+    source_quality: SYNTHETIC_SOURCE_QUALITY,
+    retrieved_at: nowIso(),
+    fetch_status: "synthetic_from_discover",
+    content_hash: `discover-${kind}-opposes:${sourceName}:${opposedFamily}`,
+    raw_text_path: null,
+    raw_text_bytes: 0,
+    keyword_hits: source.evidence_cite,
+    score: SYNTHETIC_SCORE_BASE,
+    relevance: `Discover-derived opposing claim: '${sourceName}' conflicts with '${opposedFamily}'.`,
+    claims: [
+      {
+        claim: isPattern
+          ? `Adopting '${opposedFamily}' would conflict with team's existing pattern '${sourceName}' (architecture_family: ${sourceFamily}). Migration cost + coordination cost.`
+          : `Adopting '${opposedFamily}' shares the same failure mode that led the team to reject '${sourceName}' (architecture_family: ${sourceFamily}).`,
+        architecture_family: opposedFamily,
+        polarity: "rejects",
+        risk_or_fit: isPattern
+          ? "Conflicts with team's adopted pattern; introduces migration + coordination cost."
+          : "Repeats the failure mode the team previously rejected.",
+        confidence: SYNTHETIC_CONFIDENCE * 0.85
+      }
+    ]
+  };
+}
+
 function discoveredEvidenceItems(discoveredPrinciples) {
   if (!discoveredPrinciples || typeof discoveredPrinciples !== "object") {
     return [];
@@ -112,6 +159,26 @@ function discoveredEvidenceItems(discoveredPrinciples) {
     }
     items.push(patternEvidenceItem(pattern, cursor));
     cursor += 1;
+
+    // Bidirectional: emit one opposing item per opposes_families entry.
+    // The opposed family must differ from the pattern's own architecture_family
+    // (a pattern can't oppose itself). De-dup within this pattern.
+    const opposed = (pattern.opposes_families || []).filter(
+      (fam) => typeof fam === "string" && fam.trim() && fam.trim() !== pattern.architecture_family.trim()
+    );
+    const seen = new Set();
+    for (const fam of opposed) {
+      const key = fam.trim();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(opposingEvidenceItem({
+        kind: "pattern",
+        source: pattern,
+        opposedFamily: key,
+        index: cursor
+      }));
+      cursor += 1;
+    }
   }
   for (const ap of discoveredPrinciples.antipatterns || []) {
     if (
@@ -126,6 +193,25 @@ function discoveredEvidenceItems(discoveredPrinciples) {
     }
     items.push(antipatternEvidenceItem(ap, cursor));
     cursor += 1;
+
+    // Antipatterns can also have opposes_families (e.g. team rejected
+    // microservices → opposes service_mesh too). Same dedup rule.
+    const opposed = (ap.opposes_families || []).filter(
+      (fam) => typeof fam === "string" && fam.trim() && fam.trim() !== ap.architecture_family.trim()
+    );
+    const seen = new Set();
+    for (const fam of opposed) {
+      const key = fam.trim();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(opposingEvidenceItem({
+        kind: "antipattern",
+        source: ap,
+        opposedFamily: key,
+        index: cursor
+      }));
+      cursor += 1;
+    }
   }
   return items;
 }

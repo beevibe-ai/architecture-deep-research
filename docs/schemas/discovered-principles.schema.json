@@ -38,6 +38,12 @@
           "architecture_family": {
             "type": "string",
             "description": "Optional. When this pattern clearly maps to an architecture family the comparison matrix will consider, set this so the pattern can flow into the evidence pool as a private_corpus item."
+          },
+          "opposes_families": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional. Architecture families this pattern would conflict with if adopted. The kernel emits opposing private_corpus claims against each so the matrix sees the pattern as both supporting evidence for its own family AND opposing evidence for alternatives.",
+            "maxItems": 4
           }
         },
         "additionalProperties": true
@@ -59,6 +65,12 @@
           "architecture_family": {
             "type": "string",
             "description": "Optional. When this anti-pattern clearly rejects an architecture family, set this so it can flow into the evidence pool as a negative private_corpus claim against that family."
+          },
+          "opposes_families": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional. Additional architecture families this anti-pattern weighs against (beyond its own architecture_family). Same failure mode argument applies to listed alternatives.",
+            "maxItems": 4
           }
         },
         "additionalProperties": true
