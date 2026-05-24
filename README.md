@@ -101,7 +101,45 @@ A `recommendation` is added only when one option clearly dominates (strong on mu
 | `ranked_options` | Multiple options are viable with genuine tradeoffs. `recommendation: null`. Pick the option whose conditions match your situation. |
 | `deferred` | No candidate cleared the promotion gate. Re-run with sharper context. |
 
+**Commitment threshold:** when the surviving field is narrow (1 candidate, or 2 candidates where one has a 2+ lead on net strong axes), ADR commits — refusing to recommend with the field already narrowed is dishonest, not nuanced. Multi-option fields with genuine tradeoffs still land at `ranked_options`.
+
 Coding agents downstream pick one option, then honor the matching block in `agent-guardrails.md` (per-option contract). The handoff JSON's `options[]` is the machine-readable equivalent.
+
+## Hard Constraints
+
+The PRD and clarification answers carry phrases like "self-hosted only", "must fit Docker Compose", "no managed services". Those are not preferences to score against — they are filters. ADR extracts them into `constraints.json` with explicit severities and uses them to eliminate candidates BEFORE the comparison matrix is built.
+
+```json
+// constraints.json (excerpt)
+{
+  "constraints": [
+    {
+      "id": "self_hosted_only",
+      "statement": "Self-hosted deployment is the primary model.",
+      "severity": "must_have",
+      "check_question": "Does <CANDIDATE> support self-hosted deployment?",
+      "evidence_from_input": "self-hosted is the primary deploy model"
+    },
+    {
+      "id": "fits_docker_compose",
+      "statement": "Must fit inside the existing Docker Compose stack.",
+      "severity": "must_have",
+      "check_question": "Does <CANDIDATE> run as part of Docker Compose?",
+      "evidence_from_input": "fits the existing Docker Compose"
+    }
+  ]
+}
+```
+
+Severities:
+
+| Severity | Behavior |
+| --- | --- |
+| `must_have` | A candidate that fails this is eliminated, not penalized. "Self-hosted only" + Pinecone (cloud-only) → Pinecone is OUT of `ranked_options`. The eliminated candidate is recorded in ADR.md under "Eliminated by hard constraints" with the specific failure reason. |
+| `preferred` | Scoring input. Influences ranking but does not filter. |
+| `nice_to_have` | Lowest weight scoring input. |
+
+`constraints.json` is **editable between runs**. ADR uses the file as-is on re-invocation, so if the LLM mislabeled "ideally self-hosted" as must_have, you can change it to preferred and re-run — no full extraction needed.
 
 ## Peer Products (Similar / Competitor Research)
 
@@ -191,15 +229,23 @@ All three runtimes produce the same artifact set. See [docs/framework-adapters.m
 | Artifact | Content |
 | --- | --- |
 | `strategic-context.json` | Domain entities, bounded contexts, query shapes, risk invariants, operational envelope, compliance constraints extracted from the brief. |
-| `research-plan.json` | LLM-planned research tasks with search queries and source targets. |
-| `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims, content hash, snapshot path. Audit-grade. |
-| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. |
-| `comparison-matrix.json` | Candidates × axes (derived from query shapes, risk invariants, operational envelope, compliance, plus any discovered anti-patterns). Each cell carries `strong` / `mixed` / `weak` / `no_evidence` + citation IDs. |
-| `architecture.spec.json` | Selected topology, bounded contexts, domain invariants, rejected alternatives, required guardrails, evidence citations. |
-| `critique.json` | LLM critique pass flagging uncited claims, contradictions, weak evidence. High-severity issues auto-downgrade the decision unless `--no-enforce-critique`. |
-| `citation-audit.json` | Per-citation supported/unsupported verdicts. Unsupported selected-topology citations auto-downgrade. |
+| `clarification.json` | Open questions the PRD doesn't answer. Blocking gate by default; unblocks via `--clarification-answers '<text>'` or `--no-clarify`. |
+| `constraints.json` | Hard constraints (`must_have` / `preferred` / `nice_to_have`) extracted from the PRD + clarification answers. `must_have` constraints eliminate candidates before the matrix is built. Editable — re-runs pick up your edits. |
+| `peers.json` *(opt-in via `--include-peers`)* | 3-5 similar / competitor products with their GitHub URLs and momentum signal. The deep-research planner adds one targeted task per peer for the specific decision aspect. |
+| `discovered-principles.json` + `discovered-constraints.json` *(when `discover` ran)* | Patterns + antipatterns + stack signals from the user's own repo. Patterns flow into the evidence pool as `private_corpus` claims. The stack signals drive a `fits_existing_stack` matrix axis. |
+| `research-plan.json` | LLM-planned research tasks with search queries and source targets. Includes peer-targeted tasks when `peers.json` is present. |
+| `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims (each with a literal `quote` from the excerpt), content hash, snapshot path. Audit-grade. |
+| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. Eliminated-by-constraint candidates get tagged `eliminated_by_hard_constraint` with the failed constraint attached. |
+| `comparison-matrix.json` | Candidates × axes. Axes are derived from query shapes (every shape becomes an axis), risk invariants (every invariant becomes an axis), operational envelope, compliance, plus `fits_existing_stack` when discover surfaced a stack, plus team-antipattern axes. Each cell carries `strong` / `mixed` / `weak` / `no_evidence`, citation IDs, and a quantitative summary (numbers verbatim from the source when available). |
+| `architecture.spec.json` | `decision.mode` (`recommended` / `ranked_options` / `deferred`), `decision.ranked_options[]` (every viable option with `when_to_pick`, `when_not_to_pick`, `strong_axes`, `weak_axes`, per-option `required_invariants` and `forbidden_topologies`), `decision.recommendation` (when one option dominates). Schema failures fall back to `architecture.spec.invalid.json` + `architecture.spec.validation-errors.txt` so downstream artifacts still write. |
+| `critique.json` | LLM critique pass — evaluates option-set quality (duplicate options, ungrounded `strong_axes`, citation bleed, unsupported recommendation, missing options). High-severity issues drop the recommendation (option set survives) unless `--no-enforce-critique`. |
+| `citation-audit.json` | Per-citation supported/unsupported verdicts, batched by claim_context. Unsupported recommendation citations drop the recommendation. |
 | `claim-audit.json` | Scans generated ADR/report/eval artifacts for material claims without citations. |
-| `domain-evaluation-pack.json` | Adversarial test cases: lineage, boundary-spill, multi-hop, abstention, agentic-drift checks the implementation has to pass. |
+| `domain-evaluation-pack.json` | Option-aware adversarial test cases: per-option behavior tests (tenant isolation, MFA flow, lineage depth, latency-at-load), keyed on each option's `strong_axes`. Caller runs these against the implementation. |
+| `ADR.md` | Reader-facing markdown. Leads with the tradeoffs across options, then the recommendation (if any), then per-option `Pick this when` / `Avoid when`. Includes `## Eliminated by hard constraints`, `## Evidence from your repo` (private_corpus items), and `## References` (every citation_id → URL + title + source_type). |
+| `agent-guardrails.md` | Per-option contract blocks. A coding agent implementing option A applies A's invariants and forbidden_topologies — not B's. |
+| `execution-handoff.json` | Per-option contracts in `options[]` plus `recommendation` and `validation_warnings` when any artifact failed schema. |
+| `events.jsonl` | Live research log. Every event carries concrete content: page previews, claim quotes, per-option summaries, eliminated-candidate reasons. Stream via `tail -F` for a chat surface. |
 | `execution-handoff.json` | The boundary contract: selected topology, required invariants, forbidden topologies, evaluation suite name, memory facts for the Architect bee. |
 | `ADR.md`, `sources.md`, `research-report.md` | Human-readable decision record, citation table, long-form report. |
 
