@@ -6,7 +6,6 @@
   "required": ["version", "total_citations", "verified_count", "unsupported_count", "items"],
   "properties": {
     "version": { "type": "string" },
-    "selected_topology": { "type": ["string", "null"] },
     "total_citations": { "type": "integer", "minimum": 0 },
     "verified_count": { "type": "integer", "minimum": 0 },
     "unsupported_count": { "type": "integer", "minimum": 0 },

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const MAX_PARALLEL_RESEARCH_AGENTS = 3;
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -320,7 +320,7 @@ async function appendEvent(outDir, type, payload = {}) {
 }
 
 const schemaByFilename = {
-  "architecture.spec.json": "../docs/schemas/architecture-spec.schema.json",
+  "research-report.json": "../docs/schemas/research-report.schema.json",
   "claim-audit.json": "../docs/schemas/claim-audit.schema.json",
   "citation-audit.json": "../docs/schemas/citation-audit.schema.json",
   "clarification.json": "../docs/schemas/clarification.schema.json",
@@ -351,11 +351,11 @@ function resolveSchemaKey(filename) {
   if (/^research-plan\.(adaptive|adversarial)-\d+\.json$/.test(filename)) {
     return "research-plan.json";
   }
-  // Re-synthesis loop writes architecture.spec.v1.json (the original) and
-  // architecture.spec.v2.json (the post-critique re-synthesis). Both are
-  // architecture.spec shapes. Same for critique.v1.json / critique.v2.json.
-  if (/^architecture\.spec\.v\d+\.json$/.test(filename)) {
-    return "architecture.spec.json";
+  // Re-synthesis loop writes research-report.v1.json (the original) and
+  // research-report.v2.json (the post-critique re-synthesis). Both are
+  // research-report shapes. Same for critique.v1.json / critique.v2.json.
+  if (/^research-report\.v\d+\.json$/.test(filename)) {
+    return "research-report.json";
   }
   if (/^critique\.v\d+\.json$/.test(filename)) {
     return "critique.json";
@@ -2152,67 +2152,48 @@ function buildKnowledgeMap(evidenceItems, { offTopicNames = new Set() } = {}) {
     }
   }
 
+  // ADR is a research-report engine. Every family with at least one evidence
+  // claim shows up as a candidate in the report. The off-topic filter still
+  // drops families that aren't in the option space at all (e.g. a framework
+  // name in an auth-provider decision), but evidence-depth is NOT a filter —
+  // a "thin" candidate gets its own section with the thin-evidence label so
+  // the reader can weight it.
   const patterns = [...families.values()].map((item) => {
     const sourceTypes = [...item.source_types];
     const evidenceCount = item.support.length + item.warnings.length + item.rejections.length;
-    // Promotion requires at least one EXTERNAL source. private_corpus
-    // describes team context (what they already use / reject) — it can
-    // contribute to evidence_count and inform synthesis, but a family with
-    // only private_corpus support is not a candidate the broader world has
-    // evidence about. Promoting such families pollutes the matrix with
-    // internal-only "Team pattern: X" entries (e.g. local_agent_runtime in
-    // a retrieval-architecture decision).
-    const hasExternalSource =
-      sourceTypes.includes("official_docs") ||
-      sourceTypes.includes("mature_oss") ||
-      sourceTypes.includes("paper_or_benchmark");
     const isOffTopic = offTopicNames.has(item.name);
-    const qualityGate =
-      evidenceCount >= 2 &&
-      item.support.length > 0 &&
-      hasExternalSource &&
-      !isOffTopic;
-
-    let promotion_status;
-    if (qualityGate) promotion_status = "evidence_backed_candidate";
-    else if (isOffTopic) promotion_status = "off_topic_for_decision";
-    else promotion_status = "insufficient_evidence";
+    let evidenceDepth;
+    if (evidenceCount >= 5) evidenceDepth = "thick";
+    else if (evidenceCount >= 2) evidenceDepth = "medium";
+    else evidenceDepth = "thin";
 
     return {
       name: item.name,
       label: item.label,
-      promotion_status,
+      evidence_depth: evidenceDepth,
       evidence_count: evidenceCount,
       source_types: sourceTypes,
       citations: [...item.citations].sort((a, b) => a - b),
       support: item.support,
       warnings: item.warnings,
       rejections: item.rejections,
-      score: Number(finiteNumber(item.score_total, 0).toFixed(3))
+      score: Number(finiteNumber(item.score_total, 0).toFixed(3)),
+      ...(isOffTopic ? { off_topic_for_decision: true } : {})
     };
   });
 
-  const MAX_PROMOTED_CANDIDATES = 5;
-  const allPromoted = patterns
-    .filter((item) => item.promotion_status === "evidence_backed_candidate")
+  const candidates = patterns
+    .filter((item) => !item.off_topic_for_decision)
     .sort((a, b) => b.score - a.score);
-  const promoted = allPromoted.slice(0, MAX_PROMOTED_CANDIDATES);
-  const demoted = allPromoted.slice(MAX_PROMOTED_CANDIDATES).map((item) => ({
-    ...item,
-    promotion_status: "demoted_below_top_n",
-    demotion_reason: `Below top-${MAX_PROMOTED_CANDIDATES} by evidence score; only the strongest macro families advance to synthesis.`
-  }));
+  const offTopicCandidates = patterns.filter((item) => item.off_topic_for_decision);
 
   return {
     version: VERSION,
     acquisition_mode: "evidence_only_live_research",
-    promotion_rule:
-      "Architecture families are promoted only from extracted claims with cited live-source evidence. Static seed hypotheses are not allowed. At most the top-5 evidence-scored macro families advance to synthesis.",
-    promoted_candidates: promoted,
-    insufficient_evidence_candidates: [
-      ...patterns.filter((item) => item.promotion_status !== "evidence_backed_candidate"),
-      ...demoted
-    ]
+    acquisition_rule:
+      "Architecture families are extracted from the live evidence pool. Each candidate's depth (thick / medium / thin) reflects how much corroborating evidence was found. The reader decides how much weight to give each section.",
+    candidates,
+    off_topic_candidates: offTopicCandidates
   };
 }
 
@@ -2386,27 +2367,17 @@ function deriveComparisonAxes(context, options = {}) {
 }
 
 function candidatesFromKnowledgeMap(knowledgeMap) {
-  const promoted = toArray(knowledgeMap?.promoted_candidates).map((item) => ({
+  const candidates = toArray(knowledgeMap?.candidates).map((item) => ({
     name: item.name,
     label: item.label,
-    promotion_status: "evidence_backed_candidate",
+    evidence_depth: item.evidence_depth || "thin",
     evidence_count: item.evidence_count,
     score: finiteNumber(item.score, 0),
     citations: item.citations
   }));
-  const insufficient = toArray(knowledgeMap?.insufficient_evidence_candidates).map(
-    (item) => ({
-      name: item.name,
-      label: item.label,
-      promotion_status: "insufficient_evidence",
-      evidence_count: item.evidence_count,
-      score: finiteNumber(item.score, 0),
-      citations: item.citations
-    })
-  );
   const seen = new Set();
   const merged = [];
-  for (const candidate of [...promoted, ...insufficient]) {
+  for (const candidate of candidates) {
     if (!candidate.name || seen.has(candidate.name)) continue;
     seen.add(candidate.name);
     merged.push(candidate);
@@ -2479,7 +2450,7 @@ async function fillComparisonMatrixCells({
       candidates: candidates.map((candidate) => ({
         name: candidate.name,
         label: candidate.label,
-        promotion_status: candidate.promotion_status,
+        evidence_depth: candidate.evidence_depth,
         evidence_count: candidate.evidence_count
       })),
       evidence: evidenceItems.map((item) => ({
@@ -2589,16 +2560,14 @@ async function buildAdversarialResearchPlan({
     return { tasks: [] };
   }
 
-  const promotedCandidates = toArray(matrix.candidates).filter(
-    (c) => c.promotion_status === "evidence_backed_candidate"
-  );
+  const promotedCandidates = toArray(matrix.candidates);
   const promotedNames = promotedCandidates.map((c) => c.name);
 
-  // Round-robin balance: every promoted candidate gets EXACTLY one
-  // adversarial task. This stops the "Milvus looks clean by absence of
-  // adversarial probing" failure mode. The LLM is told the exact target
-  // distribution; post-processing enforces it by padding any candidate the
-  // LLM skipped with a generic per-candidate fallback probe.
+  // Round-robin balance: every candidate gets EXACTLY one adversarial task.
+  // This stops the "Milvus looks clean by absence of adversarial probing"
+  // failure mode. The LLM is told the exact target distribution; post-
+  // processing enforces it by padding any candidate the LLM skipped with a
+  // generic per-candidate fallback probe.
   const targetTasksPerCandidate = 1;
 
   const result = await callLlmJson({
@@ -2638,7 +2607,7 @@ async function buildAdversarialResearchPlan({
       candidates: promotedCandidates.map((candidate) => ({
         name: candidate.name,
         label: candidate.label,
-        promotion_status: candidate.promotion_status
+        evidence_depth: candidate.evidence_depth
       })),
       axes: matrix.axes,
       empty_cells: matrix.empty_cells,
@@ -2730,7 +2699,7 @@ async function buildAdversarialResearchPlan({
   };
 }
 
-async function synthesizeArchitectureSpec({
+async function synthesizeResearchReport({
   context,
   knowledgeMap,
   evidenceItems,
@@ -2738,111 +2707,111 @@ async function synthesizeArchitectureSpec({
   priorCritique = null,
   priorSpec = null
 }) {
-  const promotedNames = toArray(knowledgeMap?.promoted_candidates).map((c) => c.name);
-  const promotedSet = new Set(promotedNames);
-  const HUMAN_REVIEW = "requires_human_architecture_review";
-  const RANKED_OPTIONS_SENTINEL = "ranked_options";
+  const candidateRecords = toArray(knowledgeMap?.candidates);
+  const candidateNames = candidateRecords.map((c) => c.name);
+  const candidateSet = new Set(candidateNames);
+  const depthByName = new Map(
+    candidateRecords.map((c) => [c.name, c.evidence_depth || "thin"])
+  );
 
   const decisionContextNotes = toArray(context.decision_context_notes);
 
   const isResynth = Boolean(priorCritique && priorSpec);
   const result = await callLlmJson({
-    label: isResynth ? "architecture_synthesis_agent_resynth" : "architecture_synthesis_agent",
+    label: isResynth ? "research_report_agent_resynth" : "research_report_agent",
     system: [
-      "You are the Architecture Deep Research synthesis agent.",
+      "You are the Architecture Deep Research research-report agent.",
       "",
-      "Your job is to MAP THE OPTION SPACE. Architecture decisions span",
-      "multiple facets — topology, vendor, deployment, integration — and",
-      "you produce a RANKED OPTION SET with explicit, evidence-grounded",
-      "tradeoffs across all of them. You do NOT pick a winner.",
+      "Your job is to write a RESEARCH REPORT on the architectural decision",
+      "space. You do NOT pick a winner. You do NOT produce a recommendation.",
+      "The decision is the reader's; your job is to give them enough cited",
+      "context to decide well.",
       "",
-      "Each option may be an architecture family, a specific product /",
-      "vendor / library, a deployment mode, or any combination thereof — whatever the evidence pool actually surfaced.",
+      "This is the same posture as OpenAI Deep Research, Perplexity Deep",
+      "Research, and Gemini Deep Research — map the space, cite the sources,",
+      "surface the tradeoffs. Do not collapse to one answer.",
       "",
-      "RANKED OPTIONS — the primary output:",
-      "For each promoted_candidate from the knowledge_map, produce one option:",
+      "PRIMARY OUTPUT — a research report covering EVERY candidate.",
+      "",
+      "Every candidate from the knowledge_map.candidates list MUST get its own",
+      `options[] entry. Do NOT drop candidates. Do NOT filter further. List: [${candidateNames.map((n) => `"${n}"`).join(", ")}].`,
+      "",
+      "Each option entry shape:",
       "  {",
-      "    name,                  // canonical id from promoted_candidates",
-      "    label,                 // human-readable title",
-      "    summary,               // 2-3 sentences, grounded in evidence",
-      "    when_to_pick,          // 2-4 conditions under which this is the right choice",
-      "    when_not_to_pick,      // 2-4 conditions under which it isn't",
-      "    strong_axes,           // axis ids where the matrix marks this option `strong`",
-      "    weak_axes,             // axis ids where the matrix marks this option `weak`",
-      "    risks,                 // 2-5 concrete risks tied to this option",
-      "    required_invariants,   // invariants a coding agent must honor IF this option is picked",
-      "    forbidden_topologies,  // patterns/products to avoid when this option is picked",
-      "    evidence_citations,    // citation_ids supporting this option",
-      "    confidence             // 0-1, how strongly the evidence backs this option",
+      "    name,                       // canonical id, must appear in the candidates list above",
+      "    label,                      // human-readable title",
+      "    summary,                    // 2-3 sentences, what this candidate is",
+      "    evidence_depth,             // \"thick\" | \"medium\" | \"thin\" — copy from knowledge_map",
+      "    what_evidence_shows,        // 1-2 paragraphs: what the cited claims actually say",
+      "    what_evidence_does_not_show,// 1 paragraph: known gaps (no production scale, no cost numbers, no failure-mode write-ups, etc.)",
+      "    strong_axes,                // axis ids where the matrix marks this candidate strong",
+      "    weak_axes,                  // axis ids where the matrix marks this candidate weak",
+      "    when_to_pick,               // 2-4 evidence-summarized reading aids: situations the cited evidence supports for this candidate",
+      "    when_not_to_pick,           // 2-4 evidence-summarized reading aids: situations the cited evidence contraindicates",
+      "    citations                   // citation_ids supporting this candidate",
       "  }",
       "",
-      "DO NOT invent options. Every option's `name` MUST appear in the",
-      `promoted_candidates list below: [${promotedNames.map((n) => `"${n}"`).join(", ")}].`,
-      "Options for candidates that did NOT clear the promotion gate are not",
-      "included in ranked_options — they appear in candidate_topologies as",
-      "decision: \"rejected\" (or \"deferred\").",
+      "when_to_pick and when_not_to_pick are READING AIDS, not recommendations.",
+      "They tell the reader which situations the cited evidence actually",
+      "supports or contraindicates for that option — they do not tell the",
+      "reader what to do.",
       "",
-      "MODE — exactly two values:",
-      "- \"ranked_options\": always output the option space as ranked_options",
-      "  with their tradeoffs. Set recommendation = null. Do NOT invent a",
-      "  recommendation. The user picks among the options using the decision",
-      "  context notes and the post-run follow-up questions.",
-      "- \"deferred\": the pool is too thin or off-topic. Set ranked_options",
-      "  = [] and recommendation = null. This run did not produce enough",
-      "  evidence to identify viable options.",
+      "TOP-LEVEL FIELDS:",
+      "  executive_summary: 2-3 paragraphs. What's in the space, what's at",
+      "                     stake, what to watch for as the reader weighs",
+      "                     candidates. Cite where it helps.",
+      "  option_space_shape: 1 paragraph. Cross-cutting observations about the",
+      "                      family of candidates (e.g. \"graph-store products",
+      "                      split along self-hosted vs managed, with",
+      "                      mature_oss leaders in both\").",
+      "  cross_cutting_tradeoffs: axes where candidates split. For EACH",
+      "                            comparison-matrix axis that shows real",
+      "                            variance across candidates, write one entry:",
+      "    { axis, observation, candidates_high: [name], candidates_low: [name] }",
+      "  open_questions: 3-8 free-form items the evidence pool did NOT resolve.",
+      "                  Draw from matrix axes with mostly empty cells, candidates",
+      "                  with \"thin\" depth, claims sourced from low-confidence",
+      "                  sources (general_web without corroboration).",
       "",
-      "Do NOT emit \"recommended\". Even a lone-survivor pool of n=1 stays",
-      "as ranked_options — the surrounding context (cost, deployment, team",
-      "shape) determines whether that one option is right, and that's the",
-      "reader's call, not the synthesizer's.",
-      "",
-      promotedNames.length > 0
-        ? `Promoted candidates available for ranked_options: [${promotedNames.map((n) => `"${n}"`).join(", ")}].`
-        : "NO candidates cleared the promotion gate. mode MUST be \"deferred\".",
+      "FORBIDDEN:",
+      "- Do not produce a \"Recommendation\" section.",
+      "- Do not crown a winner in executive_summary or option_space_shape.",
+      "- Do not filter candidates below the off-topic level — every candidate",
+      "  in knowledge_map.candidates gets a section.",
+      "- Do not invent candidates. options[].name must appear in the list above.",
       "",
       decisionContextNotes.length > 0
-        ? `Decision context notes from the user (annotations, NOT filters): ${decisionContextNotes.map((n) => `"${n.statement || ""}"`).slice(0, 8).join("; ")}. Reflect these in when_to_pick / when_not_to_pick where they apply, but do NOT drop options just because an option fails one of them.`
+        ? `Decision context notes from the user (annotations, NOT filters): ${decisionContextNotes.map((n) => `"${n.statement || ""}"`).slice(0, 8).join("; ")}. Reflect these in when_to_pick / when_not_to_pick where the evidence supports it. Do NOT drop options on the basis of these notes.`
         : "",
       "",
       "EVIDENCE GROUNDING:",
-      "- Use comparison_matrix as the primary input. An axis is \"strong\" for",
-      "  an option only when the matrix says so with cited evidence.",
+      "- Use comparison_matrix as the primary input for strong_axes / weak_axes.",
       "- No static pattern library. No invented evidence.",
-      "- Citation IDs in evidence_citations must exist in the evidence pool.",
-      "- evidence_citations for each option MUST cite external sources only.",
-      "  Items with source_type: \"private_corpus\" describe the team's existing",
-      "  patterns — they are decision CONTEXT, never external evidence for an",
-      "  option's properties. Do not put private_corpus citation_ids in any",
-      "  option's evidence_citations array or in the decision's top-level",
-      "  evidence_citations.",
+      "- Citation IDs in citations must exist in the evidence pool.",
+      "- citations for each option MUST cite external sources only. Items with",
+      "  source_type: \"private_corpus\" describe the team's existing patterns —",
+      "  they are decision CONTEXT, never external evidence for an option's",
+      "  properties.",
       "- When citing a claim sourced from source_type: \"community_discussion\",",
       "  frame it as ADOPTION / PRACTITIONER signal — e.g. \"r/LocalLLaMA",
       "  practitioners report X\" or \"HN discussion notes Y\" — not as a hard",
-      "  architectural fact. Still cite these claims (they are real evidence of",
-      "  what teams choose and why), but in the comparison matrix they",
-      "  primarily contribute to adoption-mode axes (ecosystem_traction,",
-      "  integration_breadth, team_adoption_pattern, practitioner_pain_points)",
-      "  — not to latency / consistency / throughput axes.",
-      "",
-      "Each option's when_to_pick / when_not_to_pick should reference whatever the matrix and evidence actually surface — fit-for-purpose, deployment mode, vendor concerns (pricing / lock-in / SDK quality / on-prem availability / ecosystem) when relevant, and pattern-level invariants when relevant. forbidden_topologies (per option) lists families / patterns / products that conflict with that option's invariants.",
+      "  architectural fact.",
       "",
       ...(isResynth
         ? [
-            "RE-SYNTHESIS MODE — the previous synthesis was critiqued.",
+            "RE-SYNTHESIS MODE — the previous report was critiqued.",
             "Read prior_spec and prior_critique below. Your job is to IMPROVE",
-            "the option set:",
-            "- If the critique says two options are duplicates, merge them.",
+            "the report:",
+            "- If the critique says a candidate section is missing, add it.",
             "- If the critique says an option's strong_axes is unsupported by",
-            "  its citations, weaken that option (add the failure mode to",
-            "  weak_axes).",
-            "- If the critique says an obvious option is missing from the",
-            "  matrix, you cannot add it here — note in summary that further",
-            "  research is needed.",
-            "Acknowledge in summary which critique issues you addressed and how.",
+            "  its citations, weaken that option (move to weak_axes or note",
+            "  in what_evidence_does_not_show).",
+            "- If the critique says open_questions misses gaps, add them.",
+            "Acknowledge in executive_summary which critique issues you addressed.",
             ""
           ]
         : []),
-      "Output JSON: {decision: {id, title, status, mode, ranked_options, recommendation, summary}, domain_model, evidence_summary}."
+      "Output JSON: { id, title, executive_summary, option_space_shape, options: [...], cross_cutting_tradeoffs: [...], open_questions: [...], domain_model, evidence_summary }."
     ].filter(Boolean).join("\n"),
     user: JSON.stringify({
       context,
@@ -2851,14 +2820,13 @@ async function synthesizeArchitectureSpec({
       ...(isResynth
         ? {
             prior_spec: {
-              mode: priorSpec.decision?.mode,
-              recommendation: priorSpec.decision?.recommendation,
-              ranked_options: toArray(priorSpec.decision?.ranked_options).map((o) => ({
+              executive_summary: priorSpec.executive_summary,
+              options: toArray(priorSpec.options).map((o) => ({
                 name: o.name,
                 strong_axes: o.strong_axes,
                 weak_axes: o.weak_axes
               })),
-              summary: priorSpec.decision?.summary
+              open_questions: priorSpec.open_questions
             },
             prior_critique: {
               issues: priorCritique.issues,
@@ -2879,130 +2847,125 @@ async function synthesizeArchitectureSpec({
 
   const validCitationIds = new Set(evidenceItems.map((item) => Number(item.citation_id)));
   // private_corpus items describe team context, not external evidence. Drop
-  // them from any option's evidence_citations even if the LLM emits them.
+  // them from any option's citations even if the LLM emits them.
   const privateCorpusIds = new Set(
     evidenceItems
       .filter((item) => item.source_type === "private_corpus")
       .map((item) => Number(item.citation_id))
   );
 
-  // Parse the model's ranked_options, filtering names that don't appear in
-  // promoted_candidates. The synthesizer is forbidden from inventing options.
-  const rawRanked = toArray(result.decision?.ranked_options);
+  // Parse the model's options, filtering names that don't appear in the
+  // candidate set. The synthesizer is forbidden from inventing candidates.
+  const rawOptions = toArray(result.options);
   const dedupSeen = new Set();
-  const rankedOptions = [];
-  for (const opt of rawRanked) {
+  const options = [];
+  for (const opt of rawOptions) {
     const name = slugify(String(opt.name || "").trim());
     if (!name) continue;
-    if (!promotedSet.has(name)) continue; // hallucinated option; drop
+    if (!candidateSet.has(name)) continue; // hallucinated; drop
     if (dedupSeen.has(name)) continue;
     dedupSeen.add(name);
-    rankedOptions.push({
+    const declaredDepth = String(opt.evidence_depth || "").trim();
+    const evidenceDepth = ["thick", "medium", "thin"].includes(declaredDepth)
+      ? declaredDepth
+      : depthByName.get(name) || "thin";
+    options.push({
       name,
       label: String(opt.label || titleCase(name)),
       summary: String(opt.summary || ""),
-      when_to_pick: toArray(opt.when_to_pick).map(String).filter(Boolean).slice(0, 6),
-      when_not_to_pick: toArray(opt.when_not_to_pick).map(String).filter(Boolean).slice(0, 6),
+      evidence_depth: evidenceDepth,
+      what_evidence_shows: String(opt.what_evidence_shows || ""),
+      what_evidence_does_not_show: String(opt.what_evidence_does_not_show || ""),
       strong_axes: toArray(opt.strong_axes).map(String).filter(Boolean),
       weak_axes: toArray(opt.weak_axes).map(String).filter(Boolean),
-      risks: toArray(opt.risks).map(String).filter(Boolean),
-      required_invariants: toArray(opt.required_invariants).map(String).filter(Boolean),
-      forbidden_topologies: toArray(opt.forbidden_topologies).map(String).filter(Boolean),
-      evidence_citations: toArray(opt.evidence_citations)
+      when_to_pick: toArray(opt.when_to_pick).map(String).filter(Boolean).slice(0, 6),
+      when_not_to_pick: toArray(opt.when_not_to_pick).map(String).filter(Boolean).slice(0, 6),
+      citations: toArray(opt.citations)
         .map(Number)
-        .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id)),
-      confidence: clampNumber(opt.confidence, { min: 0, max: 1, fallback: 0.5 })
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id))
     });
   }
 
-  // Mode is one of "ranked_options" | "deferred". The synthesizer no longer
-  // emits "recommended"; the option space is always mapped and the reader
-  // picks. recommendation is always null in the new schema, but we keep the
-  // field on the spec to preserve the back-compat shape for downstream
-  // consumers.
-  const rankedNames = new Set(rankedOptions.map((o) => o.name));
-  const recommendation = null;
-
-  const mode = rankedOptions.length === 0 ? "deferred" : "ranked_options";
-
-  // Back-compat: selected_topology. New code reads decision.mode +
-  // ranked_options directly, but a lot of tooling and the citation-audit
-  // pipeline keys off selected_topology. Map cleanly:
-  //   ranked_options → literal "ranked_options"
-  //   deferred       → "requires_human_architecture_review"
-  const selectedTopology =
-    mode === "ranked_options" ? RANKED_OPTIONS_SENTINEL : HUMAN_REVIEW;
-
-  // candidate_topologies retains its existing shape but is now driven by
-  // ranked_options. Every ranked option becomes a candidate with decision:
-  // "considered" — synthesis no longer commits to a winner. Promoted
-  // candidates that the synthesizer DID NOT include in ranked_options are
-  // recorded as "rejected" (the synthesizer chose not to surface them).
-  const candidates = [];
-  for (const opt of rankedOptions) {
-    candidates.push({
-      name: opt.name,
-      label: opt.label,
-      fit: opt.summary,
-      risks: opt.risks,
-      decision: "considered",
-      evidence_citations: opt.evidence_citations,
-      confidence: opt.confidence
-    });
-  }
-  for (const promoted of promotedNames) {
-    if (rankedNames.has(promoted)) continue;
-    candidates.push({
-      name: promoted,
-      label: titleCase(promoted),
-      fit: "Promoted by evidence but not surfaced in ranked_options by the synthesizer.",
-      risks: [],
-      decision: "rejected",
-      evidence_citations: [],
-      confidence: 0
+  // Backstop: every candidate in knowledge_map must have an options entry.
+  // The prompt forbids skipping, but synthesizers occasionally drop candidates
+  // when they think the evidence is too thin. Backstop with a minimal section
+  // pointing at the candidate's evidence so nothing silently disappears from
+  // the report.
+  const optionsByName = new Map(options.map((o) => [o.name, o]));
+  for (const candidate of candidateRecords) {
+    if (optionsByName.has(candidate.name)) continue;
+    options.push({
+      name: candidate.name,
+      label: candidate.label || titleCase(candidate.name),
+      summary: "",
+      evidence_depth: candidate.evidence_depth || "thin",
+      what_evidence_shows:
+        "The synthesizer did not produce a section for this candidate. The cited evidence is preserved below.",
+      what_evidence_does_not_show: "",
+      strong_axes: [],
+      weak_axes: [],
+      when_to_pick: [],
+      when_not_to_pick: [],
+      citations: toArray(candidate.citations)
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id))
     });
   }
 
-  // Roll-up invariants / forbidden topologies for the back-compat fields are
-  // always empty under exploratory mode — callers must read per-option from
-  // ranked_options.
-  const rollupInvariants = [];
-  const rollupForbidden = [];
+  // cross_cutting_tradeoffs — keep candidates_high / candidates_low names
+  // only if they match real options.
+  const optionNameSet = new Set(options.map((o) => o.name));
+  const crossCuttingTradeoffs = toArray(result.cross_cutting_tradeoffs)
+    .map((t) => {
+      if (!t || typeof t !== "object") return null;
+      const axis = String(t.axis || "").trim();
+      const observation = String(t.observation || "").trim();
+      if (!axis || !observation) return null;
+      return {
+        axis,
+        observation,
+        candidates_high: toArray(t.candidates_high)
+          .map((n) => slugify(String(n || "")))
+          .filter((n) => n && optionNameSet.has(n)),
+        candidates_low: toArray(t.candidates_low)
+          .map((n) => slugify(String(n || "")))
+          .filter((n) => n && optionNameSet.has(n))
+      };
+    })
+    .filter(Boolean);
 
-  const decisionSummary = result.decision?.summary
-    ? String(result.decision.summary)
-    : mode === "deferred"
-      ? "No candidates cleared the promotion gate. ADR did not produce viable options for this decision."
-      : `${rankedOptions.length} viable options identified with genuine tradeoffs. The right choice depends on team-side constraints not visible to ADR.`;
+  const openQuestions = toArray(result.open_questions)
+    .map((q) => String(q || "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+
+  const executiveSummary = String(result.executive_summary || "").trim()
+    || (options.length === 0
+      ? "No candidates surfaced in the evidence pool. The decision space could not be mapped from the available evidence — re-run with sharper context."
+      : `${options.length} candidates surfaced in the option space. See per-candidate sections for what the evidence shows and what it does not.`);
+
+  const optionSpaceShape = String(result.option_space_shape || "").trim();
 
   return {
     version: VERSION,
-    decision: {
-      id: result.decision?.id || "ADR-001",
-      title: result.decision?.title || titleCase(context.decision),
-      status: normalizeDecisionStatus(result.decision?.status),
-      mode,
-      ranked_options: rankedOptions,
-      recommendation,
-      selected_topology: selectedTopology,
-      summary: decisionSummary,
-      evidence_citations: toArray(result.decision?.evidence_citations)
-        .map(Number)
-        .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id))
-    },
+    id: result.id || "ADR-001",
+    title: result.title || titleCase(context.decision),
+    executive_summary: executiveSummary,
+    option_space_shape: optionSpaceShape,
+    options,
+    cross_cutting_tradeoffs: crossCuttingTradeoffs,
+    open_questions: openQuestions,
     domain_model: {
       bounded_contexts: toArray(result.domain_model?.bounded_contexts),
       core_entities: toArray(result.domain_model?.core_entities),
       domain_invariants: toArray(result.domain_model?.domain_invariants)
     },
-    candidate_topologies: candidates,
-    guardrails: {
-      forbidden_topologies: rollupForbidden,
-      required_invariants: rollupInvariants,
-      allowed_agentic_use: toArray(result.evidence_summary?.allowed_agentic_use),
-      enforcement_notes: toArray(result.evidence_summary?.enforcement_notes)
-    },
-    evidence_summary: result.evidence_summary || {},
+    evidence_summary:
+      result.evidence_summary &&
+      typeof result.evidence_summary === "object" &&
+      !Array.isArray(result.evidence_summary)
+        ? result.evidence_summary
+        : {},
     evidence: evidenceItems.slice(0, 16).map((item) => ({
       label: `[${item.citation_id}] ${item.title}`,
       url: item.url,
@@ -3013,14 +2976,32 @@ async function synthesizeArchitectureSpec({
   };
 }
 
-async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix = null) {
-  const mode = spec.decision?.mode || "deferred";
-  const rankedOptions = toArray(spec.decision?.ranked_options);
+async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix = null, options = {}) {
+  const reportOptions = toArray(spec.options);
+  const targetOptionName = options.targetOptionName
+    ? slugify(String(options.targetOptionName).trim())
+    : null;
 
-  // When the run is deferred (no viable options), there is nothing to
-  // evaluate. Return an honest empty pack rather than fabricate test cases
-  // against candidates the synthesizer rejected.
-  if (mode === "deferred" || rankedOptions.length === 0) {
+  // When no candidates surfaced, return an honest empty pack rather than
+  // fabricate test cases.
+  if (reportOptions.length === 0) {
+    return {
+      version: VERSION,
+      suite: slugify(context.domain || "architecture_deep_research_suite"),
+      target_topologies: [],
+      metrics: {},
+      test_cases: [],
+      mode: "deferred"
+    };
+  }
+
+  // If a target option was passed (handoff flow), scope to that one option;
+  // otherwise generate across the whole option set (legacy behavior).
+  const scopedOptions = targetOptionName
+    ? reportOptions.filter((o) => slugify(o.name) === targetOptionName)
+    : reportOptions;
+
+  if (scopedOptions.length === 0) {
     return {
       version: VERSION,
       suite: slugify(context.domain || "architecture_deep_research_suite"),
@@ -3037,49 +3018,38 @@ async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatri
       "You generate the domain evaluation pack for Architecture Deep Research.",
       "",
       "The pack is what a downstream coding agent runs AFTER implementing one",
-      "of the options to verify the implementation actually delivers what the",
-      "option claimed. It is NOT a generic test suite — it must be specific",
-      "to this decision, this option set, and these claimed strong_axes.",
+      "of the candidates to verify the implementation actually delivers what",
+      "the candidate's evidence claimed. It is NOT a generic test suite — it",
+      "must be specific to this decision, the candidate(s) below, and their",
+      "claimed strong_axes.",
       "",
       `Decision: "${context.decision}"`,
       `Domain: "${context.domain}"`,
-      `Mode: ${mode}`,
       "",
       "INPUTS:",
-      "- ranked_options[]: every viable option with its strong_axes, weak_axes,",
-      "  when_to_pick, when_not_to_pick, required_invariants. Test cases should",
-      "  cover every option's claimed strong_axes (verify the strength holds in",
-      "  practice) AND the weak_axes (verify the weakness is documented, not a",
-      "  surprise).",
-      "- comparison_matrix: shows which axis verdicts came from evidence. Use",
-      "  it to identify the axes that actually discriminate options.",
+      "- options[]: candidate(s) with strong_axes, weak_axes, when_to_pick,",
+      "  when_not_to_pick. Test cases should cover each candidate's claimed",
+      "  strong_axes (verify the strength holds in practice) AND the",
+      "  weak_axes (verify the weakness is documented, not a surprise).",
+      "- comparison_matrix: shows which axis verdicts came from evidence.",
       "",
       "REQUIRED OUTPUT — be specific, not generic:",
       "- 6 to 12 test_cases. Each one must:",
-      "    * name a target_topology from ranked_options[].name OR multiple",
-      "      (a test that all options must pass)",
+      "    * name a target_topology from options[].name OR multiple",
+      "      (a test that all candidates must pass)",
       "    * test a CONCRETE behavior with measurable acceptance_criteria",
       "    * NOT be a generic \"is the API up\" test",
-      "  Anchor each test to the option's claimed strong_axes / weak_axes. Examples:",
-      "    'retrieval topology': multi-hop accuracy, citation lineage depth, abstention rate on out-of-corpus queries, latency at p95.",
-      "    'auth provider': tenant isolation under concurrent writes, MFA enrollment flow, session revocation latency, SSO/SAML round trip, on-prem deployment smoke if relevant.",
-      "    'event bus topology': message ordering under partition, at-least-once vs exactly-once, DLQ shape, replay-from-offset.",
-      "- 3 to 6 metrics. Each one has a numeric target and a definition. Use",
-      "  rates in [0,1] for the well-known keys (deterministic_lineage_rate,",
-      "  boundary_spill_tolerance, unsupported_answer_rate). Add",
-      "  decision-specific metrics beyond those when relevant (p95_latency_ms,",
-      "  tenant_isolation_violations_per_1m_requests, etc.)",
+      "  Anchor each test to the candidate's claimed strong_axes / weak_axes.",
+      "- 3 to 6 metrics. Each one has a numeric target and a definition.",
       "",
       "DO NOT return an empty test_cases array. DO NOT return an empty metrics",
-      "object. If you cannot identify decision-specific tests, return tests",
-      "anchored to the strong_axes / weak_axes from ranked_options.",
+      "object.",
       "",
       "Output JSON: {suite: string, target_topologies: [string], metrics: object, test_cases: [object]}."
     ].join("\n"),
     user: JSON.stringify({
       context,
-      mode,
-      ranked_options: rankedOptions.map((o) => ({
+      options: scopedOptions.map((o) => ({
         name: o.name,
         label: o.label,
         summary: o.summary,
@@ -3087,10 +3057,8 @@ async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatri
         when_not_to_pick: o.when_not_to_pick,
         strong_axes: o.strong_axes,
         weak_axes: o.weak_axes,
-        required_invariants: o.required_invariants,
-        evidence_citations: o.evidence_citations
+        citations: o.citations
       })),
-      recommendation: spec.decision?.recommendation || null,
       comparison_matrix: comparisonMatrix
         ? {
             axes: (comparisonMatrix.axes || []).map((a) => ({ id: a.id, label: a.label })),
@@ -3111,15 +3079,14 @@ async function buildEvaluationPack(context, spec, evidenceItems, comparisonMatri
 
   const targetTopologies = toArray(result.target_topologies).length
     ? toArray(result.target_topologies)
-    : rankedOptions.map((o) => o.name);
+    : scopedOptions.map((o) => o.name);
 
   return {
     version: VERSION,
     suite: result.suite || slugify(context.domain || "architecture_deep_research_suite"),
     target_topologies: targetTopologies,
     metrics: normalizeEvaluationMetrics(result.metrics),
-    test_cases: normalizeEvaluationCases(result.test_cases).slice(0, 12),
-    mode
+    test_cases: normalizeEvaluationCases(result.test_cases).slice(0, 12)
   };
 }
 
@@ -3173,33 +3140,42 @@ function normalizeEvaluationCases(testCases) {
     .filter((testCase) => testCase.question);
 }
 
-function buildGuardrails(spec) {
-  const mode = spec.decision?.mode || "deferred";
-  const rankedOptions = toArray(spec.decision?.ranked_options);
-  const allowedAgenticUse = toArray(spec.guardrails?.allowed_agentic_use);
+// buildGuardrails writes agent-guardrails.md scoped to one chosen option.
+// Called from the `adr handoff` subcommand, NOT from the default pipeline.
+function buildGuardrails(spec, { targetOptionName = null } = {}) {
+  const reportOptions = toArray(spec.options);
+  const allowedAgenticUse = toArray(spec.evidence_summary?.allowed_agentic_use);
 
-  // Deferred: no options were produced. Be honest — there is nothing for a
-  // coding agent to enforce yet.
-  if (mode === "deferred" || rankedOptions.length === 0) {
-    return `# Agent Guardrails: ${spec.decision.title}
+  if (reportOptions.length === 0) {
+    return `# Agent Guardrails: ${spec.title || "(untitled)"}
 
-## No options identified
+## No candidates identified
 
-ADR did not produce viable options for this decision. The evidence collected
-did not clear the promotion gate for any candidate. There is nothing to
-enforce.
+ADR did not surface candidates for this decision. The evidence collected
+did not produce a candidate set. There is nothing to enforce.
 
 ## What to do next
 
 - Re-run with sharper context (better PRD, narrower decision focus).
 - Or run \`adr supersede <out-dir>\` after collecting more evidence.
-- Do NOT implement against generic invariants — pick an option first.
 `;
   }
 
-  const header = `Mode: **ranked_options** — ${rankedOptions.length} viable options with genuine tradeoffs. The caller picks one option and applies the matching block below.`;
+  const targetSlug = targetOptionName ? slugify(String(targetOptionName).trim()) : null;
+  const chosen = targetSlug
+    ? reportOptions.find((o) => slugify(o.name) === targetSlug)
+    : null;
 
-  const optionBlocks = rankedOptions
+  if (targetSlug && !chosen) {
+    const names = reportOptions.map((o) => o.name).join(", ");
+    throw new Error(
+      `Option "${targetOptionName}" not found in research-report.json. Available options: ${names}`
+    );
+  }
+
+  const optionsToRender = chosen ? [chosen] : reportOptions;
+
+  const optionBlocks = optionsToRender
     .map((opt) => {
       const pickWhen = (opt.when_to_pick || [])
         .map((item) => `- ${item}`)
@@ -3207,16 +3183,14 @@ enforce.
       const avoidWhen = (opt.when_not_to_pick || [])
         .map((item) => `- ${item}`)
         .join("\n") || "- (model did not provide \"when NOT to pick\" conditions)";
-      const invariants = (opt.required_invariants || [])
-        .map((item) => `- ${item}`)
-        .join("\n") || "- (no option-specific invariants)";
-      const forbidden = (opt.forbidden_topologies || [])
-        .map((item) => `- ${item}`)
-        .join("\n") || "- (none specified)";
-      const evidence = (opt.evidence_citations || []).map((id) => `[${id}]`).join(", ") || "none";
+      const strong = (opt.strong_axes || []).join(", ") || "—";
+      const weak = (opt.weak_axes || []).join(", ") || "—";
+      const evidence = (opt.citations || []).map((id) => `[${id}]`).join(", ") || "none";
       return `## Option: \`${opt.name}\` — ${opt.label}
 
 ${opt.summary || ""}
+
+**Evidence depth:** ${opt.evidence_depth || "thin"}
 
 ### Pick this when
 ${pickWhen}
@@ -3224,11 +3198,11 @@ ${pickWhen}
 ### Avoid when
 ${avoidWhen}
 
-### Required invariants (when this option is chosen)
-${invariants}
+### Strong on
+${strong}
 
-### Forbidden topologies (when this option is chosen)
-${forbidden}
+### Weak on
+${weak}
 
 ### Evidence
 ${evidence}
@@ -3236,69 +3210,72 @@ ${evidence}
     })
     .join("\n---\n\n");
 
-  const recommendationBlock = `## No recommendation
+  const header = chosen
+    ? `Scope: implementation contract for **\`${chosen.name}\`**. The reader chose this option from the research report; honor its conditions below.`
+    : `Scope: ${reportOptions.length} candidates from the research report. No option chosen — re-run \`adr handoff --option <name>\` to scope this file to one candidate.`;
 
-ADR maps the option space; it does not pick a winner. All options above are
-viable; the choice depends on team-side constraints that ADR cannot know
-(existing infrastructure, hiring plans, vendor relationships, budget
-envelope). Pick the option whose "Pick this when" conditions match your
-situation, and honor the corresponding block.
-`;
-
-  return `# Agent Guardrails: ${spec.decision.title}
+  return `# Agent Guardrails: ${spec.title || "(untitled)"}
 
 ${header}
 
 ## How to read this file
 
-This file lists **per-option** contracts. The caller (downstream coding
-agent or human operator) picks ONE option from the list below, then
-honors:
-
-- That option's *Required invariants*
-- That option's *Forbidden topologies*
-
-Do NOT mix invariants across options. An invariant tailored to option A
-does not apply when the team picks option B.
-
-${recommendationBlock}
+ADR produces a research report. This guardrails file translates the chosen
+candidate into an implementation contract: the conditions the candidate was
+strong / weak on, what the cited evidence supports, and where to be careful.
 
 ${optionBlocks}
 
-## Agentic use (applies to all options)
+## Agentic use
 
 ${allowedAgenticUse.map((item) => `- ${item}`).join("\n") || "- (no agentic constraints carried over from synthesis)"}
 
-Do not replace a chosen option with an easier local implementation path
+Do not replace the chosen candidate with an easier local implementation path
 without producing a superseding ADR.
 `;
 }
 
-function buildADR(context, spec, knowledgeMap, evidenceItems = []) {
-  const mode = spec.decision?.mode || "deferred";
-  const rankedOptions = toArray(spec.decision?.ranked_options);
-  const rejected = spec.candidate_topologies.filter(
-    (candidate) => candidate.decision === "rejected"
-  );
+function buildADR(context, spec, knowledgeMap, evidenceItems = [], runMetadata = {}) {
+  const options = toArray(spec.options);
+  const generatedDate = String(runMetadata.generated_at || nowIso()).slice(0, 10);
+  const candidateCount = options.length;
+  const evidenceCount = toArray(evidenceItems).length;
+  const costSummary = runMetadata.estimated_usd != null
+    ? `$${Number(runMetadata.estimated_usd).toFixed(4)}`
+    : "—";
+  const llmCalls = runMetadata.total_llm_calls || 0;
 
-  const headline = mode === "ranked_options"
-    ? `**${rankedOptions.length} viable options identified — no single recommendation.** ADR maps the option space; the choice depends on team-side context. See tradeoffs below.`
-    : `**No viable options yet.** The evidence collected did not produce candidates with sufficient backing.`;
+  const headerLine = `*Generated ${generatedDate} · ${candidateCount} candidates · ${evidenceCount} evidence pieces · ${costSummary} · ${llmCalls} LLM calls*`;
 
-  const optionSections = rankedOptions
-    .map((opt, index) => {
-      const rank = index + 1;
-      const summary = opt.summary || "";
+  const summaryTable = options.length > 0
+    ? `| Candidate | Evidence depth | Strong on | Weak on |
+| --- | --- | --- | --- |
+${options.map((opt) => {
+  const strong = (opt.strong_axes || []).slice(0, 4).join(", ") || "—";
+  const weak = (opt.weak_axes || []).slice(0, 4).join(", ") || "—";
+  return `| ${opt.label || opt.name} | ${opt.evidence_depth || "thin"} | ${strong} | ${weak} |`;
+}).join("\n")}`
+    : "_(No candidates surfaced from the evidence pool.)_";
+
+  const candidateSections = options
+    .map((opt) => {
+      const summary = (opt.summary || "").trim();
+      const shows = (opt.what_evidence_shows || "").trim();
+      const gaps = (opt.what_evidence_does_not_show || "").trim();
       const pickWhen = (opt.when_to_pick || []).map((item) => `- ${item}`).join("\n");
       const avoidWhen = (opt.when_not_to_pick || []).map((item) => `- ${item}`).join("\n");
       const strong = (opt.strong_axes || []).join(", ") || "—";
       const weak = (opt.weak_axes || []).join(", ") || "—";
-      const evidence = (opt.evidence_citations || []).map((id) => `[${id}]`).join(", ") || "none";
-      return `### Option ${rank}: ${opt.label}
+      const evidence = (opt.citations || []).map((id) => `[${id}]`).join(", ") || "none";
+      return `### ${opt.label || titleCase(opt.name)} (evidence: ${opt.evidence_depth || "thin"})
 
-${summary}
+${summary || "_(no summary provided)_"}
 
-**Pick this when:**
+**What the evidence shows.** ${shows || "_(no synthesis provided)_"}
+
+**What the evidence does not show.** ${gaps || "_(no gap analysis provided)_"}
+
+**Pick when:**
 
 ${pickWhen || "- (model did not provide \"when to pick\" conditions)"}
 
@@ -3308,155 +3285,154 @@ ${avoidWhen || "- (model did not provide \"when NOT to pick\" conditions)"}
 
 **Strong on:** ${strong}
 **Weak on:** ${weak}
-**Evidence:** ${evidence}`;
+**Citations:** ${evidence}`;
     })
     .join("\n\n");
 
-  const recommendationSection = mode === "ranked_options"
-    ? `## Recommendation
+  const tradeoffs = toArray(spec.cross_cutting_tradeoffs);
+  const tradeoffSection = tradeoffs.length > 0
+    ? tradeoffs
+        .map((t) => {
+          const high = (t.candidates_high || []).join(", ") || "—";
+          const low = (t.candidates_low || []).join(", ") || "—";
+          return `### ${t.axis}
 
-**No single recommendation.** ADR maps the option space; it does not pick a winner. All ${rankedOptions.length} options above have genuine tradeoffs that depend on team-side context ADR cannot see (existing infrastructure, hiring plans, vendor relationships, budget envelope). Pick the option whose "Pick this when" conditions match your situation.
-`
-    : `## Recommendation
+${t.observation}
 
-**No viable options yet.** The evidence collected did not produce candidates with sufficient backing. Re-run with sharper context, or run \`adr supersede\` once more evidence is available.
-`;
+- Strong: ${high}
+- Weak: ${low}`;
+        })
+        .join("\n\n")
+    : "_(No cross-cutting tradeoffs surfaced from the matrix.)_";
 
-  return `# ${spec.decision.id}: ${spec.decision.title}
+  const openQuestions = toArray(spec.open_questions);
+  const openQuestionsSection = openQuestions.length > 0
+    ? openQuestions.map((q) => `- ${q}`).join("\n")
+    : "_(No open questions surfaced from the evidence pool.)_";
 
-Status: ${titleCase(spec.decision.status)}
-
-${headline}
-
-## Context
-
-Domain: ${context.domain}
-
-Decision focus: ${context.decision}
-
-The Strategic Context Model identified these query shapes:
-
-${context.query_shapes.map((shape) => `- ${shape.name}: ${shape.evidence.join(", ")}`).join("\n")}
-
-The core entities extracted from the brief are:
-
-${context.domain_entities.map((entity) => `- ${entity}`).join("\n") || "- No explicit entities found."}
-
-## Tradeoffs across options
-
-${optionSections || "_(No options were produced by this run.)_"}
-
-${recommendationSection}
-
-## Evidence Acquisition
-
-Promotion rule: ${knowledgeMap.promotion_rule}
-
-Promoted candidates:
-${knowledgeMap.promoted_candidates.map((item) => `- ${item.label}: citations ${item.citations.map((id) => `[${id}]`).join(", ")}`).join("\n") || "- No candidate passed promotion gates."}
-
-${rejected.length > 0 ? `## Candidates considered but not surfaced as options
-
-These cleared the evidence promotion gate but the synthesizer did not surface them as a tradeoff-worthy option (often because their axes were too weak to differentiate from one of the kept options, or they failed a critique pass).
-
-${rejected
-  .map(
-    (candidate) =>
-      `### ${candidate.label || titleCase(candidate.name)}\n\n${candidate.fit}\n\nRisks:\n${candidate.risks.map((risk) => `- ${risk}`).join("\n") || "- (none recorded)"}\n\nEvidence: ${candidate.evidence_citations.map((id) => `[${id}]`).join(", ") || "none"}`
-  )
-  .join("\n\n")}
-` : ""}
-
-## Bounded Contexts
-
-${spec.domain_model.bounded_contexts.map((item) => `- ${item}`).join("\n") || "- To be reviewed by the Architect agent."}
-
-${(() => {
-  // T3.3: surface private_corpus items the discover stage injected. These
-  // are the priors from the user's own repo — patterns + antipatterns
-  // tagged with architecture_family that voted in the matrix. Showing
-  // them inline so the user can see WHICH of their existing patterns
-  // shaped the recommendation, not just that "2 items got injected."
-  const privateCorpus = toArray(evidenceItems).filter(
-    (item) => item.source_type === "private_corpus"
-  );
-  if (privateCorpus.length === 0) return "";
-  const items = privateCorpus
-    .map((item) => {
-      const firstClaim = (toArray(item.claims)[0] || {});
-      const polarityIcon = firstClaim.polarity === "supports" ? "✓" : firstClaim.polarity === "rejects" ? "✗" : "·";
-      return `- ${polarityIcon} [${item.citation_id}] **${item.title}** — ${firstClaim.architecture_family || "unspecified"}: ${firstClaim.claim || item.excerpt.slice(0, 200)} (from ${item.url})`;
-    })
-    .join("\n");
-  return `## Evidence from your repo (discover stage)
+  const evidenceFromRepo = (() => {
+    const privateCorpus = toArray(evidenceItems).filter(
+      (item) => item.source_type === "private_corpus"
+    );
+    if (privateCorpus.length === 0) return "";
+    const items = privateCorpus
+      .map((item) => {
+        const firstClaim = (toArray(item.claims)[0] || {});
+        const polarityIcon = firstClaim.polarity === "supports" ? "✓" : firstClaim.polarity === "rejects" ? "✗" : "·";
+        return `- ${polarityIcon} [${item.citation_id}] **${item.title}** — ${firstClaim.architecture_family || "unspecified"}: ${firstClaim.claim || item.excerpt.slice(0, 200)} (from ${item.url})`;
+      })
+      .join("\n");
+    return `\n## Evidence from your repo (discover stage)
 
 The repo scan surfaced these patterns + antipatterns as private-corpus evidence. They voted in the comparison matrix alongside the web research:
 
 ${items}
 `;
-})()}
+  })();
 
-${(() => {
-  // T3.2: ## References section so a reader of ADR.md can resolve [N]
-  // citation markers without jumping to citation-audit.json or
-  // evidence.json. One bullet per citation_id in citation order, including
-  // source_type so the reader can weight credibility at a glance.
-  const items = toArray(evidenceItems)
-    .filter((item) => Number.isFinite(Number(item.citation_id)))
-    .sort((a, b) => Number(a.citation_id) - Number(b.citation_id))
-    .map((item) => {
-      const title = String(item.title || "(untitled)").trim();
-      const url = String(item.url || "").trim();
-      const sourceType = String(item.source_type || "unknown");
-      const retrieved = item.retrieved_at ? ` · retrieved ${item.retrieved_at}` : "";
-      const score = item.score != null ? ` · score ${item.score}` : "";
-      return `- [${item.citation_id}] **${title}** — *${sourceType}*${score}${retrieved}${url ? `\n  ${url}` : ""}`;
-    })
-    .join("\n");
-  return items
-    ? `## References
+  const references = (() => {
+    const items = toArray(evidenceItems)
+      .filter((item) => Number.isFinite(Number(item.citation_id)))
+      .sort((a, b) => Number(a.citation_id) - Number(b.citation_id))
+      .map((item) => {
+        const title = String(item.title || "(untitled)").trim();
+        const url = String(item.url || "").trim();
+        const sourceType = String(item.source_type || "unknown");
+        const retrieved = item.retrieved_at ? ` · retrieved ${item.retrieved_at}` : "";
+        const score = item.score != null ? ` · score ${item.score}` : "";
+        return `- [${item.citation_id}] **${title}** — *${sourceType}*${score}${retrieved}${url ? `\n  ${url}` : ""}`;
+      })
+      .join("\n");
+    return items
+      ? `## References
 
 ${items}
 `
-    : "";
-})()}
+      : "";
+  })();
 
-## Execution Handoff
+  return `# Research report: ${spec.title || titleCase(context.decision)}
 
-ADR stops here. Downstream coding agents or human operators pick one option from the tradeoffs above and consume the matching block in \`agent-guardrails.md\`. Implementation results may feed back as validation evidence, drift evidence, or grounds for a superseding ADR.
-`;
+${headerLine}
+
+## Executive Summary
+
+${(spec.executive_summary || "").trim() || "_(no executive summary generated)_"}
+
+## Option Space
+
+${(spec.option_space_shape || "").trim() || "_(no option-space shape provided)_"}
+
+${summaryTable}
+
+## Candidates
+
+${candidateSections || "_(No candidates were surfaced by this run.)_"}
+
+## Cross-Cutting Tradeoffs
+
+${tradeoffSection}
+
+## Open Questions
+
+${openQuestionsSection}
+
+## Evidence Acquisition
+
+${knowledgeMap.acquisition_rule || "Architecture families are extracted from the live evidence pool. Each candidate's depth (thick / medium / thin) reflects how much corroborating evidence was found."}
+
+Candidates surfaced:
+${toArray(knowledgeMap.candidates).map((item) => `- ${item.label} (evidence: ${item.evidence_depth || "thin"}): citations ${item.citations.map((id) => `[${id}]`).join(", ")}`).join("\n") || "- No candidate surfaced."}
+${evidenceFromRepo}
+${references}`;
 }
 
-function buildExecutionHandoff(spec) {
-  const mode = spec.decision?.mode || "deferred";
-  const rankedOptions = toArray(spec.decision?.ranked_options);
-  const recommendation = spec.decision?.recommendation || null;
+// buildExecutionHandoff is called from the `adr handoff` subcommand only.
+// It consumes the research report and a chosen option name, then writes an
+// implementation contract for that one option.
+function buildExecutionHandoff(spec, { targetOptionName = null } = {}) {
+  const reportOptions = toArray(spec.options);
+  const targetSlug = targetOptionName ? slugify(String(targetOptionName).trim()) : null;
+  const chosen = targetSlug
+    ? reportOptions.find((o) => slugify(o.name) === targetSlug)
+    : null;
+
+  if (targetSlug && !chosen) {
+    const names = reportOptions.map((o) => o.name).join(", ");
+    throw new Error(
+      `Option "${targetOptionName}" not found in research-report.json. Available options: ${names}`
+    );
+  }
+
+  const optionsBlock = chosen
+    ? [chosen]
+    : reportOptions;
 
   return {
     version: VERSION,
-    decision_id: spec.decision.id,
-    handoff_boundary: "adr_stops_at_execution_handoff",
-    mode,
-    options: rankedOptions.map((opt) => ({
+    decision_id: spec.id || "ADR-001",
+    handoff_boundary: "adr_stops_at_research_report",
+    chosen_option: chosen ? chosen.name : null,
+    options: optionsBlock.map((opt) => ({
       name: opt.name,
       label: opt.label,
       summary: opt.summary,
+      evidence_depth: opt.evidence_depth || "thin",
       when_to_pick: opt.when_to_pick || [],
       when_not_to_pick: opt.when_not_to_pick || [],
-      required_invariants: opt.required_invariants || [],
-      forbidden_topologies: opt.forbidden_topologies || [],
-      evidence_citations: opt.evidence_citations || []
+      strong_axes: opt.strong_axes || [],
+      weak_axes: opt.weak_axes || [],
+      citations: opt.citations || []
     })),
-    recommendation,
     artifacts: {
       adr: "ADR.md",
-      architecture_spec: "architecture.spec.json",
+      research_report: "research-report.json",
       domain_evaluation_pack: "domain-evaluation-pack.json",
       agent_guardrails: "agent-guardrails.md",
       sources: "sources.md",
       strategic_context: "strategic-context.json",
       research_plan: "research-plan.json",
-      research_report: "research-report.md",
+      research_report_markdown: "research-report.md",
       evidence: "evidence.json",
       knowledge_map: "knowledge-map.json",
       event_log: "events.jsonl"
@@ -3467,10 +3443,6 @@ function buildExecutionHandoff(spec) {
       "cursor_workspace_rules",
       "codex_workspace_rules"
     ],
-    // Back-compat: mirror the recommended option's invariants when one exists,
-    // else empty. New code should read options[] keyed by the picked option.
-    required_invariants: spec.guardrails.required_invariants,
-    forbidden_topologies: spec.guardrails.forbidden_topologies,
     feedback_contract: {
       expected_inputs_from_execution: [
         "domain evaluation results",
@@ -3486,14 +3458,13 @@ function buildExecutionHandoff(spec) {
 async function scanUncitedClaimsPhase({
   context,
   spec,
-  evaluationPack,
   adrMarkdown,
   researchReport,
   evidenceItems,
   outDir
 }) {
   await appendEvent(outDir, "claim_audit_started", {
-    artifact_count: 4
+    artifact_count: 3
   });
   let raw;
   try {
@@ -3501,9 +3472,9 @@ async function scanUncitedClaimsPhase({
       label: "uncited_claim_scanner",
       system: [
         "You audit generated Architecture Deep Research artifacts for material architecture claims.",
-        "Find claims in ADR.md, research-report.md, architecture.spec.json, and domain-evaluation-pack.json that need citations or stronger evidence.",
+        "Find claims in ADR.md, research-report.md, research-report.json that need citations or stronger evidence.",
         "Do not flag headings, generic process text, or restatements of the user's product context.",
-        "A claim is material when it recommends, rejects, compares, scores, or asserts a topology's capability, risk, latency, cost, reliability, compliance, or evidence quality.",
+        "A claim is material when it compares, scores, or asserts a candidate's capability, risk, latency, cost, reliability, compliance, or evidence quality.",
         "If a material claim is already supported by the cited evidence pool, include the citation_ids.",
         "If it is not supported or has no clear citation, set needs_citation:true.",
         "Output JSON with {claims:[{artifact,claim_text,citation_ids:[number],needs_citation:boolean,severity:'high'|'medium'|'low',reason:string}],summary:string}."
@@ -3511,12 +3482,10 @@ async function scanUncitedClaimsPhase({
       user: JSON.stringify({
         domain: context.domain,
         decision: context.decision,
-        selected_topology: spec.decision?.selected_topology,
         artifacts: {
           adr_markdown: adrMarkdown.slice(0, 18_000),
           research_report: researchReport.slice(0, 18_000),
-          architecture_spec: spec,
-          domain_evaluation_pack: evaluationPack
+          research_report_json: spec
         },
         evidence: evidenceItems.map((item) => ({
           citation_id: item.citation_id,
@@ -3566,7 +3535,6 @@ async function scanUncitedClaimsPhase({
   ).length;
   const audit = {
     version: VERSION,
-    selected_topology: spec.decision?.selected_topology,
     total_claims_checked: claims.length,
     uncited_material_claim_count: claims.filter((claim) => claim.needs_citation).length,
     high_severity_count: highSeverityCount,
@@ -3607,20 +3575,18 @@ Sources are preserved as evidence items before synthesis. Downstream adapters sh
 `;
 }
 
-function synthesizeResearchReport({ context, plan, spec, evidenceItems, researchResults, knowledgeMap }) {
+function buildResearchReportMarkdown({ context, plan, spec, evidenceItems, researchResults, knowledgeMap }) {
   const topEvidence = evidenceItems.slice(0, 10);
-  const mode = spec.decision?.mode || "deferred";
-  const rankedOptions = toArray(spec.decision?.ranked_options);
-
-  const decisionLine = mode === "ranked_options"
-    ? `ADR identified **${rankedOptions.length} viable options** for **${context.domain}**. ADR maps the option space; the reader picks. See \`ADR.md\` for per-option tradeoffs and \`follow-up-questions.json\` for the sharper sub-decisions surfaced by matrix variance.`
-    : `ADR did not produce viable options for **${context.domain}**. See \`critique.json\` and re-run with sharper context.`;
+  const candidates = toArray(spec.options);
+  const candidatesLine = candidates.length > 0
+    ? `ADR mapped **${candidates.length} candidates** in the option space for **${context.domain}**. The decision is yours; see \`ADR.md\` for the full per-candidate report and \`where-to-dig-deeper.json\` for the sharper sub-research threads.`
+    : `ADR did not surface candidates for **${context.domain}**. See \`critique.json\` and re-run with sharper context.`;
 
   return `# Architecture Deep Research Report
 
-## Decision
+## Decision space
 
-${decisionLine}
+${candidatesLine}
 
 ## Research Mode
 
@@ -3635,11 +3601,12 @@ ${(plan.tasks || []).map((task) => `- ${task.id}: ${task.title}`).join("\n")}
 
 ## Knowledge Acquisition
 
-Promoted candidates:
-${knowledgeMap.promoted_candidates.map((item) => `- ${item.label}: ${item.evidence_count} claims, citations ${item.citations.map((id) => `[${id}]`).join(", ")}`).join("\n") || "- None."}
+Candidates surfaced:
+${toArray(knowledgeMap.candidates).map((item) => `- ${item.label} (evidence: ${item.evidence_depth || "thin"}): ${item.evidence_count} claims, citations ${item.citations.map((id) => `[${id}]`).join(", ")}`).join("\n") || "- None."}
 
-Insufficient evidence candidates:
-${knowledgeMap.insufficient_evidence_candidates.map((item) => `- ${item.label}: ${item.evidence_count} claims`).join("\n") || "- None."}
+${toArray(knowledgeMap.off_topic_candidates).length > 0 ? `Off-topic candidates filtered out:
+${toArray(knowledgeMap.off_topic_candidates).map((item) => `- ${item.label}: ${item.evidence_count} claims`).join("\n")}
+` : ""}
 
 ## Evidence Summary
 
@@ -3653,7 +3620,7 @@ ${researchResults.map((result) => result.report).join("\n")}
 
 ## Boundary
 
-ADR stops at Execution Handoff. The report supports architecture selection; it does not authorize the research agent to implement the product.
+ADR stops at the research report. The reader decides which candidate fits their context; \`adr handoff\` produces an implementation contract for the chosen candidate when needed.
 `;
 }
 
@@ -3776,8 +3743,7 @@ async function prepareRun({ inputPath, flags, chained = false }) {
       if (priorState?.status === "completed") {
         throw new Error(
           `Out dir ${outDir} already contains a completed run ` +
-          `(decision_mode=${priorState.decision_mode || "unknown"}, ` +
-          `recommendation=${priorState.recommendation_name || "none"}). ` +
+          `(${priorState.candidate_count ?? "?"} candidates). ` +
           `Re-running would discard those artifacts and bill you again. ` +
           `Pick one:\n` +
           `  - Use a different --out path for a fresh run\n` +
@@ -4310,7 +4276,7 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
   if (flags && flags["skip-relevance-filter"]) {
     return { knowledgeMap, dropped: [], skipped: true };
   }
-  const promoted = toArray(knowledgeMap?.promoted_candidates);
+  const promoted = toArray(knowledgeMap?.candidates);
   if (promoted.length === 0) {
     return { knowledgeMap, dropped: [], skipped: false };
   }
@@ -4325,9 +4291,9 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
         `The decision being made is: "${context.decision}".`,
         `Domain: "${context.domain}".`,
         "",
-        "You receive a list of architecture-family candidates that cleared the",
-        "evidence promotion gate (they have cited support). For each candidate,",
-        "decide whether it is a plausible ANSWER to the decision being made.",
+        "You receive a list of architecture-family candidates surfaced from the",
+        "live evidence pool. For each candidate, decide whether it is a",
+        "plausible ANSWER to the decision being made.",
         "",
         "Examples of off_topic candidates (drop):",
         "  - decision: 'auth provider', candidate: 'nextjs'    → off_topic (nextjs is a framework, not an auth provider)",
@@ -4397,11 +4363,11 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
   }
 
   const droppedSet = new Set(dropped.map((d) => slugify(d.name)));
-  const movedToInsufficient = promoted
+  const movedToOffTopic = promoted
     .filter((c) => droppedSet.has(slugify(c.name)))
     .map((c) => ({
       ...c,
-      promotion_status: "off_topic_for_decision",
+      off_topic_for_decision: true,
       off_topic_reason: dropped.find((d) => slugify(d.name) === slugify(c.name))?.reason || ""
     }));
 
@@ -4416,10 +4382,10 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
 
   const updated = {
     ...knowledgeMap,
-    promoted_candidates: keptPromoted,
-    insufficient_evidence_candidates: [
-      ...toArray(knowledgeMap.insufficient_evidence_candidates),
-      ...movedToInsufficient
+    candidates: keptPromoted,
+    off_topic_candidates: [
+      ...toArray(knowledgeMap.off_topic_candidates),
+      ...movedToOffTopic
     ],
     _off_topic_drops: offTopicNames
   };
@@ -4449,7 +4415,7 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
         await writeJson(path.join(outDir, "knowledge-map.json"), knowledgeMap);
         await appendEvent(outDir, "research_resumed_from_cache", {
           evidence_count: cachedEvidence.length,
-          promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+          candidate_count: knowledgeMap.candidates.length,
           reason: "Skipping research phase — evidence.json already present from prior run."
         });
         // Synthesize stub researchResults so downstream stages that read
@@ -4487,15 +4453,15 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
   let adaptiveCycle = 0;
 
   while (
-    knowledgeMap.promoted_candidates.length === 0 &&
+    knowledgeMap.candidates.length === 0 &&
     adaptiveCycle < maxAdaptiveCycles
   ) {
     adaptiveCycle += 1;
     await appendEvent(outDir, "adaptive_research_cycle_started", {
       cycle: adaptiveCycle,
-      reason: "no_promoted_candidates",
+      reason: "no_candidates_surfaced",
       evidence_count: evidenceItems.length,
-      insufficient_candidate_count: knowledgeMap.insufficient_evidence_candidates.length
+      off_topic_candidate_count: toArray(knowledgeMap.off_topic_candidates).length
     });
 
     let gapPlan;
@@ -4541,7 +4507,7 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
     await appendEvent(outDir, "adaptive_research_cycle_completed", {
       cycle: adaptiveCycle,
       evidence_count: evidenceItems.length,
-      promoted_candidate_count: knowledgeMap.promoted_candidates.length
+      candidate_count: knowledgeMap.candidates.length
     });
   }
 
@@ -4562,7 +4528,7 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
 
   await appendEvent(outDir, "evidence_collected", {
     evidence_count: evidenceItems.length,
-    promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+    candidate_count: knowledgeMap.candidates.length,
     adaptive_cycles: adaptiveCycle
   });
 
@@ -4725,7 +4691,7 @@ async function synthesizeDecisionPhase({
   priorCritique = null,
   priorSpec = null
 }) {
-  return synthesizeArchitectureSpec({
+  return synthesizeResearchReport({
     context,
     knowledgeMap,
     evidenceItems,
@@ -4745,48 +4711,50 @@ async function critiqueDecisionPhase({
   let raw;
   try {
     raw = await callLlmJson({
-      label: "architecture_critique_agent",
+      label: "research_report_critique_agent",
       system: [
         "You are the Architecture Deep Research critique agent.",
         "",
-        "The architecture spec carries a RANKED OPTION SET (decision.ranked_options) and",
-        "optionally a recommendation (decision.recommendation). Your job is to critique",
-        "the quality of that option set — NOT to pick a different winner.",
+        "ADR produces a RESEARCH REPORT on the architectural decision space. Your",
+        "job is to critique the report's comprehensiveness and grounding — NOT",
+        "to pick a winner among the candidates.",
         "",
         "Focus on these failure modes:",
-        "  1. duplicate_options: two options in ranked_options describe the same thing",
-        "     under different names (e.g. token_based_auth + token_based_authentication,",
-        "     or two distinct product names that map to the same vendor).",
-        "  2. ungrounded_strong_axes: an option claims strong_axes that its citations",
-        "     don't actually support. Quote the citation and explain the mismatch.",
-        "  3. missing_when_to_pick: an option has empty or generic when_to_pick /",
-        "     when_not_to_pick. Tradeoffs without conditions are not tradeoffs.",
-        "  4. unsupported_recommendation: mode=\"recommended\" but the comparison matrix",
-        "     does not actually show one option dominating. The synthesizer overclaimed.",
-        "     If this fires, the right fix is mode=\"ranked_options\" and recommendation=null.",
-        "  5. evidence_weakness: an option is backed by single-source or low-quality",
-        "     evidence with no official_docs / mature_oss / paper_or_benchmark /",
-        "     private_corpus citations.",
-        "  6. citation_mismatch: a citation attached to option X actually discusses a",
-        "     different option (the bleed pathology — citations 57, 58 are about OAuth",
-        "     but appear under token_based_auth).",
-        "  7. missing_option: the evidence pool clearly contains a viable option that",
-        "     ranked_options omits.",
+        "  1. missing_candidate_section: a candidate appeared in",
+        "     knowledge_map.candidates but no entry exists in spec.options[].",
+        "  2. imbalanced_evidence_depth: wide disparity in evidence depth across",
+        "     candidates (e.g. one thick, three thin) that the executive_summary",
+        "     and option_space_shape do not acknowledge. The report should",
+        "     surface depth disparity so the reader weights confidence.",
+        "  3. missing_cross_cutting_tradeoff: a matrix axis shows high variance",
+        "     (candidates split strong vs weak) but no entry appears in",
+        "     cross_cutting_tradeoffs.",
+        "  4. weak_citation: a claim is cited but the source is low-quality —",
+        "     general_web without corroboration, no official_docs / mature_oss /",
+        "     paper_or_benchmark backing.",
+        "  5. missing_open_question: a candidate's what_evidence_does_not_show",
+        "     is non-empty but nothing relevant lands in open_questions.",
+        "  6. unbalanced_per_option: when_to_pick and when_not_to_pick lists are",
+        "     wildly different lengths (e.g. 4 pick / 0 avoid) suggesting bias.",
+        "  7. citation_mismatch: a citation attached to candidate X actually",
+        "     discusses a different candidate (the bleed pathology — citations",
+        "     57, 58 are about OAuth but appear under token_based_auth).",
         "",
         "Severity:",
-        "  - high: would mislead a reader (duplicate, ungrounded recommendation, bleed)",
-        "  - medium: weakens the document but not load-bearing (thin when_to_pick)",
+        "  - high: would mislead a reader (missing candidate section, citation",
+        "    bleed, imbalanced depth left unacknowledged)",
+        "  - medium: weakens the report but not load-bearing (thin when_to_pick,",
+        "    one weak citation in an otherwise solid section)",
         "  - low: nice-to-have polish",
         "",
-        "Cite evidence by citation_id. Be specific — \"citation 57 mentions OAuth client",
-        "credentials, not token-based auth\" beats \"weak citation.\"",
+        "Cite evidence by citation_id. Be specific — \"citation 57 mentions OAuth",
+        "client credentials, not token-based auth\" beats \"weak citation.\"",
         "",
-        "Output JSON: {issues:[{severity, category, description, evidence_citations:[number], target:{kind:'option'|'recommendation'|'spec', name?:string}}], summary:string, recommend_human_review:boolean}.",
+        "Output JSON: {issues:[{severity, category, description, evidence_citations:[number], target:{kind:'option'|'report'|'tradeoff', name?:string}}], summary:string, recommend_human_review:boolean}.",
         "",
-        "Set recommend_human_review:true only when the option set itself is structurally",
-        "unreliable — duplicate options, multiple ungrounded recommendations, citation",
-        "bleed everywhere. Do NOT set it just because mode=\"ranked_options\" — that's",
-        "the correct mode when no winner dominates."
+        "Set recommend_human_review:true only when the report is structurally",
+        "unreliable — multiple missing candidate sections, citation bleed",
+        "everywhere, depth disparity that invalidates the comparison."
       ].join("\n"),
       user: JSON.stringify({
         context,
@@ -4880,24 +4848,13 @@ async function verifyCitationsPhase({
   });
 
   const citedPoints = [];
-  for (const id of toArray(spec.decision?.evidence_citations).map(Number)) {
-    if (Number.isFinite(id)) {
-      citedPoints.push({
-        citation_id: id,
-        claim_context: "selected_topology_summary",
-        claim_text: spec.decision?.summary || ""
-      });
-    }
-  }
-  for (const candidate of toArray(spec.candidate_topologies)) {
-    for (const id of toArray(candidate.evidence_citations).map(Number)) {
+  for (const opt of toArray(spec.options)) {
+    for (const id of toArray(opt.citations).map(Number)) {
       if (Number.isFinite(id)) {
         citedPoints.push({
           citation_id: id,
-          claim_context: `candidate:${candidate.name}:${candidate.decision || "n/a"}`,
-          claim_text: `${candidate.label || candidate.name} — fit: ${candidate.fit || ""}; risks: ${
-            (candidate.risks || []).join("; ") || "n/a"
-          }`
+          claim_context: `candidate:${opt.name}`,
+          claim_text: `${opt.label || opt.name} — ${opt.summary || ""}; what evidence shows: ${(opt.what_evidence_shows || "").slice(0, 400)}`
         });
       }
     }
@@ -4916,8 +4873,7 @@ async function verifyCitationsPhase({
     const item = evidenceById.get(Number(point.citation_id));
     if (!item) continue;
     if (item.source_type !== "private_corpus") continue;
-    if (!/^candidate:/.test(point.claim_context)
-      && point.claim_context !== "selected_topology_summary") continue;
+    if (!/^candidate:/.test(point.claim_context)) continue;
     items.push({
       citation_id: point.citation_id,
       claim_context: point.claim_context,
@@ -5055,7 +5011,6 @@ async function verifyCitationsPhase({
   const unsupportedCount = totalCitations - verifiedCount;
   const audit = {
     version: VERSION,
-    selected_topology: spec.decision?.selected_topology,
     total_citations: totalCitations,
     verified_count: verifiedCount,
     unsupported_count: unsupportedCount,
@@ -5092,77 +5047,27 @@ async function verifyCitationsPhase({
   return audit;
 }
 
-// Drop the recommendation when the critique flagged structural issues. The
-// option set itself survives — losing the recommendation just means ADR is
-// honest that the evidence doesn't clearly favor one option over another.
-// mode goes "recommended" → "ranked_options". When the synthesizer already
-// landed at "ranked_options" or "deferred", there's nothing to downgrade.
-function dropRecommendation(spec, reason) {
-  const mode = spec.decision?.mode || "deferred";
-  if (mode !== "recommended") return null;
-  const priorRec = spec.decision?.recommendation || null;
-  return {
-    ...spec,
-    decision: {
-      ...spec.decision,
-      mode: "ranked_options",
-      recommendation: null,
-      original_recommendation: priorRec,
-      original_selected_topology: spec.decision.selected_topology,
-      selected_topology: "ranked_options",
-      summary: [spec.decision.summary || "", reason].filter(Boolean).join(" ")
-    },
-    guardrails: {
-      ...spec.guardrails,
-      // The rolled-up invariants/forbidden_topologies mirrored the
-      // recommended option. Without a recommendation, the back-compat
-      // fields go empty — callers must read per-option from ranked_options.
-      required_invariants: [],
-      forbidden_topologies: []
-    }
-  };
-}
-
+// ADR is a research-report engine now. There is no recommendation to drop —
+// the critique surfaces report quality issues, and the citation audit
+// surfaces unsupported claims, but neither rewrites the spec. The reader
+// weighs the audit results and the per-candidate evidence themselves.
+//
+// applyCritique and applyCitationAudit are preserved as no-ops so existing
+// callers (and any framework adapters) continue to work without changes.
 function applyCritique({ spec, critique, flags }) {
-  if (!critique) return { spec, downgraded: false };
-  if (flags["no-enforce-critique"]) return { spec, downgraded: false };
-  // Only drop the recommendation when the critique explicitly flagged the
-  // option set as structurally unreliable (recommend_human_review === true).
-  // High-severity-count alone is not enough — those issues may be polish
-  // problems on options the synthesizer correctly identified.
-  if (
-    critique.high_severity_count === 0 ||
-    !critique.recommend_human_review
-  ) {
-    return { spec, downgraded: false };
-  }
-  const reason = `Downgraded by critique (${critique.high_severity_count} high-severity issues): ${critique.summary}. Dropped the recommendation; ranked_options preserved.`;
-  const downgradedSpec = dropRecommendation(spec, reason);
-  if (!downgradedSpec) return { spec, downgraded: false };
-  return { spec: downgradedSpec, downgraded: true };
+  // critique and flags are surfaced via critique.json + state.json; this
+  // function does not mutate the spec.
+  void critique;
+  void flags;
+  return { spec, downgraded: false };
 }
 
 function applyCitationAudit({ spec, citationAudit, flags }) {
-  if (!citationAudit) return { spec, downgraded: false };
-  if (flags["no-enforce-citation-audit"]) return { spec, downgraded: false };
-  const recommendation = spec.decision?.recommendation;
-  if (!recommendation) return { spec, downgraded: false };
-
-  const recName = slugify(recommendation.name);
-  const unsupportedSelected = toArray(citationAudit.items).filter((item) => {
-    if (item.verified) return false;
-    const context = String(item.claim_context || "");
-    return (
-      context === "selected_topology_summary" ||
-      context.startsWith(`candidate:${recName}:`)
-    );
-  });
-  if (unsupportedSelected.length === 0) return { spec, downgraded: false };
-
-  const reason = `Downgraded by citation audit (${unsupportedSelected.length} unsupported citations on the recommended option). Dropped the recommendation; ranked_options preserved.`;
-  const downgradedSpec = dropRecommendation(spec, reason);
-  if (!downgradedSpec) return { spec, downgraded: false };
-  return { spec: downgradedSpec, downgraded: true, unsupportedSelected };
+  // citationAudit results are surfaced via citation-audit.json + state.json;
+  // this function does not mutate the spec.
+  void citationAudit;
+  void flags;
+  return { spec, downgraded: false, unsupportedSelected: [] };
 }
 
 // Compute per-axis verdict variance ("spread") across candidates in the
@@ -5218,15 +5123,13 @@ function computeAxisSpread(matrix) {
 // Runs AFTER the citation audit and BEFORE the handoff write. Persisted as
 // follow-up-questions.json and appended to ADR.md as "## Follow-up Questions".
 async function proposeFollowUpQuestions({ context, spec, comparisonMatrix, outDir }) {
-  const rankedOptions = toArray(spec.decision?.ranked_options);
-  const mode = spec.decision?.mode || "deferred";
-  if (mode === "deferred" || rankedOptions.length === 0 || !comparisonMatrix) {
+  const options = toArray(spec?.options);
+  if (options.length === 0 || !comparisonMatrix) {
     const empty = {
       version: VERSION,
       decision: context.decision,
       domain: context.domain,
       generated_at: nowIso(),
-      mode,
       follow_ups: []
     };
     await writeJson(path.join(outDir, "follow-up-questions.json"), empty);
@@ -5241,7 +5144,6 @@ async function proposeFollowUpQuestions({ context, spec, comparisonMatrix, outDi
       decision: context.decision,
       domain: context.domain,
       generated_at: nowIso(),
-      mode,
       follow_ups: []
     };
     await writeJson(path.join(outDir, "follow-up-questions.json"), empty);
@@ -5254,34 +5156,36 @@ async function proposeFollowUpQuestions({ context, spec, comparisonMatrix, outDi
     raw = await callLlmJson({
       label: "follow_up_question_proposer",
       system: [
-        "You propose sharper sub-decision questions for Architecture Deep Research.",
+        "You propose research threads that would deepen the evidence on the highest-spread axes from this run.",
         "",
-        "The main run produced a ranked option set across the option space. For",
+        "The main run produced a research report mapping the option space. For",
         "each high-spread axis below — where candidates landed at different",
-        "verdicts, suggesting a real sub-decision lives on that axis — write a",
-        "concise question that splits the options on THAT axis, plus a pre-",
-        "filled `adr deep-research` command the user can paste to chase it.",
+        "verdicts, suggesting the evidence is thinner than the headline suggests",
+        "— write a concise question framing the next RESEARCH DIG (not the next",
+        "decision), plus a pre-filled `adr deep-research` command the user can",
+        "paste to chase it.",
         "",
         "For each input axis emit:",
         "  axis: the axis id from the input",
         "  spread_score: the input spread score, unchanged",
-        "  question: 1 sentence, sharp, names the split (e.g., 'Pick between self-hosted (Memgraph, Neo4j community) and managed (Neo4j Aura, Stardog Cloud) for the graph store.')",
-        "  suggested_command: a complete `adr deep-research --decision '...' --domain '...' --out .adr-runs/<slug>` command. Use a short slug for the out dir.",
+        "  question: 1 sentence, sharp, names the research thread (e.g., 'Dig deeper on managed-vs-self-hosted operational tradeoffs for graph stores — current evidence is thin on production outages and recovery.')",
+        "  suggested_command: a complete `adr deep-research --decision '...' --domain '...' --out .adr-runs/<slug>` command. Use a short slug.",
         "",
         "Keep questions grounded in the candidates the matrix actually contains.",
-        "Do not invent vendors. The question is a sub-decision of the parent",
-        "decision; preserve domain.",
+        "Do not invent vendors. The question deepens evidence on this axis; it",
+        "is not a sub-decision the reader must make.",
         "",
         "Output JSON: { follow_ups: [{ axis, spread_score, question, suggested_command }] }."
       ].join("\n"),
       user: JSON.stringify({
         parent_decision: context.decision,
         parent_domain: context.domain,
-        ranked_options: rankedOptions.map((o) => ({
+        options: options.map((o) => ({
           name: o.name,
           label: o.label,
           strong_axes: o.strong_axes,
-          weak_axes: o.weak_axes
+          weak_axes: o.weak_axes,
+          evidence_depth: o.evidence_depth
         })),
         high_spread_axes: spreads,
         matrix_axes: (comparisonMatrix.axes || []).map((a) => ({ id: a.id, label: a.label }))
@@ -5296,7 +5200,6 @@ async function proposeFollowUpQuestions({ context, spec, comparisonMatrix, outDi
       decision: context.decision,
       domain: context.domain,
       generated_at: nowIso(),
-      mode,
       follow_ups: []
     };
     await writeJson(path.join(outDir, "follow-up-questions.json"), empty);
@@ -5329,7 +5232,6 @@ async function proposeFollowUpQuestions({ context, spec, comparisonMatrix, outDi
     decision: context.decision,
     domain: context.domain,
     generated_at: nowIso(),
-    mode,
     follow_ups: followUps
   };
   await writeJson(path.join(outDir, "follow-up-questions.json"), artifact);
@@ -5354,56 +5256,14 @@ async function writeRunArtifacts({
   followUps = null,
   flags = {}
 }) {
-  await appendEvent(outDir, "evaluation_pack_started", {
-    spec_mode: spec.decision?.mode
-  });
-  const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix);
-  await appendEvent(outDir, "evaluation_pack_completed", {
-    test_case_count: evaluationPack.test_cases.length,
-    metric_count: Object.keys(evaluationPack.metrics || {}).length
-  });
-  const baseHandoff = buildExecutionHandoff(spec);
-  let handoff = baseHandoff;
-  if (comparisonMatrix) {
-    handoff = {
-      ...handoff,
-      artifacts: {
-        ...handoff.artifacts,
-        comparison_matrix: "comparison-matrix.json"
-      },
-      comparison_matrix_summary: {
-        candidates: comparisonMatrix.candidates.length,
-        axes: comparisonMatrix.axes.length,
-        cells: comparisonMatrix.cells.length,
-        empty_cells: comparisonMatrix.empty_cells.length,
-        strong_cells: comparisonMatrix.cells.filter((cell) => cell.verdict === "strong").length,
-        weak_cells: comparisonMatrix.cells.filter((cell) => cell.verdict === "weak").length
-      }
-    };
-  }
-  if (critique) {
-    handoff = {
-      ...handoff,
-      artifacts: { ...handoff.artifacts, critique: "critique.json" },
-      critique_summary: {
-        issue_count: critique.issues.length,
-        high_severity_count: critique.high_severity_count,
-        recommend_human_review: critique.recommend_human_review
-      }
-    };
-  }
-  if (citationAudit) {
-    handoff = {
-      ...handoff,
-      artifacts: { ...handoff.artifacts, citation_audit: "citation-audit.json" },
-      citation_audit_summary: {
-        total_citations: citationAudit.total_citations,
-        verified_count: citationAudit.verified_count,
-        unsupported_count: citationAudit.unsupported_count
-      }
-    };
-  }
-  const report = synthesizeResearchReport({
+  // The handoff stage (agent-guardrails.md + execution-handoff.json +
+  // domain-evaluation-pack.json) is now lazy. It runs on `adr handoff
+  // <out_dir> --option <name>`, NOT on the default pipeline. ADR's job is
+  // to produce a research report; the handoff is a downstream artifact the
+  // reader requests after they pick a candidate.
+  const wantHandoff = Boolean(flags["write-handoff"]);
+
+  const report = buildResearchReportMarkdown({
     context,
     plan,
     spec,
@@ -5411,88 +5271,75 @@ async function writeRunArtifacts({
     researchResults,
     knowledgeMap
   });
-  const baseAdrMarkdown = buildADR(context, spec, knowledgeMap, evidenceItems);
+  const costSummary = summarizeLlmCost();
+  const runMetadata = {
+    generated_at: nowIso(),
+    estimated_usd: costSummary.totals.estimated_usd,
+    total_llm_calls: costSummary.totals.calls
+  };
+  const baseAdrMarkdown = buildADR(context, spec, knowledgeMap, evidenceItems, runMetadata);
   const followUpsSection = (followUps && toArray(followUps.follow_ups).length > 0)
-    ? `\n## Follow-up Questions\n\nThe matrix surfaced these sub-decisions where candidates landed at different verdicts. Each one is a sharper question to chase next; the suggested command pre-fills \`adr deep-research\` for you.\n\n${toArray(followUps.follow_ups).map((f, i) => `### ${i + 1}. ${f.question}\n\n*Axis:* \`${f.axis}\` (spread ${f.spread_score})\n\n${f.suggested_command ? "```bash\n" + f.suggested_command + "\n```" : "_(no suggested command)_"}`).join("\n\n")}\n`
+    ? `\n## Where to Dig Deeper\n\nThe matrix surfaced these axes as the thinnest in this run. Each one is a sharper research thread to chase next; the suggested command pre-fills \`adr deep-research\` for you.\n\n${toArray(followUps.follow_ups).map((f, i) => `### ${i + 1}. ${f.question}\n\n*Axis:* \`${f.axis}\` (spread ${f.spread_score})\n\n${f.suggested_command ? "```bash\n" + f.suggested_command + "\n```" : "_(no suggested command)_"}`).join("\n\n")}\n`
     : "";
   const adrMarkdown = baseAdrMarkdown + followUpsSection;
-  if (followUps) {
-    handoff = {
-      ...handoff,
-      artifacts: { ...handoff.artifacts, follow_up_questions: "follow-up-questions.json" },
-      follow_up_questions_summary: {
-        count: toArray(followUps.follow_ups).length,
-        axes: toArray(followUps.follow_ups).map((f) => f.axis)
-      }
-    };
-  }
+
   const claimAudit = flags["skip-claim-audit"]
     ? null
     : await scanUncitedClaimsPhase({
         context,
         spec,
-        evaluationPack,
         adrMarkdown,
         researchReport: report,
         evidenceItems,
         outDir
       });
-  if (claimAudit) {
-    handoff = {
-      ...handoff,
-      artifacts: { ...handoff.artifacts, claim_audit: "claim-audit.json" },
-      claim_audit_summary: {
-        total_claims_checked: claimAudit.total_claims_checked,
-        uncited_material_claim_count: claimAudit.uncited_material_claim_count,
-        high_severity_count: claimAudit.high_severity_count
-      }
-    };
-  }
 
-  await appendEvent(outDir, "handoff_writing", {});
-  // Each artifact is written best-effort so one schema validation failure
-  // doesn't nuke the rest. ADR.md is the most important reader-facing
-  // artifact and MUST be written; the structured JSON files are checked
-  // against their schema but a failure falls back to writing .invalid.json
-  // + .validation-errors.txt and continues with the next artifact.
+  // Default-path artifacts: the research report (json + md), ADR.md, sources.md.
+  // Handoff artifacts (guardrails, execution-handoff, domain-evaluation-pack)
+  // are skipped unless --write-handoff was set.
   const validationWarnings = [];
   await writeFile(path.join(outDir, "ADR.md"), adrMarkdown);
-  const specWrite = await writeJsonBestEffort(path.join(outDir, "architecture.spec.json"), spec);
-  if (!specWrite.ok) validationWarnings.push({ file: "architecture.spec.json", error: specWrite.error });
-  const evalWrite = await writeJsonBestEffort(path.join(outDir, "domain-evaluation-pack.json"), evaluationPack);
-  if (!evalWrite.ok) validationWarnings.push({ file: "domain-evaluation-pack.json", error: evalWrite.error });
-  await writeFile(path.join(outDir, "agent-guardrails.md"), buildGuardrails(spec));
-  // The handoff is annotated with any validation warnings from earlier
-  // writes so the downstream consumer sees them.
-  if (validationWarnings.length > 0) {
-    handoff = { ...handoff, validation_warnings: validationWarnings };
-  }
-  const handoffWrite = await writeJsonBestEffort(path.join(outDir, "execution-handoff.json"), handoff);
-  if (!handoffWrite.ok) validationWarnings.push({ file: "execution-handoff.json", error: handoffWrite.error });
+  const specWrite = await writeJsonBestEffort(path.join(outDir, "research-report.json"), spec);
+  if (!specWrite.ok) validationWarnings.push({ file: "research-report.json", error: specWrite.error });
   await writeFile(path.join(outDir, "research-report.md"), report);
   await writeFile(path.join(outDir, "sources.md"), buildDeepSources(context, evidenceItems));
+
+  let evaluationPack = null;
+  if (wantHandoff) {
+    await appendEvent(outDir, "evaluation_pack_started", {});
+    evaluationPack = await buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix);
+    await appendEvent(outDir, "evaluation_pack_completed", {
+      test_case_count: evaluationPack.test_cases.length,
+      metric_count: Object.keys(evaluationPack.metrics || {}).length
+    });
+    await appendEvent(outDir, "handoff_writing", {});
+    const evalWrite = await writeJsonBestEffort(path.join(outDir, "domain-evaluation-pack.json"), evaluationPack);
+    if (!evalWrite.ok) validationWarnings.push({ file: "domain-evaluation-pack.json", error: evalWrite.error });
+    await writeFile(path.join(outDir, "agent-guardrails.md"), buildGuardrails(spec));
+    const handoff = buildExecutionHandoff(spec);
+    const handoffWrite = await writeJsonBestEffort(path.join(outDir, "execution-handoff.json"), handoff);
+    if (!handoffWrite.ok) validationWarnings.push({ file: "execution-handoff.json", error: handoffWrite.error });
+  } else {
+    await appendEvent(outDir, "handoff_skipped", {
+      reason: "default_pipeline_omits_handoff",
+      hint: "Run `adr handoff <out_dir> --option <name>` to scope an implementation contract for one candidate."
+    });
+  }
+
   if (validationWarnings.length > 0) {
     await appendEvent(outDir, "artifact_validation_warnings", {
       warning_count: validationWarnings.length,
       files: validationWarnings.map((w) => w.file)
     });
   }
-  const costSummary = summarizeLlmCost();
   await writeJson(path.join(outDir, "cost.json"), costSummary);
-  const mode = spec.decision?.mode || "deferred";
-  const recommendation = spec.decision?.recommendation || null;
-  const rankedOptions = toArray(spec.decision?.ranked_options);
+  const options = toArray(spec.options);
   await writeJson(path.join(outDir, "state.json"), {
     version: VERSION,
     status: "completed",
     completed_at: nowIso(),
-    decision_mode: mode,
-    recommendation_name: recommendation ? recommendation.name : null,
-    ranked_options_count: rankedOptions.length,
-    selected_topology: spec.decision.selected_topology,
-    original_selected_topology: spec.decision.original_selected_topology || null,
+    candidate_count: options.length,
     evidence_count: evidenceItems.length,
-    promoted_candidate_count: knowledgeMap.promoted_candidates.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
     citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
     claim_audit_high_severity_count: claimAudit ? claimAudit.high_severity_count : 0,
@@ -5501,13 +5348,11 @@ async function writeRunArtifacts({
       : 0,
     comparison_matrix_empty_cells: comparisonMatrix ? comparisonMatrix.empty_cells.length : 0,
     estimated_usd: costSummary.totals.estimated_usd,
-    handoff_boundary: "adr_stops_at_execution_handoff"
+    handoff_written: wantHandoff,
+    handoff_boundary: "adr_stops_at_research_report"
   });
   await appendEvent(outDir, "run_completed", {
-    decision_mode: mode,
-    recommendation_name: recommendation ? recommendation.name : null,
-    ranked_options_count: rankedOptions.length,
-    selected_topology: spec.decision.selected_topology,
+    candidate_count: options.length,
     evidence_count: evidenceItems.length,
     critique_high_severity_count: critique ? critique.high_severity_count : 0,
     citation_audit_unsupported_count: citationAudit ? citationAudit.unsupported_count : 0,
@@ -5521,13 +5366,11 @@ async function writeRunArtifacts({
   });
 
   return {
-    mode,
-    recommendation,
-    rankedOptions,
-    selectedTopology: spec.decision.selected_topology,
+    options,
+    candidateCount: options.length,
     evidenceCount: evidenceItems.length,
-    promotedCandidateCount: knowledgeMap.promoted_candidates.length,
-    handoffBoundary: "adr_stops_at_execution_handoff",
+    handoffBoundary: "adr_stops_at_research_report",
+    handoffWritten: wantHandoff,
     critiqueHighSeverityCount: critique ? critique.high_severity_count : 0,
     citationAuditUnsupportedCount: citationAudit ? citationAudit.unsupported_count : 0,
     claimAuditHighSeverityCount: claimAudit ? claimAudit.high_severity_count : 0,
@@ -5728,7 +5571,7 @@ async function _deepResearchImpl({ inputPath, flags }) {
     await appendEvent(prepared.outDir, "private_corpus_evidence_injected", {
       synthetic_count: syntheticEvidenceItems.length,
       new_evidence_total: evidenceItems.length,
-      promoted_candidate_count: knowledgeMap.promoted_candidates.length,
+      candidate_count: knowledgeMap.candidates.length,
       antipattern_axis_count: discoveredAntipatterns.length
     });
   }
@@ -5770,7 +5613,7 @@ async function _deepResearchImpl({ inputPath, flags }) {
   }
 
   await appendEvent(prepared.outDir, "synthesis_started", {
-    promoted_candidates: knowledgeMap.promoted_candidates.length,
+    candidates: knowledgeMap.candidates.length,
     evidence_count: evidenceItems.length
   });
   let rawSpec = await synthesizeDecisionPhase({
@@ -5779,14 +5622,14 @@ async function _deepResearchImpl({ inputPath, flags }) {
     evidenceItems,
     comparisonMatrix
   });
-  // Concrete content: each ranked option with its name, label, 1-line
-  // summary, top strong + weak axes, and pick-this-when condition. Plus
-  // the recommendation's full "why" reasoning when there is one. This is
-  // the moment the user finds out what ADR decided.
-  const synthOptions = toArray(rawSpec.decision?.ranked_options).map((o) => ({
+  // Concrete content: each candidate's name, label, 1-line summary, top
+  // strong + weak axes, evidence depth, and pick-when reading aid. This is
+  // the moment the user sees the report's per-candidate verdicts.
+  const synthOptions = toArray(rawSpec.options).map((o) => ({
     name: o.name,
     label: o.label,
     summary: String(o.summary || "").slice(0, 200),
+    evidence_depth: o.evidence_depth || "thin",
     strong_axes: toArray(o.strong_axes).slice(0, 4),
     weak_axes: toArray(o.weak_axes).slice(0, 4),
     when_to_pick: toArray(o.when_to_pick).slice(0, 2).map((s) => String(s).slice(0, 160))
@@ -5799,14 +5642,11 @@ async function _deepResearchImpl({ inputPath, flags }) {
   });
 
   await appendEvent(prepared.outDir, "synthesis_completed", {
-    mode: rawSpec.decision?.mode,
-    ranked_options_count: synthOptions.length,
+    candidate_count: synthOptions.length,
     options: synthOptions
   });
 
-  await appendEvent(prepared.outDir, "critique_started", {
-    spec_mode: rawSpec.decision?.mode
-  });
+  await appendEvent(prepared.outDir, "critique_started", {});
   let critique = flags["skip-critique"]
     ? null
     : await critiqueDecisionPhase({
@@ -5833,8 +5673,7 @@ async function _deepResearchImpl({ inputPath, flags }) {
     !flags["skip-resynthesis"];
   if (wantResynth) {
     await appendEvent(prepared.outDir, "resynthesis_started", {
-      original_high_severity_count: critique.high_severity_count,
-      original_selected_topology: rawSpec.decision?.selected_topology
+      original_high_severity_count: critique.high_severity_count
     });
     const resynthSpec = await synthesizeDecisionPhase({
       context: prepared.context,
@@ -5844,11 +5683,11 @@ async function _deepResearchImpl({ inputPath, flags }) {
       priorCritique: critique,
       priorSpec: rawSpec
     });
-    // Persist the v1 spec + critique for transparency; the active spec
+    // Persist the v1 report + critique for transparency; the active report
     // (whichever wins) keeps the canonical filename.
-    await writeJson(path.join(prepared.outDir, "architecture.spec.v1.json"), rawSpec);
+    await writeJson(path.join(prepared.outDir, "research-report.v1.json"), rawSpec);
     await writeJson(path.join(prepared.outDir, "critique.v1.json"), critique);
-    await writeJson(path.join(prepared.outDir, "architecture.spec.v2.json"), resynthSpec);
+    await writeJson(path.join(prepared.outDir, "research-report.v2.json"), resynthSpec);
 
     const resynthCritique = await critiqueDecisionPhase({
       context: prepared.context,
@@ -5862,8 +5701,7 @@ async function _deepResearchImpl({ inputPath, flags }) {
       rawSpec = resynthSpec;
       critique = resynthCritique;
       await appendEvent(prepared.outDir, "resynthesis_accepted", {
-        new_high_severity_count: resynthCritique.high_severity_count,
-        new_selected_topology: resynthSpec.decision?.selected_topology
+        new_high_severity_count: resynthCritique.high_severity_count
       });
     } else {
       await appendEvent(prepared.outDir, "resynthesis_rejected", {
@@ -5885,35 +5723,21 @@ async function _deepResearchImpl({ inputPath, flags }) {
         outDir: prepared.outDir
       });
 
-  const { spec: finalSpec, downgraded } = applyCritique({
-    spec: rawSpec,
-    critique,
+  // applyCritique / applyCitationAudit are no-ops in the report engine —
+  // critique + citation results are surfaced to the reader via their own
+  // artifacts; the report itself is not rewritten.
+  const { spec: finalSpec } = applyCritique({ spec: rawSpec, critique, flags });
+  const { spec: auditedSpec } = applyCitationAudit({
+    spec: finalSpec,
+    citationAudit,
     flags
   });
-  const { spec: auditedSpec, downgraded: citationDowngraded, unsupportedSelected } =
-    applyCitationAudit({
-      spec: finalSpec,
-      citationAudit,
-      flags
-    });
-  if (downgraded) {
-    await appendEvent(prepared.outDir, "decision_downgraded_by_critique", {
-      original_selected_topology: finalSpec.decision.original_selected_topology,
-      high_severity_count: critique.high_severity_count
-    });
-  }
-  if (citationDowngraded) {
-    await appendEvent(prepared.outDir, "decision_downgraded_by_citation_audit", {
-      original_selected_topology: auditedSpec.decision.original_selected_topology,
-      unsupported_selected_citation_count: unsupportedSelected.length
-    });
-  }
 
-  // Follow-up question proposer — runs AFTER citation audit, BEFORE handoff
-  // write. Looks at matrix axis variance, picks the top 2-3 axes, asks the
-  // LLM to write a sharper sub-decision question + pre-filled command per
-  // axis. Persisted as follow-up-questions.json; also appended to ADR.md
-  // by writeRunArtifacts.
+  // Follow-up question proposer — runs AFTER citation audit, BEFORE writing
+  // artifacts. Looks at matrix axis variance, picks the top 2-3 axes, asks
+  // the LLM to write a sharper research thread per axis. Persisted as
+  // follow-up-questions.json; also appended to ADR.md under "Where to Dig
+  // Deeper" by writeRunArtifacts.
   const followUps = await proposeFollowUpQuestions({
     context: prepared.context,
     spec: auditedSpec,
@@ -5936,16 +5760,16 @@ async function _deepResearchImpl({ inputPath, flags }) {
     flags
   });
 
-  console.log(`Deep research artifacts written to ${prepared.outDir}`);
-  if (result.mode === "ranked_options") {
+  console.log(`Research report written to ${prepared.outDir}`);
+  if (result.candidateCount > 0) {
     console.log(
-      `Ranked options: ${result.rankedOptions.length} viable options, no single recommendation`
+      `Candidates: ${result.candidateCount} in the option space — see ADR.md for per-candidate sections`
     );
     console.log(
-      `  ${result.rankedOptions.map((o) => o.name).join(" · ")}`
+      `  ${result.options.map((o) => o.name).join(" · ")}`
     );
   } else {
-    console.log("No viable options produced — see critique.json and re-run with sharper context.");
+    console.log("No candidates surfaced — see critique.json and re-run with sharper context.");
   }
   console.log(`Evidence items: ${result.evidenceCount}`);
   if (comparisonMatrix) {
@@ -5967,12 +5791,12 @@ async function _deepResearchImpl({ inputPath, flags }) {
     const usd = result.estimatedUsd != null ? `$${result.estimatedUsd.toFixed(4)}` : "n/a";
     console.log(`LLM cost: ${result.totalLlmCalls} calls, ~${usd} (see cost.json)`);
   }
-  console.log("Boundary: ADR stops at Execution Handoff");
+  console.log("Boundary: ADR stops at the research report. Run `adr handoff <out_dir> --option <name>` for an implementation contract.");
 
   return {
     status: "completed",
     out_dir: prepared.outDir,
-    selected_topology: result.selectedTopology
+    candidate_count: result.candidateCount
   };
 }
 
@@ -5980,7 +5804,7 @@ async function supersedeAdr({ previousDir, inputPath, flags }) {
   if (!previousDir) {
     throw new Error("Usage: adr supersede <previous-output-dir> --with <product-context.md> --domain <domain> --decision <decision> --out <dir>");
   }
-  const previousSpecPath = path.join(path.resolve(previousDir), "architecture.spec.json");
+  const previousSpecPath = path.join(path.resolve(previousDir), "research-report.json");
   const previousSpec = JSON.parse(await readFile(previousSpecPath, "utf8"));
   const nextInputPath = flags.with || inputPath;
   if (!nextInputPath) {
@@ -5993,14 +5817,14 @@ async function supersedeAdr({ previousDir, inputPath, flags }) {
   }
 
   const outDir = path.resolve(flags.out);
-  const nextSpec = JSON.parse(await readFile(path.join(outDir, "architecture.spec.json"), "utf8"));
+  const nextSpec = JSON.parse(await readFile(path.join(outDir, "research-report.json"), "utf8"));
   const supersedes = {
     version: VERSION,
-    previous_decision_id: previousSpec.decision?.id,
-    previous_topology: previousSpec.decision?.selected_topology,
-    new_decision_id: nextSpec.decision?.id,
-    new_topology: nextSpec.decision?.selected_topology,
-    reason: flags.reason || "Superseding ADR generated from a new live Architecture Deep Research run.",
+    previous_decision_id: previousSpec.id,
+    previous_candidates: toArray(previousSpec.options).map((o) => o.name),
+    new_decision_id: nextSpec.id,
+    new_candidates: toArray(nextSpec.options).map((o) => o.name),
+    reason: flags.reason || "Superseding research report generated from a new live ADR run.",
     previous_artifact_dir: previousDir,
     created_at: nowIso()
   };
@@ -6014,10 +5838,10 @@ async function supersedeAdr({ previousDir, inputPath, flags }) {
 
 ## Supersedes
 
-This ADR supersedes ${supersedes.previous_decision_id || "the previous ADR"} from \`${previousDir}\`.
+This report supersedes ${supersedes.previous_decision_id || "the previous report"} from \`${previousDir}\`.
 
-- Previous topology: ${supersedes.previous_topology || "unknown"}
-- New topology: ${supersedes.new_topology || "unknown"}
+- Previous candidates: ${supersedes.previous_candidates.join(", ") || "unknown"}
+- New candidates: ${supersedes.new_candidates.join(", ") || "unknown"}
 - Reason: ${supersedes.reason}
 `
   );
@@ -6031,6 +5855,106 @@ This ADR supersedes ${supersedes.previous_decision_id || "the previous ADR"} fro
 async function discoverPatterns(input) {
   const mod = await import("./discover/index.mjs");
   return mod.discoverPatterns(input);
+}
+
+// generateHandoff is the lazy handoff stage. The default pipeline produces
+// only the research report; this command reads research-report.json from
+// an existing run dir, scopes to one chosen candidate, and writes the
+// implementation contract: agent-guardrails.md + execution-handoff.json,
+// optionally plus domain-evaluation-pack.json.
+async function generateHandoff({ outDir, optionName, flags = {} }) {
+  if (!outDir) {
+    throw new Error("Usage: adr handoff <out_dir> --option <candidate-name> [--write-evaluation-pack]");
+  }
+  if (!optionName) {
+    throw new Error(
+      "adr handoff requires --option <candidate-name>. Run with the name of a candidate from research-report.json's options[]."
+    );
+  }
+  const resolved = path.resolve(outDir);
+  const reportPath = path.join(resolved, "research-report.json");
+  let spec;
+  try {
+    spec = JSON.parse(await readFile(reportPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(
+        `No research-report.json in ${resolved}. Run \`adr deep-research\` first to produce the report.`
+      );
+    }
+    throw error;
+  }
+
+  const reportOptions = toArray(spec.options);
+  const targetSlug = slugify(String(optionName).trim());
+  const chosen = reportOptions.find((o) => slugify(o.name) === targetSlug);
+  if (!chosen) {
+    const names = reportOptions.map((o) => o.name).join(", ") || "(none)";
+    throw new Error(
+      `Option "${optionName}" not found in research-report.json. Available: ${names}`
+    );
+  }
+
+  await appendEvent(resolved, "handoff_started", {
+    chosen_option: chosen.name
+  });
+
+  // Load context + evidence + matrix lazily; the evaluation pack needs them.
+  const writeEvaluationPack = Boolean(flags["write-evaluation-pack"]);
+  let evaluationPack = null;
+  if (writeEvaluationPack) {
+    let context = null;
+    let evidence = [];
+    let matrix = null;
+    try {
+      context = JSON.parse(await readFile(path.join(resolved, "strategic-context.json"), "utf8"));
+    } catch {
+      // strategic-context.json is required for evaluation pack; bail clean.
+      throw new Error(
+        `Cannot write evaluation pack: strategic-context.json missing in ${resolved}. Re-run the full pipeline.`
+      );
+    }
+    try {
+      evidence = JSON.parse(await readFile(path.join(resolved, "evidence.json"), "utf8"));
+    } catch {
+      // empty evidence is allowed
+    }
+    try {
+      matrix = JSON.parse(await readFile(path.join(resolved, "comparison-matrix.json"), "utf8"));
+    } catch {
+      // matrix is optional
+    }
+    evaluationPack = await buildEvaluationPack(context, spec, evidence, matrix, {
+      targetOptionName: chosen.name
+    });
+    await writeJsonBestEffort(path.join(resolved, "domain-evaluation-pack.json"), evaluationPack);
+  }
+
+  const handoff = buildExecutionHandoff(spec, { targetOptionName: chosen.name });
+  await writeJsonBestEffort(path.join(resolved, "execution-handoff.json"), handoff);
+  await writeFile(
+    path.join(resolved, "agent-guardrails.md"),
+    buildGuardrails(spec, { targetOptionName: chosen.name })
+  );
+
+  await appendEvent(resolved, "handoff_completed", {
+    chosen_option: chosen.name,
+    wrote_evaluation_pack: writeEvaluationPack
+  });
+
+  console.log(`Handoff written to ${resolved}`);
+  console.log(`  Option: ${chosen.name} — ${chosen.label}`);
+  console.log(`  agent-guardrails.md ✓`);
+  console.log(`  execution-handoff.json ✓`);
+  if (writeEvaluationPack) {
+    console.log(`  domain-evaluation-pack.json ✓`);
+  }
+  return {
+    status: "completed",
+    out_dir: resolved,
+    chosen_option: chosen.name,
+    wrote_evaluation_pack: writeEvaluationPack
+  };
 }
 
 export {
@@ -6065,6 +5989,7 @@ export {
   extractClaims,
   extractDecisionContext,
   filterPromotedByRelevance,
+  generateHandoff,
   openUrl,
   getLlmJsonProvider,
   githubApi,
@@ -6085,6 +6010,7 @@ export {
   summarizeLlmCost,
   supersedeAdr,
   synthesizeDecisionPhase,
+  synthesizeResearchReport,
   verifyCitationsPhase,
   writeJson,
   writeRunArtifacts

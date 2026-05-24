@@ -11,7 +11,7 @@ const ARTIFACT_ORDER = [
   "evidence.json",
   "knowledge-map.json",
   "comparison-matrix.json",
-  "architecture.spec.json",
+  "research-report.json",
   "domain-evaluation-pack.json",
   "critique.json",
   "citation-audit.json",

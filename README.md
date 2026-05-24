@@ -32,7 +32,7 @@ Beevibe AI CTO addresses both halves. **ADR (Architecture Deep Research) — the
    (shipped)        (next)          (next)          (next)
 ```
 
-**Flagship: Architecture Deep Research (`adr decide`).** Live, evidence-only research that produces a ranked option set with explicit tradeoffs, per-option contracts, and a citation audit. The rest of this README is the deep-dive.
+**Flagship: Architecture Deep Research (`adr decide`).** Live, evidence-only research that produces a research report on the architectural decision space — per-candidate sections with what the evidence shows and what it doesn't, cross-cutting tradeoffs, and a citation audit. The decision is yours; the kernel maps what's available so you can decide well. The rest of this README is the deep-dive.
 
 **Next capabilities (in development):**
 - **The brain** — always-on knowledge graph. Continuously watches what the world ships today: the engineers with track records (Linear, Stripe, Notion, Vercel) on Twitter / HN / talks; trending OSS in your space (filtered for staying power, not flash-in-the-pan stars); competitors' architecture — public repos + ARCHITECTURE.md + engineering posts, not their landing pages; papers becoming engineering reality (arXiv / USENIX / ACM filtered through "what's actually being implemented"). Personalized to your stack via your PRD + past ADR runs. Catches the academic → engineering crossover before competitors do. Visual + browsable like Obsidian. Feeds all four loop stages.
@@ -66,7 +66,7 @@ The handoff is where ADR stops. Claude Code, Cursor, Codex, or a Beevibe special
 - No deterministic mock research.
 - No static pattern library that forces the answer.
 - Architecture candidates must come from live source evidence.
-- ADR produces a **ranked option set with explicit tradeoffs**, not a single forced winner. Every run maps the option space — even when only one candidate survives the promotion gate, that just means "we found one option in this space," not "this is the answer." The caller picks based on team-side constraints ADR cannot know. When no candidate clears the gate at all, the mode is `deferred` — re-run with sharper context.
+- ADR produces a **research report**, not a decision. Every candidate the evidence surfaces gets its own section with what the evidence shows and what it doesn't. The decision is yours; the kernel maps the space so you can decide well. Same posture as OpenAI Deep Research / Perplexity Deep Research / Gemini Deep Research — narrower scope (architectural decisions, not topics).
 
 ## Three Ways In
 
@@ -140,24 +140,29 @@ adr deep-research .adr-runs/discover/pdr.draft.md \
 
 > `npm install -g github:...` installs straight from this GitHub repo — no npm registry account required. A published `@beevibe/architecture-deep-research` package on npmjs.com may follow.
 
-## Ranked Options, Not a Single Forced Winner
+## Why ADR Produces a Report, Not a Decision
 
-Every architecture decision is a tradeoff. ADR's job is to **map the option space** — every viable candidate from the comparison matrix appears with explicit `when_to_pick` / `when_not_to_pick` conditions, `strong_axes` / `weak_axes`, and per-option `required_invariants` and `forbidden_topologies`. The caller picks based on team-side constraints ADR cannot know (existing infrastructure, hiring plans, vendor relationships, budget envelope).
+OpenAI Deep Research, Perplexity Deep Research, Google Gemini Deep Research — these products map topics, cite sources, surface tradeoffs. They don't say "here's THE answer." ADR takes the same posture, narrower scope: it maps architectural decision spaces.
 
-| Mode | Meaning |
-| --- | --- |
-| `ranked_options` | The option space is mapped. Every viable candidate appears in `ranked_options[]` with its tradeoffs. Pick the option whose conditions match your situation. `recommendation` is always `null`. |
-| `deferred` | No candidate cleared the promotion gate. Re-run with sharper context. |
+The decision itself is human and has to be. The team-side context that determines the right architecture (existing infrastructure, hiring plans, vendor relationships, budget envelope, what you tried last quarter) lives outside ADR's evidence pool. What ADR can produce — and what was previously missing — is the cited, comprehensive map of what's available so the human decides well.
 
-A run that returns one viable option lands in `ranked_options` with `ranked_options[].length === 1`. That means "we found one option in this space," not "this is the answer" — the reader is still the one picking. The follow-up questions section (see below) is how ADR widens the search if one option feels too thin.
+Every candidate the evidence surfaces gets its own section in `ADR.md` and its own entry in `research-report.json`. Each section carries:
 
-Coding agents downstream pick one option, then honor the matching block in `agent-guardrails.md` (per-option contract). The handoff JSON's `options[]` is the machine-readable equivalent.
+- `summary` — what this candidate is, in 2-3 sentences.
+- `evidence_depth` — `thick` (≥5 claims), `medium` (2-4), or `thin` (1). The reader weights confidence accordingly.
+- `what_evidence_shows` — what the cited claims actually say.
+- `what_evidence_does_not_show` — known gaps (no production scale data, no cost numbers, no failure-mode write-ups, etc.).
+- `strong_axes` / `weak_axes` — where the candidate landed strong vs weak in the comparison matrix.
+- `when_to_pick` / `when_not_to_pick` — evidence-summarized reading aids, NOT recommendations. They tell the reader which situations the cited evidence supports or contraindicates for that option.
+- `citations` — citation IDs supporting the section.
+
+When the reader picks a candidate, `adr handoff <out_dir> --option <name>` generates `agent-guardrails.md` + `execution-handoff.json` scoped to that option. The default pipeline does NOT produce these — they're lazy.
 
 ## Decision Context (Annotations, Not Filters)
 
 The PRD and clarification answers carry phrases like "self-hosted only", "p95 < 500ms", "SOC2 in 12 months". ADR extracts these into `decision-context.json` as **annotations on the option space** — they show up in the report header and flow to synthesis as soft context. They do NOT eliminate candidates.
 
-The user applies their own constraints by reading the matrix. A "self-hosted only" annotation does not drop Pinecone from `ranked_options`; the reader sees Pinecone's deployment row marked `cloud only` and rules it out themselves. This is intentional — filtering candidates inside ADR is the failure mode where a mislabeled "ideally self-hosted" annotation silently drops the option the user would actually have picked.
+The user applies their own constraints by reading the report. A "self-hosted only" annotation does not drop Pinecone from the report; the reader sees Pinecone's deployment row marked `cloud only` and rules it out themselves. This is intentional — filtering candidates inside ADR is the failure mode where a mislabeled "ideally self-hosted" annotation silently drops the option the user would actually have picked.
 
 ```json
 // decision-context.json (excerpt)
@@ -219,11 +224,11 @@ Adoption-strategy peers exist because architecture posts can't tell you whether 
 
 Community-source claims are framed as **practitioner signal, not architectural fact**. The synthesis prompt phrases them like "r/LocalLLaMA practitioners report X" rather than treating them as authoritative. The citation auditor relaxes its literal-substring rule for these sources (≥60% significant-token overlap instead of an exact quote), because community posts paraphrase. When the evidence pool contains at least one `community_discussion` source, three adoption-flavored axes are added to the comparison matrix: `ecosystem_traction`, `integration_breadth`, `practitioner_pain_points`. Pure-architecture runs are unaffected.
 
-## Follow-up Questions (Non-Blocking)
+## Where to Dig Deeper (Non-Blocking)
 
 ADR does not refuse to run on thin context. Gap detection still runs at the start — if the PRD lacks latency / scale / compliance / budget / region signals, the kernel emits `decision_context_gaps_detected` with the open questions — but the run **continues**. Burning the evidence budget on a thin PRD beats forcing the user to answer a clarification dialog before they've seen anything.
 
-After synthesis, ADR inspects the comparison matrix's axis variance and proposes **follow-up questions** — each one a sharper sub-decision targeting the highest-spread axis. They're written to `follow-up-questions.json` and appended to `ADR.md` under `## Follow-up Questions`. Each question carries a pre-filled `adr deep-research` command the user can paste.
+After synthesis, ADR inspects the comparison matrix's axis variance and proposes **research threads to deepen** — each one targeting the highest-spread axis. They're written to `follow-up-questions.json` and appended to `ADR.md` under `## Where to Dig Deeper`. Each entry carries a pre-filled `adr deep-research` command the user can paste — framed as "the next research dig," not "the next decision."
 
 ```json
 // follow-up-questions.json (excerpt)
@@ -360,16 +365,16 @@ All three runtimes produce the same artifact set. See [docs/framework-adapters.m
 | `research-plan.json` | LLM-planned research tasks with search queries and source targets. Includes peer-targeted tasks when `peers.json` is present. Placeholder queries (`<product name>`) get filtered out at parse time. |
 | `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims (each with a literal `quote` from the excerpt), content hash, snapshot path. Audit-grade. Reused by `adr resume`. |
 | `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. Eliminated candidates carry the reason: `off_topic_for_decision` is the typical one. |
-| `comparison-matrix.json` | Candidates × axes. Axes are derived from query shapes (every shape becomes an axis), risk invariants (every invariant becomes an axis), operational envelope, compliance, plus `fits_existing_stack` when discover surfaced a stack, plus team-antipattern axes. When the evidence pool contains at least one `community_discussion` source, three adoption axes are added: `ecosystem_traction`, `integration_breadth`, `practitioner_pain_points`. Each cell carries `strong` / `mixed` / `weak` / `no_evidence`, citation IDs, and a quantitative summary (numbers verbatim from the source when available). |
-| `architecture.spec.json` | `decision.mode` (`ranked_options` or `deferred`), `decision.ranked_options[]` (every viable option with `when_to_pick`, `when_not_to_pick`, `strong_axes`, `weak_axes`, per-option `required_invariants` and `forbidden_topologies`). `recommendation` is always `null` — the reader picks from the ranked tradeoffs. Schema failures fall back to `architecture.spec.invalid.json` + `architecture.spec.validation-errors.txt` so downstream artifacts still write. |
-| `architecture.spec.v1.json` / `critique.v1.json` *(when resynth fired)* | Original pre-resynthesis spec + its critique, kept for transparency. |
-| `critique.json` | LLM critique pass — evaluates option-set quality (duplicate options, ungrounded `strong_axes`, citation bleed, unsupported recommendation, missing options). High-severity issues drop the recommendation (option set survives) unless `--no-enforce-critique`. |
-| `citation-audit.json` | Per-citation supported/unsupported verdicts, batched by claim_context. Unsupported recommendation citations drop the recommendation. |
-| `claim-audit.json` | Scans generated ADR/report/eval artifacts for material claims without citations. |
-| `domain-evaluation-pack.json` | Option-aware adversarial test cases: per-option behavior tests (tenant isolation, MFA flow, lineage depth, latency-at-load), keyed on each option's `strong_axes`. Caller runs these against the implementation. |
-| `ADR.md` | Reader-facing markdown. Leads with the decision-context header (tags + notes), then the tradeoffs across options, then per-option `Pick this when` / `Avoid when`. Includes `## Evidence from your repo` (private_corpus items), `## Follow-up Questions` (sharper sub-decisions for the next run), and `## References` (every citation_id → URL + title + source_type). |
-| `agent-guardrails.md` | Per-option contract blocks. A coding agent implementing option A applies A's invariants and forbidden_topologies — not B's. |
-| `execution-handoff.json` | Per-option contracts in `options[]` plus `validation_warnings` when any artifact failed schema. `recommendation` is always `null` — pick an option from the matrix. |
+| `comparison-matrix.json` | Candidates × axes. Axes are derived from query shapes (every shape becomes an axis), risk invariants (every invariant becomes an axis), operational envelope, compliance, plus `fits_existing_stack` when discover surfaced a stack, plus team-antipattern axes. When the evidence pool contains at least one `community_discussion` source, three adoption axes are added: `ecosystem_traction`, `integration_breadth`, `practitioner_pain_points`. Each cell carries `strong` / `mixed` / `weak` / `no_evidence`, citation IDs, and a quantitative summary (numbers verbatim from the source when available). The matrix is presentational — it shapes the report, it does not filter candidates. |
+| `research-report.json` | The structured report. Every candidate the evidence pool surfaced gets an entry in `options[]` with `evidence_depth` (thick / medium / thin), `what_evidence_shows`, `what_evidence_does_not_show`, `strong_axes`, `weak_axes`, `when_to_pick` / `when_not_to_pick` (reading aids, not recommendations), `citations`. Also: `executive_summary`, `option_space_shape`, `cross_cutting_tradeoffs[]`, `open_questions[]`. The decision is yours; this is the map. Schema failures fall back to `research-report.invalid.json` + `research-report.validation-errors.txt` so downstream artifacts still write. |
+| `research-report.v1.json` / `critique.v1.json` *(when resynth fired)* | Original pre-resynthesis report + its critique, kept for transparency. |
+| `critique.json` | LLM critique pass — evaluates report comprehensiveness (`missing_candidate_section`, `imbalanced_evidence_depth`, `weak_citation`, `missing_open_question`, `citation_mismatch`, `unbalanced_per_option`, `missing_cross_cutting_tradeoff`). The report itself is NOT rewritten on critique — the audit surfaces issues for the reader. |
+| `citation-audit.json` | Per-citation supported/unsupported verdicts, batched by claim_context. Surfaces unsupported citations to the reader; does not rewrite the report. |
+| `claim-audit.json` | Scans generated ADR/report artifacts for material claims without citations. |
+| `ADR.md` | Reader-facing markdown research report. Layout: Executive Summary → Option Space → Candidates (per-candidate section with `what evidence shows` / `what evidence does not show` / pick / avoid / citations) → Cross-Cutting Tradeoffs → Open Questions → Evidence Acquisition → Where to Dig Deeper → References. No "Recommendation" section, no "Status: Proposed" header. |
+| `domain-evaluation-pack.json` *(handoff only)* | Option-scoped adversarial test cases. Only generated when `adr handoff --option <name> --write-evaluation-pack` is run. |
+| `agent-guardrails.md` *(handoff only)* | Implementation contract for the chosen candidate. Only generated by `adr handoff --option <name>`. |
+| `execution-handoff.json` *(handoff only)* | The chosen candidate's contract block. Only generated by `adr handoff --option <name>`. |
 | `events.jsonl` | Live research log. Every event carries concrete content: page previews, claim quotes, per-option summaries, eliminated-candidate reasons, running cost tally. Stream via `tail -F` for a chat surface. |
 | `cost.json` | Final ledger: per-LLM-label call counts, token counts (input / output / cached), per-phase USD estimate, run total. |
 | `sources.md`, `research-report.md` | Citation table, long-form report. |

@@ -1,16 +1,16 @@
 # Deep Research Agent
 
-Architecture Deep Research is a live agentic research loop for strategic system design decisions.
+Architecture Deep Research is a live agentic research loop for strategic system design decisions. It produces a research report on the architectural decision space — same posture as OpenAI Deep Research / Perplexity Deep Research / Gemini Deep Research, narrower scope (architectural decisions, not topics).
 
 ## Why this is not a generic deep-research agent
 
-In the vibe coding era, code generation is cheap; the bottleneck is **whether the right architecture was chosen at all**. General deep-research agents (OpenAI, Anthropic, Gemini, Perplexity, LangChain `open_deep_research`) average over consensus blog posts and produce a long-form report. ADR refuses to do that. Our flagship is producing the **fair, OSS- and paper-grounded architecture comparison that no human writes and no general deep-research agent does**:
+In the vibe coding era, code generation is cheap; the bottleneck is **whether the right architecture was chosen at all**. General deep-research agents map topics; ADR maps architectural decision spaces. The decision is the reader's; ADR's job is to give them enough cited context to decide well. The flagship moves are research-quality moves:
 
 - **Code-aware research.** GitHub URLs are inspected as repositories (README, ARCHITECTURE.md, top-level layout, stars, last push, license, recent failure-mode issues) — not stripped to 1600-char text excerpts.
 - **Paper-aware research.** arXiv / OpenReview / ACL / ACM / IEEE / bioRxiv URLs are digested into structured `{problem, methodology, datasets, baselines, headline_results, measured_results, ablations, limitations, conflicts_of_interest}` — using full HTML/PDF text when available, and marking abstract-only digests so measured results cannot be overclaimed.
-- **Comparison matrix, not just a report.** The primary research artifact is `comparison-matrix.json`: candidates × axes derived from the Strategic Context Matrix, every cell carrying a `strong`/`mixed`/`weak`/`no_evidence` verdict and citation_ids. Empty cells are tracked.
+- **Comparison matrix as the presentational substrate.** `comparison-matrix.json` carries candidates × axes derived from the Strategic Context Matrix, every cell with a `strong`/`mixed`/`weak`/`no_evidence` verdict and citation_ids. It shapes the report; it does NOT filter candidates.
 - **Adversarial per-candidate research.** When the matrix has empty cells, an adversarial planner generates "find the strongest case AGAINST candidate X" tasks. Production incidents, latency stories, ecosystem decline. The matrix is re-built after each adversarial cycle.
-- **Evidence-only promotion gate.** A candidate only reaches the synthesizer when the knowledge map has ≥2 cited evidence items including ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark`. `requires_human_architecture_review` is a first-class output when evidence is weak.
+- **Evidence-depth labeling, not gating.** Every candidate with ≥1 evidence claim gets a section in the report. Evidence depth (`thick` ≥5, `medium` 2–4, `thin` =1) is shown per candidate so the reader weights confidence — but no candidate is silently filtered out for being thin.
 
 The product constraint is strict:
 
@@ -136,7 +136,7 @@ The flagship moves are research-quality moves:
 - **Comparison matrix as the primary input to synthesis.** Before the synthesizer picks a topology, `compareTopologiesPhase` builds `comparison-matrix.json`: rows = candidates (from the knowledge map), columns = axes (derived from `query_shapes`, `risk_invariants`, `operational_envelope`, `compliance_constraints`). Each cell carries a verdict (`strong`/`mixed`/`weak`/`no_evidence`) and citation_ids. Empty cells are tracked.
 - **Adversarial per-candidate research.** When the matrix has empty cells or weak coverage, a per-candidate adversarial planner generates "find the strongest case AGAINST X" tasks. Production incidents, latency stories, lineage limitations, ecosystem decline. The matrix is re-built after each adversarial cycle. Bounded by `--max-adversarial-cycles` (default 1).
 - **Per-task inner loop.** Each research agent runs up to `--max-rounds` rounds (default 2) with a completeness judge proposing follow-up queries when evidence is thin.
-- **Adaptive outer cycle.** If the knowledge map has no `promoted_candidates`, an adaptive gap-filling planner generates 2–4 new tasks. Bounded by `--max-adaptive-cycles` (default 1).
+- **Adaptive outer cycle.** If the knowledge map has zero candidates, an adaptive gap-filling planner generates 2–4 new tasks. Bounded by `--max-adaptive-cycles` (default 1).
 - **Critique pass + citation / claim verifiers.** Critique flags uncited claims, contradictions, weak evidence, and unbacked selections. Citation verifier walks every `evidence_citations` reference and unsupported selected-topology citations downgrade to human review by default. Claim audit scans generated ADR/report/eval artifacts for uncited material claims.
 
 These keep the orchestrator/researcher topology shallow (no nested sub-agents) while turning the loop into one that actually distinguishes good architectures from merely popular ones.
@@ -145,12 +145,12 @@ These keep the orchestrator/researcher topology shallow (no nested sub-agents) w
 
 ADR may extract domain hints from the PRD. It may not start from a forced architecture answer.
 
-The `knowledge-map.json` file is the promotion boundary:
+The `knowledge-map.json` file lists every architecture family the live evidence surfaced:
 
-- `promoted_candidates`: architecture families with enough cited live evidence to be considered.
-- `insufficient_evidence_candidates`: architecture families mentioned by sources but not strong enough to drive the decision.
+- `candidates`: architecture families surfaced from the live evidence pool. Each carries `evidence_depth` (`thick` ≥5 claims, `medium` 2–4, `thin` =1).
+- `off_topic_candidates`: candidates the relevance filter dropped (e.g. a framework name in an auth-provider decision).
 
-If evidence is weak, the synthesis agent should choose `requires_human_architecture_review` rather than pretending certainty.
+Every candidate gets a section in the research report. The reader weights confidence using `evidence_depth`.
 
 ## CLI
 
@@ -267,14 +267,16 @@ citation-audit.json
 claim-audit.json
 research-report.md
 ADR.md
-architecture.spec.json
-domain-evaluation-pack.json
-agent-guardrails.md
-execution-handoff.json
+research-report.json
 follow-up-questions.json
 sources.md
 cost.json
 source-snapshots/
+
+# Generated only by `adr handoff <out_dir> --option <name>`:
+agent-guardrails.md
+execution-handoff.json
+domain-evaluation-pack.json        (with --write-evaluation-pack)
 ```
 
 ## Superseding Decisions
@@ -294,9 +296,9 @@ npm run adr -- supersede .adr-runs/logistics-contract-mesh \
 
 - Research must use live search and source opening.
 - Each evidence item keeps URL, source type, quality score, keyword hits, extracted claims, retrieval timestamp, content hash, fetch status, and a raw-text snapshot path when available.
-- Candidate architecture families are promoted only from cited claims.
-- ADR stops at Execution Handoff.
-- Implementation agents consume the handoff; they do not reinterpret the architecture without a superseding ADR.
+- Candidate architecture families come only from cited live evidence — no static pattern library, no offline mode.
+- ADR stops at the research report. `adr handoff` is the on-demand step that scopes one chosen candidate into an implementation contract.
+- Implementation agents consume the handoff once it exists; they do not reinterpret the architecture without a superseding ADR.
 
 ## References
 

@@ -9,7 +9,7 @@ export default function OperatorView({ summary, artifacts }) {
   const context = artifacts["strategic-context.json"];
   const knowledgeMap = artifacts["knowledge-map.json"];
   const matrix = artifacts["comparison-matrix.json"];
-  const spec = artifacts["architecture.spec.json"];
+  const spec = artifacts["research-report.json"] || artifacts["architecture.spec.json"];
   const evidence = artifacts["evidence.json"];
   const critique = artifacts["critique.json"];
   const audit = artifacts["citation-audit.json"];

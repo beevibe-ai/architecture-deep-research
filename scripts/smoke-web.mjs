@@ -49,13 +49,12 @@ await writeFile(
   join(sampleDir, "state.json"),
   JSON.stringify(
     {
-      version: "0.2.0",
+      version: "0.3.0",
       status: "completed",
       completed_at: new Date().toISOString(),
-      selected_topology: "graphrag",
+      candidate_count: 3,
       evidence_count: 7,
-      promoted_candidate_count: 1,
-      handoff_boundary: "adr_stops_at_execution_handoff"
+      handoff_boundary: "adr_stops_at_research_report"
     },
     null,
     2
@@ -66,7 +65,7 @@ await writeFile(
   [
     JSON.stringify({ ts: new Date().toISOString(), type: "run_started" }),
     JSON.stringify({ ts: new Date().toISOString(), type: "evidence_collected", evidence_count: 7 }),
-    JSON.stringify({ ts: new Date().toISOString(), type: "run_completed", selected_topology: "graphrag" })
+    JSON.stringify({ ts: new Date().toISOString(), type: "run_completed", candidate_count: 3 })
   ].join("\n") + "\n"
 );
 await writeFile(
@@ -106,7 +105,7 @@ try {
   }
 
   const single = await fetchJson(`${base}/api/runs/${sampleId}`);
-  if (single.status !== 200 || single.body.selected_topology !== "graphrag") {
+  if (single.status !== 200 || single.body.candidate_count !== 3) {
     throw new Error(`/api/runs/:id payload missing fields: ${JSON.stringify(single.body)}`);
   }
   if (!Array.isArray(single.body.artifacts) || !single.body.artifacts.includes("state.json")) {
@@ -114,7 +113,7 @@ try {
   }
 
   const stateArtifact = await fetchJson(`${base}/api/runs/${sampleId}/artifact/state.json`);
-  if (stateArtifact.status !== 200 || stateArtifact.body.selected_topology !== "graphrag") {
+  if (stateArtifact.status !== 200 || stateArtifact.body.candidate_count !== 3) {
     throw new Error(`state.json artifact endpoint payload unexpected`);
   }
 

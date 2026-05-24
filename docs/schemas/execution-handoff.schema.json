@@ -1,32 +1,37 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/execution-handoff.schema.json",
-  "title": "Beevibe Architecture Deep Research Execution Handoff",
-  "description": "The handoff is per-option: a downstream coding agent or human operator picks one option from `options[]`, then honors that option's required_invariants and forbidden_topologies. `recommendation` names the option ADR favors when the evidence supports a clear winner; when `mode = ranked_options`, recommendation is null and the caller MUST pick. The top-level `required_invariants` and `forbidden_topologies` are back-compat fallbacks that mirror the recommended option (or are empty when there is no recommendation).",
+  "title": "Architecture Deep Research — Execution Handoff",
+  "description": "Generated on-demand by `adr handoff <out_dir> --option <candidate-name>`. Scopes the research-report's chosen candidate into an implementation contract for a downstream coding agent or human operator.",
   "type": "object",
   "required": [
     "version",
     "decision_id",
     "handoff_boundary",
     "artifacts",
-    "agent_targets",
-    "required_invariants",
-    "forbidden_topologies"
+    "agent_targets"
   ],
   "properties": {
     "version": { "type": "string" },
     "decision_id": { "type": "string" },
     "handoff_boundary": {
       "type": "string",
-      "const": "adr_stops_at_execution_handoff"
+      "enum": [
+        "adr_stops_at_research_report",
+        "adr_stops_at_execution_handoff"
+      ],
+      "description": "New value is `adr_stops_at_research_report`. The legacy `adr_stops_at_execution_handoff` is kept for backward compatibility with pre-0.3 example runs."
     },
-    "mode": {
-      "type": "string",
-      "enum": ["recommended", "ranked_options", "deferred"]
+    "chosen_option": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string" }
+      ],
+      "description": "The candidate the operator chose via `adr handoff --option <name>`. Null when the handoff was generated across all candidates (no option-scoped contract yet)."
     },
     "options": {
       "type": "array",
-      "description": "Per-option contracts. The caller picks one option (or accepts the recommendation if present), then must honor that option's required_invariants and avoid its forbidden_topologies.",
+      "description": "Per-option contract block. When chosen_option is set, this array has length 1.",
       "items": {
         "type": "object",
         "required": ["name", "label"],
@@ -34,6 +39,10 @@
           "name": { "type": "string" },
           "label": { "type": "string" },
           "summary": { "type": "string" },
+          "evidence_depth": {
+            "type": "string",
+            "enum": ["thick", "medium", "thin"]
+          },
           "when_to_pick": {
             "type": "array",
             "items": { "type": "string" }
@@ -42,15 +51,15 @@
             "type": "array",
             "items": { "type": "string" }
           },
-          "required_invariants": {
+          "strong_axes": {
             "type": "array",
             "items": { "type": "string" }
           },
-          "forbidden_topologies": {
+          "weak_axes": {
             "type": "array",
             "items": { "type": "string" }
           },
-          "evidence_citations": {
+          "citations": {
             "type": "array",
             "items": { "type": "integer", "minimum": 1 }
           }
@@ -58,34 +67,13 @@
         "additionalProperties": true
       }
     },
-    "recommendation": {
-      "anyOf": [
-        { "type": "null" },
-        {
-          "type": "object",
-          "required": ["name", "why"],
-          "properties": {
-            "name": { "type": "string" },
-            "why": { "type": "string" },
-            "when_this_breaks": {
-              "type": "array",
-              "items": { "type": "string" }
-            }
-          },
-          "additionalProperties": true
-        }
-      ]
-    },
     "artifacts": {
       "type": "object",
-      "required": [
-        "adr",
-        "architecture_spec",
-        "domain_evaluation_pack",
-        "agent_guardrails"
-      ],
+      "required": ["adr"],
       "properties": {
         "adr": { "type": "string" },
+        "research_report": { "type": "string" },
+        "research_report_markdown": { "type": "string" },
         "architecture_spec": { "type": "string" },
         "domain_evaluation_pack": { "type": "string" },
         "agent_guardrails": { "type": "string" },
@@ -96,16 +84,6 @@
     "agent_targets": {
       "type": "array",
       "items": { "type": "string" }
-    },
-    "required_invariants": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Back-compat: mirrors the recommended option's invariants when mode=recommended; empty when mode=ranked_options (caller must pick from options[]) or mode=deferred. New code should read options[] directly."
-    },
-    "forbidden_topologies": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Back-compat: same shape as required_invariants."
     },
     "feedback_contract": {
       "type": "object",

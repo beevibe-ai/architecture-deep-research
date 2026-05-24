@@ -1,24 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/knowledge-map.schema.json",
-  "title": "Beevibe Architecture Deep Research Knowledge Map",
+  "title": "Architecture Deep Research — Knowledge Map",
   "type": "object",
   "required": [
     "version",
     "acquisition_mode",
-    "promotion_rule",
-    "promoted_candidates",
-    "insufficient_evidence_candidates"
+    "acquisition_rule",
+    "candidates",
+    "off_topic_candidates"
   ],
   "properties": {
     "version": { "type": "string" },
     "acquisition_mode": { "type": "string" },
-    "promotion_rule": { "type": "string" },
-    "promoted_candidates": {
+    "acquisition_rule": { "type": "string" },
+    "candidates": {
       "type": "array",
       "items": { "$ref": "#/$defs/candidate" }
     },
-    "insufficient_evidence_candidates": {
+    "off_topic_candidates": {
       "type": "array",
       "items": { "$ref": "#/$defs/candidate" }
     }
@@ -29,7 +29,7 @@
       "required": [
         "name",
         "label",
-        "promotion_status",
+        "evidence_depth",
         "evidence_count",
         "source_types",
         "citations",
@@ -41,7 +41,10 @@
       "properties": {
         "name": { "type": "string" },
         "label": { "type": "string" },
-        "promotion_status": { "type": "string" },
+        "evidence_depth": {
+          "type": "string",
+          "enum": ["thick", "medium", "thin"]
+        },
         "evidence_count": { "type": "integer", "minimum": 0 },
         "source_types": {
           "type": "array",
@@ -76,6 +79,7 @@
         "risk_or_fit": { "type": "string" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "source_type": { "type": "string" },
+        "url": { "type": "string" },
         "url": { "type": "string" }
       },
       "additionalProperties": true
