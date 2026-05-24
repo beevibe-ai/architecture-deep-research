@@ -1,86 +1,145 @@
 ---
-description: Audit the ADR environment and (if anything is missing) walk the user through setting up API keys persistently. Use when the user asks "is ADR ready?", "what keys do I need?", "set up ADR".
+description: Set up ADR for first-time use. Audits what's already configured, then walks the user through obtaining and saving the API keys ADR needs. Use when the user asks "set up ADR", "what keys do I need?", "I don't know how to get these", or when /adr:decide reports missing keys.
 ---
 
-# /adr:doctor — Environment audit + setup
+# /adr:doctor — First-time setup
 
-The doctor lives in the npm package, fetched on demand via `npx`. No global install needed.
+**Audience: someone who may have never created an API key before.** Do not paste URLs and walk away. Open each signup page in their browser, then guide them through the click path one step at a time. Wait for them to come back with each value before moving on.
 
-## Step 1 — Audit
-
-Run the audit. It is read-only and never blocks on input:
+## Step 1 — Audit what's already there
 
 ```bash
 npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
 ```
 
-The output lists every required and optional key, marks which are set and where (env vs `~/.adr/config.json`), and ends with READY or NOT READY.
+Read the output:
 
-**If READY**, tell the user and stop. They are done.
+- If it ends with **READY**, congratulate the user and stop. They're done.
+- If it ends with **NOT READY**, note which keys are missing and proceed to Step 2. Skip any category that's already set.
 
-**If NOT READY**, proceed to Step 2.
+## Step 2 — Walk through each missing key
 
-## Step 2 — Ask the user for the missing keys
+For each missing key, do three things in this order:
 
-The doctor's interactive `setup` mode does NOT work inside Claude Code (no TTY when invoked through Bash). Instead, ask the user in chat for the keys we need, then write them with the non-interactive `set` command.
+1. Explain in one sentence what it's for and what the user is about to do.
+2. Open the signup page in their browser via `open <url>` (macOS) or print the URL with instructions to click (other OSes).
+3. Walk them through the navigation, step by step. Wait for them to paste the value into chat before moving on.
 
-Use `AskUserQuestion` to collect the missing keys. Always offer "skip" so the user can decline optional ones.
+### Search provider (required) → **default to Brave Search**
 
-### Required: search provider (need at least one)
+Don't ask the user to choose between four providers. Pick Brave by default: it's free up to 2,000 queries/month, no credit card required.
 
-If no search key is set, ask the user which provider they want to use. Options:
+Say to the user:
 
-- **Brave Search** (`BRAVE_SEARCH_API_KEY`) — https://api-dashboard.search.brave.com (~2k queries/month free)
-- **Tavily** (`TAVILY_API_KEY`) — https://tavily.com (1k requests/month free)
-- **Serper** (`SERPER_API_KEY`) — https://serper.dev (2.5k queries on signup)
-- **Self-hosted SearXNG** (`SEARXNG_URL`) — set the base URL of your instance
-- **Skip — use OpenAI's hosted web_search fallback** (only works if `ADR_OPENAI_API_KEY` is set too)
+> ADR needs a search provider to pull live evidence from the web. I'll set up Brave Search — it gives you 2,000 free queries per month with no credit card. Opening the signup page now.
 
-Once they pick, ask them to paste the value in chat.
+Then:
 
-### Required: LLM provider (need at least one)
+```bash
+open https://api-dashboard.search.brave.com/register 2>/dev/null || echo "Open this URL in your browser: https://api-dashboard.search.brave.com/register"
+```
 
-If no LLM key is set, ask for either:
+Walk them through:
 
-- `ADR_OPENAI_API_KEY` (preferred name)
-- `OPENAI_API_KEY` (fallback)
+> 1. Sign in with Google or GitHub (one click — top-right).
+> 2. Click **Subscribe** in the left sidebar, pick the **Free** plan.
+> 3. Click **Add API key**, give it any name like "adr".
+> 4. Copy the key value (it'll look like a long random string).
+>
+> Paste the key here when you have it.
 
-Same key — either name works. Get it from https://platform.openai.com/api-keys.
+When they paste, capture as `BRAVE_SEARCH_API_KEY`.
 
-### Optional: recommended
+**If they prefer a different search provider**, ask them which: Tavily / Serper / SearXNG. The URLs and instructions:
 
-- `GITHUB_TOKEN` — strongly recommended. Without it, the GitHub API caps at 60 calls/hour and multi-repo research runs hit it. Get a fine-grained token (read-only public_repo) at https://github.com/settings/tokens.
-- `ADR_MODEL` — override the default `gpt-4.1-mini`. Skip unless the user wants a different model.
+- **Tavily** (`TAVILY_API_KEY`) — https://tavily.com → sign in → Dashboard → copy API key. 1,000 free requests/month.
+- **Serper** (`SERPER_API_KEY`) — https://serper.dev → sign in → Dashboard → copy API key. 2,500 free queries on signup.
+- **SearXNG** (`SEARXNG_URL`) — only if they self-host a SearXNG instance. They paste the base URL.
 
-## Step 3 — Write the keys (non-interactive)
+### LLM provider (required) → **OpenAI**
 
-Call `adr-doctor set --json` with whatever the user gave you. Use a single JSON object so it's one bash invocation:
+Say:
+
+> ADR uses an LLM to synthesize the research. I'll set up OpenAI. New accounts get $5 in free credits — enough for many ADR runs. After that you'll need to add a credit card. Opening the keys page now.
+
+Then:
+
+```bash
+open https://platform.openai.com/api-keys 2>/dev/null || echo "Open this URL: https://platform.openai.com/api-keys"
+```
+
+Walk them through:
+
+> 1. Sign in (or create an account at https://platform.openai.com/signup if you don't have one).
+> 2. Click **Create new secret key** (top-right).
+> 3. Name it "adr" — leave permissions on "All".
+> 4. Click **Create secret key** and copy the value. It starts with `sk-`. **You can only see it once** — copy it now.
+>
+> Paste the key here.
+
+Capture as `ADR_OPENAI_API_KEY`.
+
+If they don't want to create an OpenAI account, they can use any OpenAI-compatible provider (Azure, vLLM, llamafile, Ollama with OpenAI wrapper). Set `ADR_OPENAI_BASE_URL` to point at it. But for first-time users, just use OpenAI.
+
+### GitHub token (optional but strongly recommended)
+
+Say:
+
+> Without a GitHub token, ADR is capped at 60 GitHub API calls per hour. Multi-repo research runs hit that fast. With a token, the cap is 5,000/hr. The token is free and takes 30 seconds. Want to set one up?
+
+If yes:
+
+```bash
+open "https://github.com/settings/personal-access-tokens/new" 2>/dev/null || echo "Open this URL: https://github.com/settings/personal-access-tokens/new"
+```
+
+Walk them through:
+
+> 1. **Token name**: "adr"
+> 2. **Expiration**: 90 days (or "No expiration" if you don't want to renew)
+> 3. **Repository access**: "Public Repositories (read-only)" — that's enough.
+> 4. **Permissions**: leave defaults (Contents read, Metadata read).
+> 5. Click **Generate token** at the bottom. Copy the value — starts with `github_pat_`.
+>
+> Paste the token here.
+
+Capture as `GITHUB_TOKEN`. If they decline, skip.
+
+### Model override (optional — only if they ask)
+
+Don't bring this up unless the user asks about it. Default `gpt-4.1-mini` is fine for most decisions. Smarter alternative: `gpt-5` (slower, more expensive, better synthesis).
+
+## Step 3 — Write the keys in one bash call
 
 ```bash
 npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor set --json '{
-  "BRAVE_SEARCH_API_KEY": "<user-provided>",
-  "ADR_OPENAI_API_KEY":   "<user-provided>",
-  "GITHUB_TOKEN":         "<user-provided>"
+  "BRAVE_SEARCH_API_KEY": "<paste-from-step-2>",
+  "ADR_OPENAI_API_KEY":   "<paste-from-step-2>",
+  "GITHUB_TOKEN":         "<paste-from-step-2>"
 }'
 ```
 
-Only include keys the user actually provided. The `set` command refuses unknown keys and rejects empty values.
+**Only include keys the user actually provided.** If they skipped `GITHUB_TOKEN`, omit it entirely from the JSON — don't pass `""`.
 
-If the user declined an optional key, omit it from the JSON — don't pass an empty string.
+The `set` command writes to `~/.adr/config.json` (mode 0600), refuses unknown keys, and re-audits at the end.
 
 ## Step 4 — Confirm READY
 
-Re-run the audit:
+The previous step's output already shows the post-write audit. It should end with **READY**.
 
-```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
-```
+If it still says NOT READY, identify what's still missing and loop back to Step 2 for those specific keys.
 
-The output should now end with READY. If it still says NOT READY, list what's still missing and loop back to Step 2 for those.
+## Closing message
 
-## Notes
+Once READY, tell the user:
 
-- The config file at `~/.adr/config.json` has mode 0600 (only you can read it).
-- Process env always wins over the file. Users can override a key for one invocation: `OPENAI_API_KEY=other-key adr ...`.
-- `npx -y --package=github:beevibe-ai/architecture-deep-research` caches after the first call. Re-invocations are fast.
-- For users who DO have a real terminal, `npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor setup` is the interactive equivalent. The slash command can't drive it because Bash inside Claude Code has no TTY.
+> You're all set. Try `/adr:decide` to make an architecture decision against the current repo, or `/adr:discover` for a quick scan-only preview.
+
+## Notes for Claude
+
+- **Be patient.** A first-time user creating an OpenAI account from scratch can take 5+ minutes (signup → email verification → phone verification → page navigation). Don't rush them.
+- **Don't echo keys back.** When the user pastes a key, acknowledge ("got it") and move on. Don't repeat the value.
+- **One key at a time.** Don't ask for all three keys in one message. Walk through each one fully (open URL, give steps, wait for paste) before starting the next.
+- **If the user gets lost**, offer to screenshot-walk them through it: "if you're stuck, tell me what you see and I'll guide you."
+- **Mask in your own messages.** Refer to keys as "the Brave key you just gave me", not by value.
+- Keys are persisted to `~/.adr/config.json`. The user never needs to re-export them in a shell.
