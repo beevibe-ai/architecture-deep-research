@@ -25,36 +25,69 @@ For each missing key, do three things in this order:
 2. Open the signup page in their browser via `open <url>` (macOS) or print the URL with instructions to click (other OSes).
 3. Walk them through the navigation, step by step. Wait for them to paste the value into chat before moving on.
 
-### Search provider (required) → **default to Brave Search**
+### Search provider (required)
 
-Don't ask the user to choose between four providers. Pick Brave by default: it's free up to 2,000 queries/month, no credit card required.
+**Ask the user which provider they want before opening anything.** Use `AskUserQuestion` with this exact question and options — do not pick for them:
 
-Say to the user:
+> Question: "Which search provider would you like ADR to use? It pulls live evidence from the web for every research run."
+>
+> Options:
+> - **Brave Search (recommended)** — 2,000 free queries/month, no credit card required
+> - **Tavily** — 1,000 free requests/month, no credit card required
+> - **Serper (Google)** — 2,500 free queries on signup
+> - **Self-hosted SearXNG** — already running your own instance
 
-> ADR needs a search provider to pull live evidence from the web. I'll set up Brave Search — it gives you 2,000 free queries per month with no credit card. Opening the signup page now.
+Then dispatch by their choice. Each branch: open the signup page, walk through the click path, capture the key.
 
-Then:
+#### If they pick Brave Search
 
 ```bash
 open https://api-dashboard.search.brave.com/register 2>/dev/null || echo "Open this URL in your browser: https://api-dashboard.search.brave.com/register"
 ```
 
-Walk them through:
-
-> 1. Sign in with Google or GitHub (one click — top-right).
+> 1. Sign in with Google or GitHub (top-right).
 > 2. Click **Subscribe** in the left sidebar, pick the **Free** plan.
-> 3. Click **Add API key**, give it any name like "adr".
-> 4. Copy the key value (it'll look like a long random string).
+> 3. Click **Add API key**, name it "adr".
+> 4. Copy the key value (a long random string).
 >
-> Paste the key here when you have it.
+> Paste it here when you have it.
 
-When they paste, capture as `BRAVE_SEARCH_API_KEY`.
+Capture as `BRAVE_SEARCH_API_KEY`.
 
-**If they prefer a different search provider**, ask them which: Tavily / Serper / SearXNG. The URLs and instructions:
+#### If they pick Tavily
 
-- **Tavily** (`TAVILY_API_KEY`) — https://tavily.com → sign in → Dashboard → copy API key. 1,000 free requests/month.
-- **Serper** (`SERPER_API_KEY`) — https://serper.dev → sign in → Dashboard → copy API key. 2,500 free queries on signup.
-- **SearXNG** (`SEARXNG_URL`) — only if they self-host a SearXNG instance. They paste the base URL.
+```bash
+open https://app.tavily.com/home 2>/dev/null || echo "Open this URL in your browser: https://app.tavily.com/home"
+```
+
+> 1. Sign in (Google / GitHub / email).
+> 2. The dashboard shows your API key at the top — it starts with `tvly-`.
+> 3. Click the copy icon next to it.
+>
+> Paste the key here.
+
+Capture as `TAVILY_API_KEY`.
+
+#### If they pick Serper
+
+```bash
+open https://serper.dev/api-key 2>/dev/null || echo "Open this URL in your browser: https://serper.dev/api-key"
+```
+
+> 1. Sign in (Google / GitHub).
+> 2. Your API key is shown on the page — copy it.
+>
+> Paste the key here.
+
+Capture as `SERPER_API_KEY`.
+
+#### If they pick Self-hosted SearXNG
+
+Don't open a URL. Just ask:
+
+> Paste the base URL of your SearXNG instance (e.g. `https://search.example.com`).
+
+Capture as `SEARXNG_URL`.
 
 ### LLM provider (required) → **OpenAI**
 
