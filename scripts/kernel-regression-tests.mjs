@@ -1598,4 +1598,84 @@ try {
   await rm(tmpOutDir, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// Schema-validation guard: the spec the synthesizer returns MUST pass the
+// JSON schema for architecture.spec.json. Catching this in tests prevents
+// "ran the whole pipeline, then died at the last writeJson" failures.
+// ---------------------------------------------------------------------------
+
+{
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "adr-schema-validate-test-"));
+
+  installProvider((label) => {
+    assert.equal(label, "architecture_synthesis_agent");
+    return {
+      decision: {
+        id: "ADR-Vector",
+        title: "Vector store",
+        status: "selected",
+        mode: "ranked_options",
+        ranked_options: [
+          { name: "pgvector", label: "pgvector", summary: "x", evidence_citations: [1], confidence: 0.9 },
+          { name: "pinecone", label: "Pinecone", summary: "y", evidence_citations: [2], confidence: 0.7 }
+        ],
+        recommendation: null,
+        summary: "Two options.",
+        evidence_citations: []
+      },
+      domain_model: { bounded_contexts: [], core_entities: [], domain_invariants: [] },
+      evidence_summary: {}
+    };
+  });
+
+  const km = {
+    promotion_rule: "test",
+    promoted_candidates: [
+      { name: "pgvector", label: "pgvector", citations: [1], evidence_count: 1 },
+      { name: "pinecone", label: "Pinecone", citations: [2], evidence_count: 1 }
+    ],
+    insufficient_evidence_candidates: []
+  };
+  const ev = [
+    { citation_id: 1, title: "pgvector", url: "https://example.com/1", source_type: "official_docs", score: 0.9, excerpt: "x", claims: [], relevance: "x" },
+    { citation_id: 2, title: "Pinecone", url: "https://example.com/2", source_type: "official_docs", score: 0.8, excerpt: "y", claims: [], relevance: "x" }
+  ];
+
+  const spec = await synthesizeDecisionPhase({
+    context: {
+      domain: "saas",
+      decision: "vector store",
+      decision_kind: "concrete",
+      domain_entities: [],
+      bounded_contexts: [],
+      query_shapes: [],
+      operational_envelope: { latency: "x", cost: "x", scale: "x", availability: "x" },
+      compliance_constraints: [],
+      risk_invariants: []
+    },
+    knowledgeMap: km,
+    evidenceItems: ev,
+    comparisonMatrix: null
+  });
+
+  // The real bug we're guarding against: candidate_topologies[].decision was
+  // set to "considered" by synthesizeArchitectureSpec but the schema enum
+  // didn't include it. writeJson is the actual validation path the kernel
+  // uses on disk — calling it here catches the mismatch at test time.
+  const specPath = path.join(tmpDir, "architecture.spec.json");
+  await writeJson(specPath, spec);
+  const written = JSON.parse(await readFile(specPath, "utf8"));
+  // Every non-recommendation viable option should land as "considered".
+  const consideredDecisions = written.candidate_topologies
+    .filter((c) => c.decision === "considered");
+  assert.equal(
+    consideredDecisions.length,
+    2,
+    `expected both ranked options to land as 'considered', got: ${written.candidate_topologies.map((c) => `${c.name}:${c.decision}`).join(", ")}`
+  );
+
+  setLlmJsonProvider(null);
+  await rm(tmpDir, { recursive: true, force: true });
+}
+
 console.log("kernel regression tests ok");

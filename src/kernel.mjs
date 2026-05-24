@@ -1750,11 +1750,25 @@ async function gatherEvidenceForQuery({
   outDir
 }) {
   const liveResults = await searchWithProvider(query);
+  await appendEvent(outDir, "research_search_completed", {
+    task_id: task.id,
+    round,
+    query,
+    result_count: liveResults.length
+  });
   for (const result of liveResults) {
     if (!result.url || seenUrls.has(result.url)) continue;
     seenUrls.add(result.url);
 
     const source_type = classifySource(result.url);
+
+    await appendEvent(outDir, "research_source_fetching", {
+      task_id: task.id,
+      round,
+      url: result.url,
+      title: result.title || result.url,
+      source_type
+    });
 
     let repoDigest = null;
     let paperDigest = null;
@@ -1780,8 +1794,24 @@ async function gatherEvidenceForQuery({
       sourceText = opened || result.snippet || "";
       fetchStatus = opened ? "http_fetch_ok" : "search_snippet_only";
     }
+    await appendEvent(outDir, "research_source_fetched", {
+      task_id: task.id,
+      round,
+      url: result.url,
+      source_type,
+      fetch_status: fetchStatus,
+      text_bytes: Buffer.byteLength(sourceText || "", "utf8")
+    });
     const excerpt = extractExcerpt(sourceText, keywords);
-    if (!excerpt || excerpt.length < 120) continue;
+    if (!excerpt || excerpt.length < 120) {
+      await appendEvent(outDir, "research_source_skipped", {
+        task_id: task.id,
+        round,
+        url: result.url,
+        reason: "excerpt_too_short_or_empty"
+      });
+      continue;
+    }
     const sourceSnapshot = await persistSourceSnapshot({
       outDir,
       url: result.url,
@@ -1803,8 +1833,20 @@ async function gatherEvidenceForQuery({
       relevance: task.objective,
       ...sourceSnapshot
     };
+    await appendEvent(outDir, "research_claims_extracting", {
+      task_id: task.id,
+      round,
+      url: result.url
+    });
     const claims = await extractClaims({ context, task, source: partial });
     const scored = scoreEvidence({ sourceType: source_type, excerpt, context, task, claims });
+    await appendEvent(outDir, "research_claims_extracted", {
+      task_id: task.id,
+      round,
+      url: result.url,
+      claim_count: claims.length,
+      score: scored.score
+    });
 
     evidence.push({
       ...partial,
@@ -3182,6 +3224,9 @@ async function scanUncitedClaimsPhase({
   evidenceItems,
   outDir
 }) {
+  await appendEvent(outDir, "claim_audit_started", {
+    artifact_count: 4
+  });
   let raw;
   try {
     raw = await callLlmJson({
@@ -4021,6 +4066,10 @@ async function verifyCitationsPhase({
     evidenceItems.map((item) => [Number(item.citation_id), item])
   );
 
+  await appendEvent(outDir, "citation_audit_started", {
+    evidence_count: evidenceItems.length
+  });
+
   const citedPoints = [];
   for (const id of toArray(spec.decision?.evidence_citations).map(Number)) {
     if (Number.isFinite(id)) {
@@ -4058,6 +4107,10 @@ async function verifyCitationsPhase({
   }
 
   const verifyOneBatch = async (claimContext, batchPoints) => {
+    await appendEvent(outDir, "citation_audit_batch_started", {
+      claim_context: claimContext,
+      citation_count: batchPoints.length
+    });
     try {
       const raw = await callLlmJson({
         label: "citation_verifier",
@@ -4092,8 +4145,23 @@ async function verifyCitationsPhase({
           })
         })
       });
-      return { claimContext, items: toArray(raw.items) };
+      const items = toArray(raw.items);
+      const verified = items.filter((i) => i.verified).length;
+      await appendEvent(outDir, "citation_audit_batch_completed", {
+        claim_context: claimContext,
+        citation_count: batchPoints.length,
+        verified_count: verified,
+        unsupported_count: batchPoints.length - verified
+      });
+      return { claimContext, items };
     } catch (error) {
+      await appendEvent(outDir, "citation_audit_batch_completed", {
+        claim_context: claimContext,
+        citation_count: batchPoints.length,
+        verified_count: 0,
+        unsupported_count: batchPoints.length,
+        error: String(error?.message || error)
+      });
       return {
         claimContext,
         items: batchPoints.map((point) => ({
@@ -4249,7 +4317,14 @@ async function writeRunArtifacts({
   comparisonMatrix,
   flags = {}
 }) {
+  await appendEvent(outDir, "evaluation_pack_started", {
+    spec_mode: spec.decision?.mode
+  });
   const evaluationPack = await buildEvaluationPack(context, spec, evidenceItems, comparisonMatrix);
+  await appendEvent(outDir, "evaluation_pack_completed", {
+    test_case_count: evaluationPack.test_cases.length,
+    metric_count: Object.keys(evaluationPack.metrics || {}).length
+  });
   const baseHandoff = buildExecutionHandoff(spec);
   let handoff = baseHandoff;
   if (comparisonMatrix) {
@@ -4323,6 +4398,7 @@ async function writeRunArtifacts({
     };
   }
 
+  await appendEvent(outDir, "handoff_writing", {});
   await writeFile(path.join(outDir, "ADR.md"), adrMarkdown);
   await writeJson(path.join(outDir, "architecture.spec.json"), spec);
   await writeJson(path.join(outDir, "domain-evaluation-pack.json"), evaluationPack);
@@ -4536,13 +4612,26 @@ async function deepResearch({ inputPath, flags }) {
     adversarialCycles = compareResult.adversarialCycles;
   }
 
+  await appendEvent(prepared.outDir, "synthesis_started", {
+    promoted_candidates: knowledgeMap.promoted_candidates.length,
+    evidence_count: evidenceItems.length
+  });
   let rawSpec = await synthesizeDecisionPhase({
     context: prepared.context,
     knowledgeMap,
     evidenceItems,
     comparisonMatrix
   });
+  await appendEvent(prepared.outDir, "synthesis_completed", {
+    mode: rawSpec.decision?.mode,
+    ranked_options_count: toArray(rawSpec.decision?.ranked_options).length,
+    has_recommendation: Boolean(rawSpec.decision?.recommendation),
+    recommendation_name: rawSpec.decision?.recommendation?.name || null
+  });
 
+  await appendEvent(prepared.outDir, "critique_started", {
+    spec_mode: rawSpec.decision?.mode
+  });
   let critique = flags["skip-critique"]
     ? null
     : await critiqueDecisionPhase({

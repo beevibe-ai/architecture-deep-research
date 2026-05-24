@@ -133,7 +133,8 @@
           },
           "decision": {
             "type": "string",
-            "enum": ["selected", "rejected", "deferred"]
+            "enum": ["selected", "considered", "rejected", "deferred"],
+            "description": "selected = the recommendation; considered = viable option carrying tradeoffs but not the recommendation; rejected = filtered out by promotion gate or relevance filter; deferred = ADR could not place it (used when mode=deferred)."
           }
         },
         "additionalProperties": true

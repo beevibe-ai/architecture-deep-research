@@ -97,6 +97,12 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `research_batch_started` | 🔎  Dispatching parallel research agents (max `N`) |
 | `research_agent_started` | &nbsp;&nbsp;🔍  task: `<task_title or task_id>` |
 | `research_round_started` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` searching |
+| `research_search_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` got `result_count` results for `query` |
+| `research_source_fetching` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;⤓ fetching `<url>` (`source_type`) |
+| `research_source_fetched` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;✓ fetched `<url>` (`text_bytes` bytes, `fetch_status`) |
+| `research_source_skipped` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↪ skipped `<url>` (`reason`) |
+| `research_claims_extracting` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🧠 extracting claims from `<url>` |
+| `research_claims_extracted` | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;✓ extracted `claim_count` claims (score `<score>`) |
 | `research_round_judged` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` judge: complete=`<value>` |
 | `research_round_completed` | &nbsp;&nbsp;&nbsp;&nbsp;round `N` ✓ (`N` evidence) |
 | `research_agent_finished` | &nbsp;&nbsp;✓  task done (`N` evidence) |
@@ -109,19 +115,31 @@ Use the `Monitor` tool on the `tail -F` task id. Each new stdout line is a notif
 | `adaptive_research_cycle_completed` | ✓  Adaptive cycle `N` complete (`K` promoted candidates now) |
 | `adversarial_research_cycle_started` | ⚔️  Adversarial cycle `N`: arguing against candidates |
 | `adversarial_research_cycle_completed` | ✓  Adversarial cycle `N` complete (`E` empty cells remain) |
+| `synthesis_started` | 🧩  Synthesizing — `K` promoted candidates, `N` evidence items |
+| `synthesis_completed` | ✓  Synthesis done — mode=`<mode>`, `N` ranked options, recommendation: `<name or none>` |
+| `critique_started` | 🧐  Critique: evaluating option set quality |
 | `critique_completed` | 🧐  Critique: `N` issues (`H` high-severity) |
 | `resynthesis_started` | 🔄  Re-synthesizing to address `N` high-severity issues |
 | `resynthesis_accepted` | ✓  Re-synthesis accepted (`N` → `M` high-severity, selected: `<value>`) |
 | `resynthesis_rejected` | ↪  Re-synthesis rejected — keeping original (`reason`) |
+| `citation_audit_started` | 🔗  Citation audit: verifying citations across `evidence_count` items |
+| `citation_audit_batch_started` | &nbsp;&nbsp;⤓ batch `<claim_context>` (`citation_count` citations) |
+| `citation_audit_batch_completed` | &nbsp;&nbsp;✓ batch `<claim_context>` — `verified_count` verified, `unsupported_count` unsupported |
 | `citation_audit_completed` | 🔗  Citation audit: `V/T` verified, `U` unsupported |
+| `evaluation_pack_started` | 🧪  Building evaluation pack |
+| `evaluation_pack_completed` | ✓  Evaluation pack — `test_case_count` test cases, `metric_count` metrics |
+| `claim_audit_started` | 📝  Claim audit: scanning artifacts for uncited material claims |
 | `claim_audit_completed` | 📝  Claim audit complete |
-| `decision_downgraded_by_critique` | ⚠️  Decision downgraded by critique |
-| `decision_downgraded_by_citation_audit` | ⚠️  Decision downgraded by citation audit |
-| `run_completed` | ✅  Run complete — synthesizing handoff... |
+| `decision_downgraded_by_critique` | ⚠️  Recommendation dropped by critique (option set preserved) |
+| `decision_downgraded_by_citation_audit` | ⚠️  Recommendation dropped by citation audit (option set preserved) |
+| `handoff_writing` | 📝  Writing handoff artifacts |
+| `run_completed` | ✅  Run complete — handoff written |
 
 Unknown event types: print as `<event_type>` with no message body. Don't lose them.
 
-**Pacing:** if many events land in quick succession (e.g. `research_round_*` × 20), batch them into a single update so chat doesn't get spammed. e.g. "Research: 6 tasks dispatched, 12 rounds, 47 evidence items so far."
+**Stream every event individually.** Each event line in `events.jsonl` is meant to be a beat the user sees in chat — not a candidate for batching. Surface each event the moment it lands. The kernel's job is to emit beats at the granularity that makes sense for streaming UX; the slash command's job is to translate each one to a single chat line. Do NOT consolidate multiple events into one message even when they land in the same tick.
+
+The only exception: when the same event_type fires very rapidly (e.g. `research_source_fetching` for 8 URLs in a single round), it's OK to render them on consecutive lines without skipping any.
 
 ## Step 6.5 — Handle the clarification gate (only if `run_waiting_for_clarification` fires)
 
