@@ -191,12 +191,15 @@ async function findPeers({
     maxPeers
   });
 
-  // Fetch GitHub signal in parallel. Failures are silent.
+  // Fetch GitHub signal in parallel. Failures are silent. Peers without a
+  // resolved signal get the field omitted entirely — the schema requires
+  // signal to be an object when present (closed-source peers and fetch
+  // failures both produce no signal).
   const enriched = await Promise.all(
     enumerated.map(async (peer) => {
-      if (!peer.github_url) return { ...peer, signal: null };
+      if (!peer.github_url) return peer;
       const signal = await fetchPeerSignal(peer.github_url, flags);
-      return { ...peer, signal: signal || null };
+      return signal ? { ...peer, signal } : peer;
     })
   );
 
@@ -209,14 +212,19 @@ async function findPeers({
 
   const ranked = rankPeers(alive, maxPeers);
 
-  return {
+  // Schema requires seed to be a string when present, not null. Omit the
+  // field when no seed was supplied rather than writing `seed: null`.
+  const artifact = {
     version: VERSION,
     decision,
     domain,
-    seed: seed || null,
     extracted_at: nowIso(),
     peers: ranked
   };
+  if (typeof seed === "string" && seed.trim()) {
+    artifact.seed = seed.trim();
+  }
+  return artifact;
 }
 
 export { findPeers, enumeratePeers, fetchPeerSignal, rankPeers, DEFAULT_MAX_PEERS };

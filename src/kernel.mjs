@@ -2079,7 +2079,7 @@ function assignCitations(evidenceItems) {
     }));
 }
 
-function buildKnowledgeMap(evidenceItems) {
+function buildKnowledgeMap(evidenceItems, { offTopicNames = new Set() } = {}) {
   const families = new Map();
 
   for (const item of evidenceItems) {
@@ -2124,18 +2124,33 @@ function buildKnowledgeMap(evidenceItems) {
   const patterns = [...families.values()].map((item) => {
     const sourceTypes = [...item.source_types];
     const evidenceCount = item.support.length + item.warnings.length + item.rejections.length;
-      const qualityGate =
-        evidenceCount >= 2 &&
-        item.support.length > 0 &&
-        (sourceTypes.includes("official_docs") ||
-          sourceTypes.includes("mature_oss") ||
-          sourceTypes.includes("paper_or_benchmark") ||
-          sourceTypes.includes("private_corpus"));
+    // Promotion requires at least one EXTERNAL source. private_corpus
+    // describes team context (what they already use / reject) — it can
+    // contribute to evidence_count and inform synthesis, but a family with
+    // only private_corpus support is not a candidate the broader world has
+    // evidence about. Promoting such families pollutes the matrix with
+    // internal-only "Team pattern: X" entries (e.g. local_agent_runtime in
+    // a retrieval-architecture decision).
+    const hasExternalSource =
+      sourceTypes.includes("official_docs") ||
+      sourceTypes.includes("mature_oss") ||
+      sourceTypes.includes("paper_or_benchmark");
+    const isOffTopic = offTopicNames.has(item.name);
+    const qualityGate =
+      evidenceCount >= 2 &&
+      item.support.length > 0 &&
+      hasExternalSource &&
+      !isOffTopic;
+
+    let promotion_status;
+    if (qualityGate) promotion_status = "evidence_backed_candidate";
+    else if (isOffTopic) promotion_status = "off_topic_for_decision";
+    else promotion_status = "insufficient_evidence";
 
     return {
       name: item.name,
       label: item.label,
-      promotion_status: qualityGate ? "evidence_backed_candidate" : "insufficient_evidence",
+      promotion_status,
       evidence_count: evidenceCount,
       source_types: sourceTypes,
       citations: [...item.citations].sort((a, b) => a - b),
@@ -2777,6 +2792,12 @@ async function synthesizeArchitectureSpec({
       "  an option only when the matrix says so with cited evidence.",
       "- No static pattern library. No invented evidence.",
       "- Citation IDs in evidence_citations must exist in the evidence pool.",
+      "- evidence_citations for each option MUST cite external sources only.",
+      "  Items with source_type: \"private_corpus\" describe the team's existing",
+      "  patterns — they are decision CONTEXT, never external evidence for an",
+      "  option's properties. Do not put private_corpus citation_ids in any",
+      "  option's evidence_citations array or in the decision's top-level",
+      "  evidence_citations.",
       "",
       kind === "concrete"
         ? "Concrete-mode rules: each option is a specific product. when_to_pick / when_not_to_pick should reference vendor-specific concerns (pricing model, vendor lock-in, SDK quality, on-prem availability, ecosystem health) alongside fit-for-purpose."
@@ -2837,6 +2858,13 @@ async function synthesizeArchitectureSpec({
   });
 
   const validCitationIds = new Set(evidenceItems.map((item) => Number(item.citation_id)));
+  // private_corpus items describe team context, not external evidence. Drop
+  // them from any option's evidence_citations even if the LLM emits them.
+  const privateCorpusIds = new Set(
+    evidenceItems
+      .filter((item) => item.source_type === "private_corpus")
+      .map((item) => Number(item.citation_id))
+  );
 
   // Parse the model's ranked_options, filtering names that don't appear in
   // promoted_candidates. The synthesizer is forbidden from inventing options.
@@ -2862,7 +2890,7 @@ async function synthesizeArchitectureSpec({
       forbidden_topologies: toArray(opt.forbidden_topologies).map(String).filter(Boolean),
       evidence_citations: toArray(opt.evidence_citations)
         .map(Number)
-        .filter((id) => Number.isFinite(id) && validCitationIds.has(id)),
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id)),
       confidence: clampNumber(opt.confidence, { min: 0, max: 1, fallback: 0.5 })
     });
   }
@@ -3009,7 +3037,7 @@ async function synthesizeArchitectureSpec({
       summary: decisionSummary,
       evidence_citations: toArray(result.decision?.evidence_citations)
         .map(Number)
-        .filter((id) => Number.isFinite(id) && validCitationIds.has(id))
+        .filter((id) => Number.isFinite(id) && validCitationIds.has(id) && !privateCorpusIds.has(id))
     },
     domain_model: {
       bounded_contexts: toArray(result.domain_model?.bounded_contexts),
@@ -3883,6 +3911,39 @@ async function prepareRun({ inputPath, flags, chained = false }) {
     }
   }
 
+  // Clobber guard: if outDir contains a completed run, refuse to overwrite
+  // unless the caller explicitly opts in. Fresh runs append to events.jsonl
+  // and writeJson the final artifacts — without this guard, a re-run bills
+  // the user, the events log shows the new run_completed, but a late-stage
+  // crash (or any path that bypasses writeRunArtifacts) leaves stale
+  // state.json / ADR.md / architecture.spec.json on disk. The user pays for
+  // invisible work and the on-disk artifacts contradict the event stream.
+  if (!chained && !flags.resume && !flags.overwrite) {
+    try {
+      const priorState = JSON.parse(
+        await readFile(path.join(outDir, "state.json"), "utf8")
+      );
+      if (priorState?.status === "completed") {
+        throw new Error(
+          `Out dir ${outDir} already contains a completed run ` +
+          `(decision_mode=${priorState.decision_mode || "unknown"}, ` +
+          `recommendation=${priorState.recommendation_name || "none"}). ` +
+          `Re-running would discard those artifacts and bill you again. ` +
+          `Pick one:\n` +
+          `  - Use a different --out path for a fresh run\n` +
+          `  - 'adr resume ${outDir}' to replay synthesis from cached evidence (cheap)\n` +
+          `  - Pass --overwrite to force a fresh run that replaces the prior artifacts`
+        );
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
+        // Re-throw our own clobber error; ENOENT and JSON-parse errors are
+        // expected on first run / corrupt prior state and should not block.
+        throw error;
+      }
+    }
+  }
+
   await mkdir(outDir, { recursive: true });
   if (!chained && !flags.resume) {
     // Fresh run — truncate events.jsonl and reset cost tracking. When chained
@@ -4078,13 +4139,17 @@ async function buildPeerResearchTasks({ context, outDir }) {
   try {
     peersArtifact = JSON.parse(await readFile(path.join(outDir, "peers.json"), "utf8"));
   } catch (error) {
-    if (error && error.code === "ENOENT") return [];
-    return [];
+    if (error && error.code === "ENOENT") {
+      return { tasks: [], status: "no_peers_json" };
+    }
+    return { tasks: [], status: "peers_json_unreadable", error: String(error?.message || error) };
   }
   const peers = toArray(peersArtifact?.peers);
-  if (peers.length === 0) return [];
+  if (peers.length === 0) {
+    return { tasks: [], status: "peers_json_empty" };
+  }
 
-  return peers.map((peer, index) => {
+  const tasks = peers.map((peer, index) => {
     const sources = [
       peer.github_url,
       peer.docs_url,
@@ -4113,6 +4178,7 @@ async function buildPeerResearchTasks({ context, outDir }) {
       peer_target: peer.name
     };
   });
+  return { tasks, status: "ok" };
 }
 
 async function planResearchPhase({ context, content, outDir, flags }) {
@@ -4121,7 +4187,26 @@ async function planResearchPhase({ context, content, outDir, flags }) {
   // Peer-targeted tasks land BEFORE the LLM-generated tasks so the bounded
   // slice always preserves at least one task per peer. Without this,
   // max_cycles=1 with many peers could drop most peer tasks.
-  const peerTasks = await buildPeerResearchTasks({ context, outDir });
+  const peerResult = await buildPeerResearchTasks({ context, outDir });
+  const peerTasks = peerResult.tasks;
+  // Visibility: a user who passed --include-peers and sees peer_task_count=0
+  // in research_plan_created previously had no event explaining why. Emit
+  // the reason explicitly so silent failures (missing peers.json, empty
+  // peers array, unreadable file) are surfaced. Skipped when peer tasks
+  // landed normally or when --include-peers wasn't requested.
+  if (peerTasks.length === 0 && flags["include-peers"]) {
+    await appendEvent(outDir, "peer_research_tasks_skipped", {
+      reason: peerResult.status,
+      hint:
+        peerResult.status === "no_peers_json"
+          ? "peers.json was not found in outDir. Either discover didn't run with --include-peers in this outDir, or it was deleted between discover and deep-research. In chained mode (--discover-first), both stages must share outDir."
+          : peerResult.status === "peers_json_empty"
+            ? "peers.json was present but contained no peers. Check the discover stage's peers_extraction_empty event for the underlying cause; provide --seed <product> to anchor the finder."
+            : peerResult.status === "peers_json_unreadable"
+              ? `peers.json could not be read or parsed: ${peerResult.error || "unknown error"}`
+              : "buildPeerResearchTasks returned no tasks for an unrecognized reason."
+    });
+  }
   if (peerTasks.length > 0) {
     await appendEvent(outDir, "peer_research_tasks_added", {
       peer_task_count: peerTasks.length,
@@ -4688,15 +4773,19 @@ async function validateConcreteCandidates({ context, knowledgeMap, outDir, flags
     return { knowledgeMap, demoted: [], skipped: false };
   }
 
-  // Safety net: if validation would empty the pool, abort like the
-  // constraint filter does. Keeps the original pool and lets synthesis
-  // see the verdicts as advisory.
+  // When concrete-mode validation would empty the pool, that's an honest
+  // signal — every candidate the deep-research stage promoted is a pattern,
+  // not a product. The user asked for concrete and got nothing concrete.
+  // Halt by clearing promoted_candidates so synthesis defers, then emit a
+  // loud event explaining why. Previously this branch returned the original
+  // pool unchanged ("advisory abort"), which let synthesis recommend a
+  // pattern in concrete mode — a silent contract violation.
   if (kept.length === 0) {
     await appendEvent(outDir, "concrete_validation_aborted_empty_pool", {
       would_have_demoted: demoted.map((d) => d.name),
-      reason: "Every promoted candidate is pattern-shaped, not product-shaped. The decision is concrete-mode but no real products surfaced. Consider re-running with --decision-kind family, or sharpen the PRD to name specific products."
+      reason: "Every promoted candidate is pattern-shaped, not product-shaped. The decision is concrete-mode but no real products surfaced. The run will defer rather than recommend a pattern. Consider re-running with --decision-kind family, or sharpen the PRD to name specific products."
     });
-    return { knowledgeMap, demoted: [], skipped: false, aborted_empty: true };
+    // fall through to the demotion path below so promoted_candidates → []
   }
 
   const demotedSet = new Set(demoted.map((d) => slugify(d.name)));
@@ -4827,13 +4916,23 @@ async function filterPromotedByRelevance({ context, knowledgeMap, outDir, flags 
       off_topic_reason: dropped.find((d) => slugify(d.name) === slugify(c.name))?.reason || ""
     }));
 
+  // Persist off-topic drops across downstream knowledge-map rebuilds. The
+  // adversarial cycle in compareTopologiesPhase calls buildKnowledgeMap
+  // again on enriched evidence; without this set the dropped candidate gets
+  // re-promoted from the same evidence the filter just rejected.
+  const priorOffTopic = toArray(knowledgeMap._off_topic_drops);
+  const offTopicNames = [
+    ...new Set([...priorOffTopic, ...dropped.map((d) => slugify(d.name))])
+  ];
+
   const updated = {
     ...knowledgeMap,
     promoted_candidates: keptPromoted,
     insufficient_evidence_candidates: [
       ...toArray(knowledgeMap.insufficient_evidence_candidates),
       ...movedToInsufficient
-    ]
+    ],
+    _off_topic_drops: offTopicNames
   };
 
   await appendEvent(outDir, "candidate_relevance_filter_completed", {
@@ -4894,7 +4993,7 @@ async function executeResearchPhase({ plan, context, outDir, flags }) {
 
   const maxAdaptiveCycles = Math.max(
     0,
-    Number(flags["max-adaptive-cycles"] || 1)
+    Number(flags["max-adaptive-cycles"] ?? 1)
   );
   let adaptiveCycle = 0;
 
@@ -5032,7 +5131,7 @@ async function compareTopologiesPhase({
 
   const maxAdversarialCycles = Math.max(
     0,
-    Number(flags["max-adversarial-cycles"] || 1)
+    Number(flags["max-adversarial-cycles"] ?? 1)
   );
   let matrix = initialMatrix;
   let updatedResearchResults = researchResults;
@@ -5086,7 +5185,16 @@ async function compareTopologiesPhase({
       ...updatedResearchResults.flatMap((result) => result.evidence),
       ...syntheticEvidenceItems
     ]);
-    updatedKnowledgeMap = buildKnowledgeMap(updatedEvidenceItems);
+    // Carry the relevance filter's off_topic verdict across the rebuild.
+    // Without this, a candidate the filter dropped before adversarial
+    // research can re-promote off the same evidence (issue 08).
+    const stickyOffTopic = new Set(toArray(updatedKnowledgeMap._off_topic_drops));
+    updatedKnowledgeMap = buildKnowledgeMap(updatedEvidenceItems, {
+      offTopicNames: stickyOffTopic
+    });
+    if (stickyOffTopic.size > 0) {
+      updatedKnowledgeMap._off_topic_drops = [...stickyOffTopic];
+    }
 
     await writeJson(path.join(outDir, "evidence.json"), updatedEvidenceItems);
     await writeJson(path.join(outDir, "knowledge-map.json"), updatedKnowledgeMap);
@@ -5307,6 +5415,37 @@ async function verifyCitationsPhase({
   }
 
   const items = [];
+
+  // Auto-flag private_corpus items cited as evidence for an external option
+  // before the LLM auditor sees them. private_corpus describes team context,
+  // not external evidence — it cannot support a candidate's external
+  // properties. Cheaper than an LLM call and 100% reliable. Synthesis is
+  // already supposed to filter these, but this is the final backstop.
+  const autoFlaggedPoints = new Set();
+  for (let i = citedPoints.length - 1; i >= 0; i -= 1) {
+    const point = citedPoints[i];
+    const item = evidenceById.get(Number(point.citation_id));
+    if (!item) continue;
+    if (item.source_type !== "private_corpus") continue;
+    if (!/^candidate:/.test(point.claim_context)
+      && point.claim_context !== "selected_topology_summary") continue;
+    items.push({
+      citation_id: point.citation_id,
+      claim_context: point.claim_context,
+      verified: false,
+      confidence: 0,
+      reason: "private_corpus cannot serve as external evidence for a candidate claim",
+      evidence_present: true,
+      auto_flagged: true
+    });
+    autoFlaggedPoints.add(`${point.citation_id}|${point.claim_context}`);
+    citedPoints.splice(i, 1);
+  }
+  if (autoFlaggedPoints.size > 0) {
+    await appendEvent(outDir, "citation_audit_auto_flagged_private_corpus", {
+      count: autoFlaggedPoints.size
+    });
+  }
 
   // Batch by claim_context so the verifier never sees the same citation_id twice
   // in one call — a single-batch call lets the model dedupe and silently drop
