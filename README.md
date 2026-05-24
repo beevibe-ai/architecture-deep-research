@@ -79,6 +79,15 @@ adr deep-research --discover-first \
   --repo . --domain "internal-tools" --decision "event bus topology" \
   --out .adr-runs/event-bus
 
+# Budget sanity-check before a real run — prints plan + estimated cost, exits
+adr deep-research --discover-first --dry-run \
+  --repo . --domain "internal-tools" --decision "event bus topology" \
+  --out .adr-runs/event-bus
+
+# Resume a crashed or interrupted run — reuses evidence.json from the prior
+# run (the expensive part) and re-runs synthesis + audits + handoff
+adr resume .adr-runs/event-bus
+
 # Or two-step: scan, edit the draft, then run
 adr discover --repo . --decision "event bus topology" --out .adr-runs/discover
 $EDITOR .adr-runs/discover/pdr.draft.md     # fill in the Open questions
@@ -118,26 +127,31 @@ The PRD and clarification answers carry phrases like "self-hosted only", "must f
       "statement": "Self-hosted deployment is the primary model.",
       "severity": "must_have",
       "check_question": "Does <CANDIDATE> support self-hosted deployment?",
-      "evidence_from_input": "self-hosted is the primary deploy model"
+      "evidence_from_input": "self-hosted is the primary deploy model",
+      "decision_scope_relevant": true,
+      "category": "deployment"
     },
     {
-      "id": "fits_docker_compose",
-      "statement": "Must fit inside the existing Docker Compose stack.",
+      "id": "supports_agent_identities",
+      "statement": "Must support persistent agent identities.",
       "severity": "must_have",
-      "check_question": "Does <CANDIDATE> run as part of Docker Compose?",
-      "evidence_from_input": "fits the existing Docker Compose"
+      "decision_scope_relevant": false,
+      "decision_scope_reason": "Application-layer requirement; no vector-store candidate can satisfy or violate this on its own."
     }
   ]
 }
 ```
 
-Severities:
+Severities + scope:
 
 | Severity | Behavior |
 | --- | --- |
-| `must_have` | A candidate that fails this is eliminated, not penalized. "Self-hosted only" + Pinecone (cloud-only) → Pinecone is OUT of `ranked_options`. The eliminated candidate is recorded in ADR.md under "Eliminated by hard constraints" with the specific failure reason. |
+| `must_have` + `decision_scope_relevant: true` | Eliminates candidates. "Self-hosted only" + Pinecone (cloud-only) → Pinecone is OUT of `ranked_options`. Eliminated candidates are recorded in ADR.md under "Eliminated by hard constraints" with the failure reason. |
+| `must_have` + `decision_scope_relevant: false` | App-layer requirement that the decision layer can't satisfy on its own (e.g., "must support agent identities" for a vector-store decision). Stays in `constraints.json` for transparency, scoring inputs only — no elimination. |
 | `preferred` | Scoring input. Influences ranking but does not filter. |
 | `nice_to_have` | Lowest weight scoring input. |
+
+**Safety net:** if every promoted candidate would fail the must_have set, the filter aborts (keeps the original pool) and emits `constraint_filter_aborted_empty_pool` with guidance to edit `constraints.json`. Beats crashing synthesis with an empty pool.
 
 `constraints.json` is **editable between runs**. ADR uses the file as-is on re-invocation, so if the LLM mislabeled "ideally self-hosted" as must_have, you can change it to preferred and re-run — no full extraction needed.
 
@@ -177,6 +191,77 @@ adr deep-research --decision-kind concrete --decision "auth provider" ...
 The MCP tool takes the same value via the `decision_kind` arg. The `/adr:decide` slash command asks the user to confirm before running.
 
 This was a real bug in earlier versions: asking ADR for an "auth provider" got back "token-based auth" (a pattern) instead of "Clerk" (a product). Decision-kind makes that mismatch impossible — the synthesizer prompt branches on the field and is told explicitly to commit to a product in concrete mode.
+
+**Concrete-mode candidate validator.** When `decision_kind: concrete`, after promotion ADR runs an extra LLM check on each candidate: `product | pattern | unsure`. Pattern-shaped names (`vector_rag`, `postgres_centric_storage`, `token_based_auth`) that leaked through from the extractor get demoted to `insufficient_evidence_candidates` with `promotion_status: "non_product_in_concrete_mode"`. The matrix only sees real products. Family mode is a no-op. Bypass with `--skip-concrete-validation`.
+
+## Clarification Gate
+
+ADR refuses to bluff. When the PRD lacks enough context (latency / scale / compliance / budget / region signals), the kernel writes `clarification.json` with the open questions and stops before spending tokens on a guaranteed-low-confidence run.
+
+Three ways to unblock:
+
+```bash
+# Pass answers as free-form text or a path to a file
+adr deep-research ... --clarification-answers "Self-hosted only. p95 < 500ms. 10-100 tenants. SOC2 in 12 months."
+
+# Pick a pre-built profile (skip the questions entirely)
+adr deep-research ... --clarification-profile first_paying_customers
+
+# Force a low-confidence run (you accept the risk)
+adr deep-research ... --no-clarify
+```
+
+Profiles shipped with the package:
+
+| Profile | Fit |
+| --- | --- |
+| `pre_pmf_solo` | Pre-PMF, 1-3 engineers, self-hosted single-VM, budget < $50/mo. Optimizes for time-to-ship. |
+| `first_paying_customers` | 3-10 engineers, 10-100 tenants, managed cloud, SOC2 in 12 months, $50-500/mo per tenant. |
+| `scaling_team_post_seed` | 10-30 engineers, 100+ tenants, multi-region, SOC2 + GDPR, p95 < 200ms, $500-5k/mo per tenant. |
+| `enterprise_regulated` | 30+ engineers, multi-region or on-prem, HIPAA + SOC2 + GDPR, vendor lock-in is a board concern. |
+
+When the gate fires after a `discover` step, `clarification.json` carries a `suggested_profiles` array — the kernel matches discover signals (contributor count, codebase age, compliance) to 1-3 profiles. The slash command surfaces them as quick-pick options.
+
+## Cost Transparency
+
+Every ADR run carries real per-invocation cost (web search API calls + LLM tokens). The kernel makes those visible.
+
+```bash
+# Print plan + cost estimate, don't spend tokens
+adr deep-research --dry-run --discover-first \
+  --repo . --domain "..." --decision "..." --out .adr-runs/X
+
+# Output (excerpt):
+#   Dry run: 8 tasks planned (5 peer-targeted).
+#   Estimated cost: ~$0.1247 (rough, ±30%).
+#   Plan written to .adr-runs/X/research-plan.json.
+```
+
+Artifacts:
+
+- `cost-estimate.json` — written after the plan, before any expensive stage. Carries planned task count + estimated USD + profile (per-task / per-peer / per-adversarial coefficients).
+- `cost-progress` events — fire after research_completed + synthesis_completed with running total.
+- `cost.json` — final ledger. Per-LLM-label call counts, token counts (input / output / cached), per-phase USD estimate, run total.
+
+Estimates are rough (±30%) — actual cost varies with PRD size, source page length, and how many cycles the adaptive / adversarial loops trigger. Good enough for budget sanity checks.
+
+## Resume After a Crash
+
+Evidence collection is the expensive part of a run (60-80% of LLM calls). When the kernel crashes mid-pipeline — or you want to retry with a code-side fix — `adr resume` reuses the existing `evidence.json` and re-runs only synthesis + audits + handoff.
+
+```bash
+adr resume .adr-runs/event-bus
+```
+
+What happens:
+
+1. Reads `run-config.json` (written at the start of every run with the original flags + input path) to reconstruct the invocation.
+2. Re-runs `prepareRun` (constraint extraction is file-cached, so this is cheap).
+3. `executeResearchPhase` detects `evidence.json` from the prior run, loads it, and skips the research loop. Emits `research_resumed_from_cache`.
+4. All downstream stages (matrix, synthesis, critique, audits, handoff) re-run normally — cheap relative to research, and picks up any kernel-side fixes since the prior run.
+5. Appends to the same `events.jsonl` so the run history is continuous.
+
+Cost: typically a third to a fifth of the original run.
 
 ## API Keys
 
@@ -228,16 +313,20 @@ All three runtimes produce the same artifact set. See [docs/framework-adapters.m
 
 | Artifact | Content |
 | --- | --- |
+| `run-config.json` | The original flags + input path the run was invoked with. Used by `adr resume <out_dir>` to replay. |
+| `state.json` | Run lifecycle: `completed` / `crashed` / `needs_clarification` / `dry_run_complete`. On crash, includes `error` + `error_stack` so you don't have to grep `events.jsonl`. |
 | `strategic-context.json` | Domain entities, bounded contexts, query shapes, risk invariants, operational envelope, compliance constraints extracted from the brief. |
-| `clarification.json` | Open questions the PRD doesn't answer. Blocking gate by default; unblocks via `--clarification-answers '<text>'` or `--no-clarify`. |
-| `constraints.json` | Hard constraints (`must_have` / `preferred` / `nice_to_have`) extracted from the PRD + clarification answers. `must_have` constraints eliminate candidates before the matrix is built. Editable — re-runs pick up your edits. |
+| `clarification.json` | Open questions the PRD doesn't answer. Blocking gate by default. Unblocks via `--clarification-answers '<text>'`, `--clarification-profile <id>`, or `--no-clarify`. Carries `suggested_profiles` when discover signals match a built-in profile. |
+| `constraints.json` | Hard constraints (`must_have` / `preferred` / `nice_to_have`) with `decision_scope_relevant` flag. Only must_haves that pass the scope check filter the candidate pool. Editable — re-runs pick up your edits. |
+| `cost-estimate.json` | Written after the plan, before the expensive stages. Carries planned task count + estimated USD + per-task / per-peer coefficients. `--dry-run` short-circuits here. |
 | `peers.json` *(opt-in via `--include-peers`)* | 3-5 similar / competitor products with their GitHub URLs and momentum signal. The deep-research planner adds one targeted task per peer for the specific decision aspect. |
 | `discovered-principles.json` + `discovered-constraints.json` *(when `discover` ran)* | Patterns + antipatterns + stack signals from the user's own repo. Patterns flow into the evidence pool as `private_corpus` claims. The stack signals drive a `fits_existing_stack` matrix axis. |
-| `research-plan.json` | LLM-planned research tasks with search queries and source targets. Includes peer-targeted tasks when `peers.json` is present. |
-| `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims (each with a literal `quote` from the excerpt), content hash, snapshot path. Audit-grade. |
-| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. Eliminated-by-constraint candidates get tagged `eliminated_by_hard_constraint` with the failed constraint attached. |
+| `research-plan.json` | LLM-planned research tasks with search queries and source targets. Includes peer-targeted tasks when `peers.json` is present. Placeholder queries (`<product name>`) get filtered out at parse time. |
+| `evidence.json` + `source-snapshots/` | Full evidence pool. Each item: URL, provider, source type, quality score, extracted claims (each with a literal `quote` from the excerpt), content hash, snapshot path. Audit-grade. Reused by `adr resume`. |
+| `knowledge-map.json` | Architecture candidates promoted (≥2 cited items, ≥1 from `official_docs` / `mature_oss` / `paper_or_benchmark` / `private_corpus`) vs `insufficient_evidence_candidates`. Eliminated candidates carry the reason: `eliminated_by_hard_constraint`, `non_product_in_concrete_mode`, or `off_topic_for_decision`. |
 | `comparison-matrix.json` | Candidates × axes. Axes are derived from query shapes (every shape becomes an axis), risk invariants (every invariant becomes an axis), operational envelope, compliance, plus `fits_existing_stack` when discover surfaced a stack, plus team-antipattern axes. Each cell carries `strong` / `mixed` / `weak` / `no_evidence`, citation IDs, and a quantitative summary (numbers verbatim from the source when available). |
 | `architecture.spec.json` | `decision.mode` (`recommended` / `ranked_options` / `deferred`), `decision.ranked_options[]` (every viable option with `when_to_pick`, `when_not_to_pick`, `strong_axes`, `weak_axes`, per-option `required_invariants` and `forbidden_topologies`), `decision.recommendation` (when one option dominates). Schema failures fall back to `architecture.spec.invalid.json` + `architecture.spec.validation-errors.txt` so downstream artifacts still write. |
+| `architecture.spec.v1.json` / `critique.v1.json` *(when resynth fired)* | Original pre-resynthesis spec + its critique, kept for transparency. |
 | `critique.json` | LLM critique pass — evaluates option-set quality (duplicate options, ungrounded `strong_axes`, citation bleed, unsupported recommendation, missing options). High-severity issues drop the recommendation (option set survives) unless `--no-enforce-critique`. |
 | `citation-audit.json` | Per-citation supported/unsupported verdicts, batched by claim_context. Unsupported recommendation citations drop the recommendation. |
 | `claim-audit.json` | Scans generated ADR/report/eval artifacts for material claims without citations. |
@@ -245,9 +334,9 @@ All three runtimes produce the same artifact set. See [docs/framework-adapters.m
 | `ADR.md` | Reader-facing markdown. Leads with the tradeoffs across options, then the recommendation (if any), then per-option `Pick this when` / `Avoid when`. Includes `## Eliminated by hard constraints`, `## Evidence from your repo` (private_corpus items), and `## References` (every citation_id → URL + title + source_type). |
 | `agent-guardrails.md` | Per-option contract blocks. A coding agent implementing option A applies A's invariants and forbidden_topologies — not B's. |
 | `execution-handoff.json` | Per-option contracts in `options[]` plus `recommendation` and `validation_warnings` when any artifact failed schema. |
-| `events.jsonl` | Live research log. Every event carries concrete content: page previews, claim quotes, per-option summaries, eliminated-candidate reasons. Stream via `tail -F` for a chat surface. |
-| `execution-handoff.json` | The boundary contract: selected topology, required invariants, forbidden topologies, evaluation suite name, memory facts for the Architect bee. |
-| `ADR.md`, `sources.md`, `research-report.md` | Human-readable decision record, citation table, long-form report. |
+| `events.jsonl` | Live research log. Every event carries concrete content: page previews, claim quotes, per-option summaries, eliminated-candidate reasons, running cost tally. Stream via `tail -F` for a chat surface. |
+| `cost.json` | Final ledger: per-LLM-label call counts, token counts (input / output / cached), per-phase USD estimate, run total. |
+| `sources.md`, `research-report.md` | Citation table, long-form report. |
 
 If `adr-doctor`-managed `~/.adr/config.json` is wired up and the run completes, every artifact lands in `--out`. See [examples/self-discover/](./examples/self-discover/) for a dogfooded walkthrough against this repo itself.
 
