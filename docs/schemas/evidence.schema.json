@@ -42,8 +42,13 @@
           "required": ["claim", "architecture_family", "polarity", "confidence"],
           "properties": {
             "claim": { "type": "string" },
+            "quote": { "type": "string" },
             "architecture_family": { "type": "string" },
             "polarity": { "type": "string" },
+            "relevance": {
+              "type": "string",
+              "enum": ["on_topic", "tangential", "off_topic"]
+            },
             "domain_conditions": {
               "type": "array",
               "items": { "type": "string" }

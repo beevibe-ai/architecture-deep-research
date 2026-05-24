@@ -1447,36 +1447,76 @@ function scoreEvidence({ sourceType, excerpt, context, task, claims }) {
   };
 }
 
+// Normalize text for substring matching so the quote check tolerates minor
+// whitespace and quote-mark differences between the model's quote and the
+// excerpt it came from. Lowercase + collapse whitespace + strip smart quotes.
+function normalizeForQuoteCheck(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[‘’‚‛′‵]/g, "'")
+    .replace(/[“”„‟″‶]/g, "\"")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function extractClaims({ context, task, source }) {
   const result = await callLlmJson({
     label: "source_claim_extractor",
     system: [
-      "You extract architecture-decision evidence from sources.",
-      "Return only claims that are directly supported by the supplied excerpt.",
-      "Do not add static architecture knowledge.",
+      "You extract architecture-decision evidence from sources for the decision focus:",
+      `  domain:   "${context.domain}"`,
+      `  decision: "${context.decision}"`,
+      `  kind:     ${context.decision_kind || "family"}`,
       "",
-      "CRITICAL: architecture_family must name a MACRO-level architectural family,",
-      "not a sub-component, algorithm, index type, library, or runtime step.",
+      "Return ONLY claims that are directly supported by the supplied excerpt.",
+      "Do not add static architecture knowledge. Do not infer beyond the text.",
+      "",
+      "EVIDENCE GROUNDING — the hardest rule:",
+      "Every claim MUST carry a `quote` field that is a LITERAL substring of the",
+      "supplied excerpt — 20 to 300 characters — that backs the claim. If you",
+      "cannot find a literal substring of the excerpt that backs the claim, do",
+      "NOT emit the claim. We will programmatically verify that quote is a",
+      "substring of the excerpt and drop any claim that fails. A polished",
+      "paraphrase is worth zero. We need the actual words from the page.",
+      "",
+      "DECISION RELEVANCE — the second-hardest rule:",
+      "Every claim MUST set `relevance` to one of:",
+      "  - on_topic:  this claim bears directly on the decision focus above",
+      "  - tangential: same general area but does not discriminate candidates",
+      "  - off_topic: the source talks about a different architecture decision",
+      "Emit off_topic claims only when you genuinely cannot tell. The pipeline",
+      "drops off_topic claims downstream. If most of the excerpt is off_topic,",
+      "return an empty claims array — that is a valid answer.",
+      "",
+      "ARCHITECTURE FAMILY — must be MACRO-level:",
+      "architecture_family must name a MACRO-level architectural family or, in",
+      "concrete decision-kind mode, a specific named product/vendor/library.",
       "Roll up low-level concepts under their parent macro family. Examples:",
-      "- 'Leiden Community Detection', 'Hierarchical Clustering', 'MapReduce Summarization'",
+      "- 'Leiden Community Detection', 'Hierarchical Clustering'",
       "  → architecture_family: 'GraphRAG'",
       "- 'Top-K Vector Search', 'HNSW Index', 'BM25 Reranker'",
-      "  → architecture_family: 'Vector RAG' (or 'Hybrid RAG' if combined with graph)",
-      "- 'ReAct Tool Use', 'Orchestrator-Worker', 'CitationAgent'",
+      "  → architecture_family: 'Vector RAG'",
+      "- 'ReAct Tool Use', 'Orchestrator-Worker'",
       "  → architecture_family: 'Agentic Retrieval'",
+      "- For a 'concrete' kind, prefer named products: 'Clerk', 'Auth0', 'WorkOS', 'BullMQ'.",
       "",
-      `Every architecture_family must be a valid candidate for the decision focus: "${context.decision}".`,
-      "If a claim describes a sub-component or runtime step without a clear macro family,",
-      "or if the claim is about something outside the decision focus, set architecture_family: 'unspecified'.",
-      "Prefer canonical macro names. Do not invent new family names when a canonical one fits.",
+      "Every architecture_family must be a plausible answer to the decision",
+      `focus above. If a claim's family is not a plausible answer to "${context.decision}",`,
+      "set architecture_family: 'unspecified'. Do not invent new family names",
+      "when a canonical one fits.",
       "",
-      "polarity MUST be exactly one of: supports, rejects, neutral.",
-      "confidence MUST be a number from 0 to 1.",
-      "Output JSON with {claims:[{claim, architecture_family, polarity, domain_conditions, risk_or_fit, confidence}]}."
+      "FIELD CONSTRAINTS:",
+      "- polarity MUST be exactly one of: supports, rejects, neutral",
+      "- confidence MUST be a number from 0 to 1",
+      "- quote MUST be a literal substring of the excerpt, 20-300 chars",
+      "- relevance MUST be exactly one of: on_topic, tangential, off_topic",
+      "",
+      "Output JSON with {claims:[{claim, quote, architecture_family, polarity, relevance, domain_conditions, risk_or_fit, confidence}]}."
     ].join("\n"),
     user: JSON.stringify({
       domain: context.domain,
       decision: context.decision,
+      decision_kind: context.decision_kind || "family",
       task,
       source: {
         title: source.title,
@@ -1487,16 +1527,39 @@ async function extractClaims({ context, task, source }) {
     })
   });
 
+  const excerptHaystack = normalizeForQuoteCheck(source.excerpt);
+
   return toArray(result.claims)
-    .map((claim) => ({
-      claim: String(claim.claim || "").trim(),
-      architecture_family: String(claim.architecture_family || "unspecified").trim(),
-      polarity: normalizePolarity(claim.polarity),
-      domain_conditions: toArray(claim.domain_conditions).map(String).slice(0, 6),
-      risk_or_fit: String(claim.risk_or_fit || "").trim(),
-      confidence: clampNumber(claim.confidence, { min: 0, max: 1, fallback: 0.5 })
-    }))
-    .filter((claim) => claim.claim);
+    .map((claim) => {
+      const relevance = String(claim.relevance || "on_topic").trim().toLowerCase();
+      return {
+        claim: String(claim.claim || "").trim(),
+        quote: String(claim.quote || "").trim(),
+        architecture_family: String(claim.architecture_family || "unspecified").trim(),
+        polarity: normalizePolarity(claim.polarity),
+        relevance:
+          relevance === "on_topic" || relevance === "tangential" || relevance === "off_topic"
+            ? relevance
+            : "on_topic",
+        domain_conditions: toArray(claim.domain_conditions).map(String).slice(0, 6),
+        risk_or_fit: String(claim.risk_or_fit || "").trim(),
+        confidence: clampNumber(claim.confidence, { min: 0, max: 1, fallback: 0.5 })
+      };
+    })
+    .filter((claim) => {
+      if (!claim.claim) return false;
+      // Off-topic claims are dropped: the extractor said the source talks
+      // about a different decision than the one we're researching.
+      if (claim.relevance === "off_topic") return false;
+      // Quote must be a literal substring of the excerpt (whitespace- and
+      // quote-mark-normalized). This is the grounding gate: it forces the
+      // extractor to admit when a source does not actually support a claim.
+      // Hallucinated quotes are dropped.
+      if (!claim.quote || claim.quote.length < 10) return false;
+      const needle = normalizeForQuoteCheck(claim.quote);
+      if (!excerptHaystack.includes(needle)) return false;
+      return true;
+    });
 }
 
 async function judgeResearchProgress({ task, evidence, alreadyQueried }) {
@@ -3893,6 +3956,7 @@ export {
   digestPaper,
   discoverPatterns,
   executeResearchPhase,
+  extractClaims,
   getLlmJsonProvider,
   injectDiscoveredEvidence,
   inspectGithubRepo,

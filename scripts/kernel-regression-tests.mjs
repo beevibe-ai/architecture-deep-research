@@ -13,6 +13,7 @@ import {
   buildStrategicContext,
   deriveComparisonAxes,
   discoverPatterns,
+  extractClaims,
   inferDecisionKind,
   injectDiscoveredEvidence,
   prepareRun,
@@ -917,6 +918,99 @@ try {
   await rm(tmpDir, { recursive: true, force: true });
   if (priorTavily === undefined) delete process.env.TAVILY_API_KEY;
   else process.env.TAVILY_API_KEY = priorTavily;
+}
+
+// ---------------------------------------------------------------------------
+// Source claim extractor: quote grounding + relevance filtering.
+//
+// The extractor is 75/92 LLM calls on a typical run — every downstream
+// pathology traces back to claims that drift from what the source actually
+// says. Two guardrails make this concrete:
+//   1. `quote` MUST be a literal substring of the excerpt. Hallucinated
+//      claims have no place to put their words, so they get dropped.
+//   2. `relevance: off_topic` claims are dropped — a source that talks
+//      about a different decision is not evidence for this one.
+// ---------------------------------------------------------------------------
+
+{
+  const excerpt =
+    "Clerk provides drop-in authentication for Next.js apps. It supports OAuth, MFA, and organizations. " +
+    "Pricing starts at $25 per month after the free tier ends.";
+
+  installProvider((label) => {
+    if (label !== "source_claim_extractor") {
+      throw new Error(`extractor fixture: unexpected label ${label}`);
+    }
+    return {
+      claims: [
+        // Valid: literal substring quote + on_topic + named product family.
+        {
+          claim: "Clerk has a Next.js drop-in.",
+          quote: "Clerk provides drop-in authentication for Next.js apps.",
+          architecture_family: "Clerk",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.9
+        },
+        // Hallucinated quote — not in the excerpt. Should be dropped.
+        {
+          claim: "Clerk costs $5/mo.",
+          quote: "Clerk is the cheapest option at five dollars per month.",
+          architecture_family: "Clerk",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.9
+        },
+        // Off-topic — talks about a different decision. Should be dropped.
+        {
+          claim: "Next.js is the preferred React framework.",
+          quote: "drop-in authentication for Next.js apps",
+          architecture_family: "Next.js",
+          polarity: "supports",
+          relevance: "off_topic",
+          confidence: 0.9
+        },
+        // Empty quote. Should be dropped.
+        {
+          claim: "Some general claim",
+          quote: "",
+          architecture_family: "unspecified",
+          polarity: "neutral",
+          relevance: "on_topic",
+          confidence: 0.5
+        },
+        // Quote with whitespace + smart quotes — normalization must still match.
+        {
+          claim: "MFA is supported.",
+          quote: "It supports OAuth,    MFA, and organizations.",
+          architecture_family: "Clerk",
+          polarity: "supports",
+          relevance: "on_topic",
+          confidence: 0.85
+        }
+      ]
+    };
+  });
+
+  const claims = await extractClaims({
+    context: { domain: "saas", decision: "auth provider", decision_kind: "concrete" },
+    task: { id: "t1", title: "auth", objective: "Compare auth providers" },
+    source: {
+      title: "Clerk docs",
+      url: "https://clerk.com/docs",
+      source_type: "official_docs",
+      excerpt
+    }
+  });
+
+  // Of the 5 input claims: 1 valid, 1 hallucinated, 1 off_topic, 1 empty quote,
+  // 1 valid-with-whitespace-normalization. Expect 2 kept.
+  assert.equal(claims.length, 2, `expected 2 kept claims, got: ${JSON.stringify(claims, null, 2)}`);
+  assert.equal(claims[0].claim, "Clerk has a Next.js drop-in.");
+  assert.equal(claims[0].relevance, "on_topic");
+  assert.equal(claims[1].claim, "MFA is supported.");
+
+  setLlmJsonProvider(null);
 }
 
 console.log("kernel regression tests ok");
