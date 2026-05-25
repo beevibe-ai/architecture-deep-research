@@ -2,10 +2,18 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { callLlmJson } from "../kernel.mjs";
 
-async function generateInterviewQuestions(perLensExtractions) {
+async function generateInterviewQuestions(
+  perLensExtractions,
+  { priorInterviewLog = [] } = {}
+) {
   // Only ask questions when the LLM extraction surfaced ambiguity or low-
   // confidence inference. Confident, well-evidenced principles don't need
   // the user's time. The user being lazy is a design constraint.
+  //
+  // In refresh mode, priorInterviewLog is non-empty — the generator must
+  // skip questions that prior answers already resolved (otherwise refresh
+  // just re-asks everything, defeating its purpose).
+  const isRefresh = priorInterviewLog.length > 0;
   const raw = await callLlmJson({
     label: "principles_interview_generator",
     system: [
@@ -14,11 +22,29 @@ async function generateInterviewQuestions(perLensExtractions) {
       "You have the per-lens extractions: positive_patterns,",
       "antipatterns, and ambiguities for each lens.",
       "",
+      ...(isRefresh
+        ? [
+            "REFRESH MODE: a prior_interview_log is provided. The user",
+            "already answered these questions in a previous run. DO NOT",
+            "regenerate questions whose answers are already in the log —",
+            "even if the wording or evidence has shifted slightly. Only",
+            "generate questions for NEW ambiguities that the prior log",
+            "does not resolve.",
+            "",
+            "If the prior log answered a question and the new ambiguity is",
+            "substantively the same (same lens, same conflict), skip it.",
+            "If the team's posture might have shifted (new evidence",
+            "contradicts the prior answer), DO generate the question, and",
+            "include a note in the text like '(prior answer was: X — has",
+            "this changed?)'.",
+            ""
+          ]
+        : []),
       "Your job: produce 4-8 questions that, when answered, resolve",
       "the highest-leverage ambiguities and confirm the highest-stakes",
-      "principles. NOT more than 8 — users are lazy. Optimize for",
-      "questions where the answer materially changes how a PR reviewer",
-      "would interpret a violation.",
+      "principles. NOT more than 8 — users are lazy. In refresh mode,",
+      "0 questions is the ideal outcome (no new ambiguities = stable",
+      "principles).",
       "",
       "Question quality bar:",
       "- Each question MUST include the conflicting evidence inline",
@@ -46,7 +72,10 @@ async function generateInterviewQuestions(perLensExtractions) {
       "  ]",
       "}"
     ].join("\n"),
-    user: JSON.stringify({ per_lens: perLensExtractions })
+    user: JSON.stringify({
+      per_lens: perLensExtractions,
+      ...(isRefresh ? { prior_interview_log: priorInterviewLog } : {})
+    })
   });
 
   const questions = Array.isArray(raw.questions) ? raw.questions : [];

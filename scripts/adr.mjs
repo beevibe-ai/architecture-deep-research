@@ -226,16 +226,22 @@ async function main() {
 
   if (command === "principles") {
     const sub = inputPath || "init";
-    if (sub !== "init") {
+    if (sub !== "init" && sub !== "refresh") {
       console.error(
-        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`.`
+        `Unknown principles subcommand: ${sub}. Try \`adr principles init\` or \`adr principles refresh\`.`
       );
       process.exitCode = 1;
       return;
     }
-    const result = await discoverPrinciples({ flags });
+    const result = await discoverPrinciples({
+      flags: { ...flags, ...(sub === "refresh" ? { refresh: true } : {}) }
+    });
     console.log("");
-    console.log(`Wrote ${result.principles.length} principles to:`);
+    console.log(
+      sub === "refresh"
+        ? `Refreshed ${result.principles.length} principles in:`
+        : `Wrote ${result.principles.length} principles to:`
+    );
     console.log(`  ${result.mdPath}`);
     console.log(`  ${result.jsonPath}`);
     console.log("");

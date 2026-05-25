@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -19,6 +19,7 @@ import {
 } from "./interview.mjs";
 import { consolidatePrinciples } from "./consolidator.mjs";
 import { pruneFabricatedCitations } from "./cite-verifier.mjs";
+import { mergePrinciples } from "./refresh-merge.mjs";
 import { renderPrinciplesMarkdown } from "./render-markdown.mjs";
 
 function assertPrinciplesRuntime() {
@@ -31,12 +32,38 @@ function assertPrinciplesRuntime() {
   return { llmProvider: llm };
 }
 
+async function readPriorArtifact(outDir) {
+  try {
+    const raw = await readFile(path.join(outDir, "principles.json"), "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 async function discoverPrinciples({ flags = {} } = {}) {
   const repoPath = path.resolve(flags.repo || ".");
   const outDir = path.resolve(flags.out || path.join(repoPath, ".adr"));
   const interactive = flags["non-interactive"] !== true;
+  const refresh = flags.refresh === true || flags.refresh === "true";
 
   await mkdir(outDir, { recursive: true });
+
+  // Read prior artifact BEFORE truncating events.jsonl. Refresh mode
+  // requires it; init mode ignores it (the new run wins).
+  const priorArtifact = refresh ? await readPriorArtifact(outDir) : null;
+  if (refresh && !priorArtifact) {
+    throw new Error(
+      `adr principles refresh requires an existing principles.json in ${outDir}. Run \`adr principles init\` first, or drop --refresh to start fresh.`
+    );
+  }
+  const priorInterviewLog = Array.isArray(priorArtifact?.interview_log)
+    ? priorArtifact.interview_log
+    : [];
+  const priorPrinciples = Array.isArray(priorArtifact?.principles)
+    ? priorArtifact.principles
+    : [];
+
   await writeFile(path.join(outDir, "events.jsonl"), "");
   resetLlmCost();
 
@@ -47,7 +74,10 @@ async function discoverPrinciples({ flags = {} } = {}) {
     runtime,
     repo_path: repoPath,
     out_dir: outDir,
-    interactive
+    interactive,
+    mode: refresh ? "refresh" : "init",
+    prior_principle_count: priorPrinciples.length,
+    prior_interview_log_count: priorInterviewLog.length
   });
 
   // STEP 1 — deterministic scan (no LLM, reused from discover/)
@@ -89,31 +119,41 @@ async function discoverPrinciples({ flags = {} } = {}) {
     });
   }
 
-  // STEP 4 — generate interview questions (only when interactive)
-  let interviewLog = [];
+  // STEP 4 — generate interview questions (only when interactive). In
+  // refresh mode, the generator gets the prior log so it can skip
+  // questions whose answers we already have.
+  let newInterviewLog = [];
   if (interactive) {
-    const questions = await generateInterviewQuestions(perLensExtractions);
+    const questions = await generateInterviewQuestions(perLensExtractions, {
+      priorInterviewLog
+    });
     await appendEvent(outDir, "interview_generated", {
-      question_count: questions.length
+      question_count: questions.length,
+      mode: refresh ? "refresh" : "init"
     });
 
     if (questions.length === 0) {
       console.log(
-        "\nNo ambiguities to resolve — the scan was unambiguous. Skipping interview."
+        refresh
+          ? "\nNo new ambiguities since the last refresh. Carrying prior answers forward."
+          : "\nNo ambiguities to resolve — the scan was unambiguous. Skipping interview."
       );
     } else {
-      interviewLog = await runInteractiveInterview(questions);
+      newInterviewLog = await runInteractiveInterview(questions);
     }
     await appendEvent(outDir, "interview_completed", {
       answered:
-        interviewLog.filter((entry) => !entry.skipped).length,
-      skipped: interviewLog.filter((entry) => entry.skipped).length
+        newInterviewLog.filter((entry) => !entry.skipped).length,
+      skipped: newInterviewLog.filter((entry) => entry.skipped).length
     });
   } else {
     await appendEvent(outDir, "interview_skipped", {
       reason: "non_interactive_mode"
     });
   }
+  // Final interview log = prior + new. The consolidator uses BOTH so prior
+  // confirmed-by-interview principles stay confirmed.
+  const interviewLog = [...priorInterviewLog, ...newInterviewLog];
 
   // STEP 5 — consolidate into final principles
   const rawPrinciples = await consolidatePrinciples({
@@ -137,11 +177,19 @@ async function discoverPrinciples({ flags = {} } = {}) {
   // STEP 5b — cite-or-die. LLMs fabricate paths and line numbers; we drop
   // any citation that doesn't resolve to a real file under repoPath. A
   // principle with zero verified citations gets dropped entirely.
-  const { principles, summary: citeSummary } = await pruneFabricatedCitations(
-    rawPrinciples,
-    repoPath
-  );
+  const { principles: prunedPrinciples, summary: citeSummary } =
+    await pruneFabricatedCitations(rawPrinciples, repoPath);
   await appendEvent(outDir, "citations_verified", citeSummary);
+
+  // STEP 5c — refresh-merge: inherit confirmed_by_interview + confidence
+  // from prior principles whose citations overlap (by filename) with the
+  // new ones. Init mode skips this (priorPrinciples is empty).
+  let principles = prunedPrinciples;
+  if (refresh && priorPrinciples.length > 0) {
+    const { merged, stats } = mergePrinciples(prunedPrinciples, priorPrinciples);
+    principles = merged;
+    await appendEvent(outDir, "refresh_merged", stats);
+  }
 
   // STEP 6 — emit principles.json + principles.md
   const artifact = {
@@ -149,7 +197,13 @@ async function discoverPrinciples({ flags = {} } = {}) {
     source: {
       repo_path: scan.repo_path,
       scanned_at: startedAt,
-      interview_completed: interactive && interviewLog.length > 0
+      interview_completed: interactive && interviewLog.length > 0,
+      ...(refresh
+        ? {
+            mode: "refresh",
+            prior_principle_count: priorPrinciples.length
+          }
+        : {})
     },
     lenses,
     principles,
