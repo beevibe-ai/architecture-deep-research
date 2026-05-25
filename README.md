@@ -1,4 +1,5 @@
 # Beevibe AI CTO
+<img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/4f8dd109-71de-4cfa-b957-b609bf50591a" />
 <img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/d3f2f4ce-7c00-4d21-8a7e-824e871e5138" />
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/f07a64e7-563b-47a2-bba1-399215358f85" />
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/12b8a8a5-850c-4e4d-81c1-12b5bd7525d9" />
