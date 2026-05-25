@@ -85,4 +85,65 @@ async function pruneFabricatedCitations(principles, repoPath) {
   return { principles: pruned, summary };
 }
 
-export { pruneFabricatedCitations, verifyCitations, parseCite };
+// Compute a non-destructive health snapshot of the principles file. Unlike
+// pruneFabricatedCitations, this does NOT mutate the principle set —
+// it just reports which citations have rotted since the file was written.
+// Run on every `adr review` so the slash command / CLI can surface drift
+// without the user having to ask. Threshold for "stale principle" is
+// hardcoded at 25% of cites missing — high enough that one moved file
+// doesn't trip the warning, low enough that a refactor across an area
+// makes its principles light up.
+const STALE_PRINCIPLE_THRESHOLD = 0.25;
+
+async function computeHealthSnapshot(principlesArtifact, repoPath) {
+  const principles = principlesArtifact?.principles || [];
+  const checkedAt = new Date().toISOString();
+  const byPrinciple = [];
+  let totalCites = 0;
+  let staleCites = 0;
+  let stalePrinciples = 0;
+
+  for (const p of principles) {
+    const cites = p.evidence_cite || [];
+    const ev = await verifyCitations(cites, repoPath);
+    const principleCites = cites.length;
+    const principleStale = ev.dropped.length;
+    totalCites += principleCites;
+    staleCites += principleStale;
+
+    const staleRatio =
+      principleCites > 0 ? principleStale / principleCites : 0;
+    const isStale =
+      principleCites > 0 && staleRatio >= STALE_PRINCIPLE_THRESHOLD;
+    if (isStale) stalePrinciples += 1;
+
+    byPrinciple.push({
+      principle_id: p.id,
+      lens: p.lens || "",
+      total_cites: principleCites,
+      stale_cites: principleStale,
+      stale_cite_list: ev.dropped,
+      is_stale: isStale
+    });
+  }
+
+  return {
+    last_checked: checkedAt,
+    repo_path: repoPath,
+    principles_source_path: principlesArtifact?.source?.repo_path || null,
+    total_principles: principles.length,
+    stale_principle_count: stalePrinciples,
+    total_citations: totalCites,
+    stale_citation_count: staleCites,
+    threshold_stale_ratio: STALE_PRINCIPLE_THRESHOLD,
+    by_principle: byPrinciple
+  };
+}
+
+export {
+  pruneFabricatedCitations,
+  verifyCitations,
+  parseCite,
+  computeHealthSnapshot,
+  STALE_PRINCIPLE_THRESHOLD
+};

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/principles-health.schema.json",
+  "title": "Beevibe ADR Principles Health Snapshot",
+  "description": "Output of the cite-rot check that runs on every `adr review`. Captures which principle citations have rotted since `adr principles init` last ran — the cheapest evolvability signal. Read by future slash commands and dashboards to flag staleness without re-running discovery.",
+  "type": "object",
+  "required": [
+    "last_checked",
+    "total_principles",
+    "stale_principle_count",
+    "total_citations",
+    "stale_citation_count",
+    "by_principle"
+  ],
+  "properties": {
+    "last_checked": { "type": "string" },
+    "repo_path": { "type": "string" },
+    "principles_source_path": { "type": ["string", "null"] },
+    "total_principles": { "type": "integer", "minimum": 0 },
+    "stale_principle_count": { "type": "integer", "minimum": 0 },
+    "total_citations": { "type": "integer", "minimum": 0 },
+    "stale_citation_count": { "type": "integer", "minimum": 0 },
+    "threshold_stale_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "by_principle": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["principle_id", "total_cites", "stale_cites", "is_stale"],
+        "properties": {
+          "principle_id": { "type": "string" },
+          "lens": { "type": "string" },
+          "total_cites": { "type": "integer", "minimum": 0 },
+          "stale_cites": { "type": "integer", "minimum": 0 },
+          "stale_cite_list": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "is_stale": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

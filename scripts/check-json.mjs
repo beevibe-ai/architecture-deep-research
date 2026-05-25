@@ -22,6 +22,7 @@ const schemaByFilename = {
   "knowledge-map.json": "docs/schemas/knowledge-map.schema.json",
   "peers.json": "docs/schemas/peers.schema.json",
   "principles.json": "docs/schemas/principles.schema.json",
+  "principles-health.json": "docs/schemas/principles-health.schema.json",
   "research-plan.json": "docs/schemas/research-plan.schema.json",
   "review.json": "docs/schemas/review-violations.schema.json",
   "strategic-context.json": "docs/schemas/strategic-context.schema.json",

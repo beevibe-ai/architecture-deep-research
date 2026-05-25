@@ -906,10 +906,28 @@ try {
   assert.deepEqual(eventTypes, [
     "review_started",
     "principles_loaded",
+    "principles_health_checked",
     "diff_parsed",
     "violations_detected",
     "review_completed"
   ]);
+
+  // The health check should have written principles-health.json next to
+  // the principles file. In this test, the cited path
+  // "stores/chatStore.ts:14" was NOT created on disk in the fake repo,
+  // so it should land in stale_citation_count.
+  const healthArtifact = JSON.parse(
+    await readFile(
+      path.join(reviewRepoDir, ".adr", "principles-health.json"),
+      "utf8"
+    )
+  );
+  assert.equal(healthArtifact.total_principles, 1);
+  assert.ok(healthArtifact.total_citations >= 1);
+  // The lone principle in this test cites a file that doesn't exist,
+  // so it should be flagged as stale.
+  assert.equal(healthArtifact.stale_principle_count, 1);
+  assert.equal(healthArtifact.by_principle[0].is_stale, true);
 
   await rm(reviewRepoDir, { recursive: true, force: true });
 } finally {

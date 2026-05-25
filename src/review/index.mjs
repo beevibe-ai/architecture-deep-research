@@ -19,6 +19,7 @@ import {
 } from "./comment-renderer.mjs";
 import { runInteractiveWalkthrough } from "./interactive-walkthrough.mjs";
 import { postReviewComments } from "./gh-poster.mjs";
+import { computeHealthSnapshot } from "../principles/cite-verifier.mjs";
 
 function assertReviewRuntime() {
   const llm = activeLlmProvider();
@@ -111,6 +112,45 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
     principle_count: principles.length,
     lens_count: principlesArtifact.lenses?.length || 0
   });
+
+  // Cite-rot check (Roadmap #1). No-LLM, cheap. Re-verifies that every
+  // principle's evidence_cite still points at a file on disk. If the team
+  // has refactored since the principles were last discovered, the bot
+  // would otherwise cite ghost files — this catches that and tells the
+  // user to refresh.
+  const health = await computeHealthSnapshot(principlesArtifact, repoPath);
+  const healthPath = path.join(
+    path.dirname(principlesPath),
+    "principles-health.json"
+  );
+  await writeJson(healthPath, health);
+  await appendEvent(outDir, "principles_health_checked", {
+    total_principles: health.total_principles,
+    stale_principle_count: health.stale_principle_count,
+    total_citations: health.total_citations,
+    stale_citation_count: health.stale_citation_count,
+    health_path: healthPath
+  });
+  if (health.stale_principle_count > 0) {
+    const stalePctCites =
+      health.total_citations > 0
+        ? Math.round((100 * health.stale_citation_count) / health.total_citations)
+        : 0;
+    console.log("");
+    console.log(
+      `\x1b[33madr review: ${health.stale_principle_count} of ${health.total_principles} principles have stale citations (${health.stale_citation_count}/${health.total_citations} cites = ${stalePctCites}%).\x1b[0m`
+    );
+    console.log(
+      `\x1b[2mRun \`adr principles init\` to refresh. Stale principles:\x1b[0m`
+    );
+    for (const entry of health.by_principle) {
+      if (!entry.is_stale) continue;
+      console.log(
+        `\x1b[2m  - ${entry.principle_id} (${entry.stale_cites}/${entry.total_cites} cites missing)\x1b[0m`
+      );
+    }
+    console.log("");
+  }
 
   const rawDiff = await loadDiff({
     source: source.kind,
