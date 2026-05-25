@@ -908,6 +908,7 @@ try {
     "principles_loaded",
     "principles_health_checked",
     "diff_parsed",
+    "suppressions_applied",
     "violations_detected",
     "principle_stats_updated",
     "review_completed"

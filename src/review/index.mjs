@@ -21,6 +21,7 @@ import { runInteractiveWalkthrough } from "./interactive-walkthrough.mjs";
 import { postReviewComments } from "./gh-poster.mjs";
 import { computeHealthSnapshot } from "../principles/cite-verifier.mjs";
 import { recordOutcomes } from "./principle-stats.mjs";
+import { applySuppressions } from "./suppression.mjs";
 
 function assertReviewRuntime() {
   const llm = activeLlmProvider();
@@ -178,10 +179,16 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
   }
 
   const rawViolations = await detectViolations(files, principles);
-  const ranked = rankViolations(rawViolations);
+  // Suppression: `// adr-ignore: <principle-id>` (and other comment forms)
+  // drops the violation before ranking. Roadmap #4 — stops the bot from
+  // repeating itself on lines the team already accepted as exceptions.
+  const suppressionResult = applySuppressions(rawViolations, files);
+  await appendEvent(outDir, "suppressions_applied", suppressionResult.summary);
+  const ranked = rankViolations(suppressionResult.kept);
   const capped = topN != null && topN > 0 ? ranked.slice(0, topN) : ranked;
   await appendEvent(outDir, "violations_detected", {
     raw_count: rawViolations.length,
+    after_suppressions: suppressionResult.kept.length,
     capped_count: capped.length,
     by_severity: {
       high: ranked.filter((v) => v.severity === "high").length,
