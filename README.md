@@ -10,16 +10,22 @@
 
 **The decision layer your coding agents are missing.**
 
-The full loop, from architecture decision through PR review:
+The full loop, from architecture decision through PR review to drift detection:
 
 | Command | What it does |
 | --- | --- |
 | `adr decide` | Live deep-research on an architectural decision → an HTML report with N candidates, citations, and Mermaid diagrams. **[See an example →](https://beevibe.ai/cto/example-report/)** |
 | `adr principles init` | Scans your repo, discovers the team's code-review lenses (state-boundaries, schema-validate-before-write, etc.), walks you through an interview, writes `.adr/principles.{md,json}` |
-| `adr review` | Checks a PR / staged diff / branch against those principles. Inline comments cite the team's own file:line as the example to follow. |
-| `adr guard install` | Wires the principles into Claude Code (PreToolUse hook surfaces them at write time) + git pre-commit (blocks high-severity violations). |
+| `adr principles refresh` | Re-discover without losing the interview log. Asks only about new ambiguities. |
+| `adr principles incremental` | Only re-extract from files changed since last refresh. Reuses prior lenses. Fast. |
+| `adr principles refine --id <id>` | Single-principle re-discovery for one specific rule. |
+| `adr review` | Checks a PR / staged diff / branch against the principles. Walks the user through violations one-by-one, posts inline comments via `gh` / `glab` / Bitbucket API. Supports `// adr-ignore: <id>` suppression and `--batch` for one-call CI reviews. |
+| `adr drift` | Full-repo scan vs principles. Useful for "how far has the codebase drifted since principles init six months ago?". |
+| `adr guard install` | Wires the principles into Claude Code (PreToolUse hook surfaces them at write time) + git pre-commit (blocks high-severity violations). `adr guard uninstall` reverses it. |
 
-The brain + `adr drift` close the rest of the loop; upcoming.
+The principles file evolves automatically: stale citations get flagged, accept/edit/skip stats get persisted, and confidence demotes principles users keep skipping. **No static-lint trap.** See [ROADMAP.md](./ROADMAP.md) for the evolvability story and the commit history.
+
+The brain closes the rest of the loop; upcoming.
 
 ---
 
@@ -207,16 +213,16 @@ adr deep-research --discover-first --open \
 **Shipped:**
 
 - **ADR flagship** — `adr decide`, `adr discover`, `adr open`, `adr handoff`, `adr resume`, `adr supersede`. Live agentic research kernel, peer discovery, community sources, citation + claim audits, Mermaid diagrams, HTML report, crash-aware state.
-- **`adr principles init`** — LLM-discovered code-review lenses, per-lens patterns + antipatterns, interactive interview, cite-or-die filter. Writes `.adr/principles.{md,json}`.
-- **`adr review`** — PR / staged / branch / file modes. Walks the user through violations one at a time, posts inline comments via `gh pr review` citing the team's own `file:line` as the example to follow.
-- **`adr guard`** — Claude Code `PreToolUse` hook (write-time principle injection) + git pre-commit (blocks high-severity violations). Pure file-based filter on the hot path; idempotent install.
+- **`adr principles`** — `init` / `refresh` / `incremental` / `refine`. LLM-discovered code-review lenses, per-lens patterns + antipatterns, interactive interview, cite-or-die filter. Cite-rot detection on every review; accept/edit/skip stats persist; confidence auto-evolves from how the team actually uses each rule.
+- **`adr review`** — PR / staged / branch / file modes. Walks the user through violations one at a time, posts inline comments via `gh` (GitHub), `glab` (GitLab), or Bitbucket REST API. Supports `// adr-ignore: <principle-id>` suppression. `--batch` flag for one-call CI reviews.
+- **`adr drift`** — full-repo scan vs principles, parallel-bounded. Useful for periodic "how far has the code drifted?" audits.
+- **`adr guard`** — `install` / `uninstall`. Claude Code `PreToolUse` hook (write-time principle injection) + git pre-commit (blocks high-severity violations). Pure file-based filter on the hot path; idempotent.
 - **Adapters + UI** — LangGraph and Google ADK (same kernel, same artifacts). Web UI (`adr-web`) for live operator / developer views.
 - **Claude Code plugin** — six slash commands: `/adr:doctor`, `/adr:decide`, `/adr:discover`, `/adr:principles`, `/adr:review`, `/adr:guard`.
 
 **In development:**
 
 - **The brain** — always-on knowledge graph that watches voices, trending OSS, competitor architecture, and papers. Personalized to your stack via your PRD + past ADR runs + discovered principles. Markdown-in-git source of truth (Obsidian-compatible) + derived Postgres+pgvector indexes; LLM maintains the wiki, watchers ingest sources continuously.
-- `adr drift <out_dir>` — periodic scan against the saved spec, reports drift by `file:line`.
 
 Open-source core under Apache-2.0. The commercial Beevibe surface layers curated corpora, managed researcher agents, org-level memory, and team governance on top.
 
