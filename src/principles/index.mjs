@@ -10,7 +10,7 @@ import {
   writeJson
 } from "../kernel.mjs";
 import { scanRepo } from "../discover/repo-scan.mjs";
-import { sampleRepoSource } from "./source-sampler.mjs";
+import { sampleRepoSource, sampleChangedFilesSince } from "./source-sampler.mjs";
 import { discoverLenses } from "./lens-discovery.mjs";
 import { extractPatternsForLens } from "./pattern-extractor.mjs";
 import {
@@ -50,15 +50,22 @@ async function discoverPrinciples({ flags = {} } = {}) {
   const outDir = path.resolve(flags.out || path.join(repoPath, ".adr"));
   const interactive = flags["non-interactive"] !== true;
   const refresh = flags.refresh === true || flags.refresh === "true";
+  const incremental =
+    flags.incremental === true || flags.incremental === "true";
+
+  // Incremental implies refresh — it reads prior + only re-extracts on
+  // changed files, then merges. Treat as a stricter mode of refresh.
+  const needsPrior = refresh || incremental;
 
   await mkdir(outDir, { recursive: true });
 
-  // Read prior artifact BEFORE truncating events.jsonl. Refresh mode
-  // requires it; init mode ignores it (the new run wins).
-  const priorArtifact = refresh ? await readPriorArtifact(outDir) : null;
-  if (refresh && !priorArtifact) {
+  // Read prior artifact BEFORE truncating events.jsonl. Refresh/incremental
+  // mode requires it; init mode ignores it (the new run wins).
+  const priorArtifact = needsPrior ? await readPriorArtifact(outDir) : null;
+  if (needsPrior && !priorArtifact) {
+    const mode = incremental ? "incremental" : "refresh";
     throw new Error(
-      `adr principles refresh requires an existing principles.json in ${outDir}. Run \`adr principles init\` first, or drop --refresh to start fresh.`
+      `adr principles ${mode} requires an existing principles.json in ${outDir}. Run \`adr principles init\` first.`
     );
   }
   const priorInterviewLog = Array.isArray(priorArtifact?.interview_log)
@@ -67,6 +74,10 @@ async function discoverPrinciples({ flags = {} } = {}) {
   const priorPrinciples = Array.isArray(priorArtifact?.principles)
     ? priorArtifact.principles
     : [];
+  const priorLenses = Array.isArray(priorArtifact?.lenses)
+    ? priorArtifact.lenses
+    : [];
+  const priorScannedAt = priorArtifact?.source?.scanned_at || null;
 
   await writeFile(path.join(outDir, "events.jsonl"), "");
   resetLlmCost();
@@ -74,12 +85,13 @@ async function discoverPrinciples({ flags = {} } = {}) {
   const runtime = assertPrinciplesRuntime();
   const startedAt = nowIso();
 
+  const mode = incremental ? "incremental" : refresh ? "refresh" : "init";
   await appendEvent(outDir, "principles_started", {
     runtime,
     repo_path: repoPath,
     out_dir: outDir,
     interactive,
-    mode: refresh ? "refresh" : "init",
+    mode,
     prior_principle_count: priorPrinciples.length,
     prior_interview_log_count: priorInterviewLog.length
   });
@@ -89,20 +101,55 @@ async function discoverPrinciples({ flags = {} } = {}) {
   await appendEvent(outDir, "repo_scanned", { ...scan.summary });
 
   // STEP 1b — sample real source code so lens discovery and extraction can
-  // cite actual lines, not invented ones. discover/repo-scan deliberately
-  // skips source content; we add it back here because principle extraction
-  // is the use case that needs it.
-  const sourceSample = await sampleRepoSource(repoPath);
+  // cite actual lines, not invented ones. In incremental mode, only
+  // sample files changed since the last refresh — the rest of the repo
+  // is already represented by prior principles.
+  const sourceSample = incremental
+    ? await sampleChangedFilesSince(repoPath, priorScannedAt)
+    : await sampleRepoSource(repoPath);
   await appendEvent(outDir, "source_sampled", {
     sample_count: sourceSample.summary.total_files,
-    top_levels: sourceSample.summary.top_levels
+    top_levels: sourceSample.summary.top_levels,
+    mode,
+    ...(incremental
+      ? { since: sourceSample.summary.since, changed_total: sourceSample.summary.changed_total }
+      : {})
   });
 
-  // STEP 2 — discover lenses for this team
-  const lenses = await discoverLenses(scan, sourceSample);
+  // Incremental shortcut: if no files have changed, skip the rest and
+  // just carry forward the prior artifact (with refreshed events.jsonl).
+  if (incremental && sourceSample.samples.length === 0) {
+    await appendEvent(outDir, "incremental_no_changes", {
+      since: priorScannedAt
+    });
+    await appendEvent(outDir, "principles_completed", {
+      lens_count: priorLenses.length,
+      principle_count: priorPrinciples.length,
+      interview_answered: 0,
+      no_changes: true
+    });
+    return {
+      outDir,
+      repoPath,
+      lenses: priorLenses,
+      principles: priorPrinciples,
+      interviewLog: priorInterviewLog,
+      jsonPath: path.join(outDir, "principles.json"),
+      mdPath: path.join(outDir, "principles.md"),
+      noChanges: true
+    };
+  }
+
+  // STEP 2 — discover lenses. Incremental mode reuses prior lenses (the
+  // team's review angles don't change every commit). Init/refresh mode
+  // discovers fresh.
+  const lenses = incremental
+    ? priorLenses
+    : await discoverLenses(scan, sourceSample);
   await appendEvent(outDir, "lenses_discovered", {
     lens_count: lenses.length,
-    lenses: lenses.map((l) => ({ slug: l.slug, name: l.name }))
+    lenses: lenses.map((l) => ({ slug: l.slug, name: l.name })),
+    reused_from_prior: incremental
   });
   if (lenses.length === 0) {
     throw new Error(
@@ -187,12 +234,43 @@ async function discoverPrinciples({ flags = {} } = {}) {
 
   // STEP 5c — refresh-merge: inherit confirmed_by_interview + confidence
   // from prior principles whose citations overlap (by filename) with the
-  // new ones. Init mode skips this (priorPrinciples is empty).
+  // new ones. Init mode skips this (priorPrinciples is empty). Incremental
+  // mode REQUIRES it — otherwise the unchanged areas of the repo lose
+  // their principles.
   let principles = prunedPrinciples;
-  if (refresh && priorPrinciples.length > 0) {
-    const { merged, stats } = mergePrinciples(prunedPrinciples, priorPrinciples);
+  if ((refresh || incremental) && priorPrinciples.length > 0) {
+    // In incremental mode, also include prior principles whose evidence
+    // lives entirely OUTSIDE the changed sample — they're still valid,
+    // they just weren't re-extracted this run.
+    let merged;
+    let mergeStats;
+    if (incremental) {
+      const changedFilenames = new Set(
+        sourceSample.samples.map((s) => s.path)
+      );
+      const untouchedPriorPrinciples = priorPrinciples.filter((p) => {
+        const cites = (p.evidence_cite || [])
+          .map((c) => c.split(":")[0])
+          .filter(Boolean);
+        if (cites.length === 0) return false;
+        return cites.every((cite) => !changedFilenames.has(cite));
+      });
+      const result = mergePrinciples(
+        [...prunedPrinciples, ...untouchedPriorPrinciples],
+        priorPrinciples
+      );
+      merged = result.merged;
+      mergeStats = {
+        ...result.stats,
+        untouched_carried_forward: untouchedPriorPrinciples.length
+      };
+    } else {
+      const result = mergePrinciples(prunedPrinciples, priorPrinciples);
+      merged = result.merged;
+      mergeStats = result.stats;
+    }
     principles = merged;
-    await appendEvent(outDir, "refresh_merged", stats);
+    await appendEvent(outDir, "refresh_merged", mergeStats);
   }
 
   // STEP 5d — confidence evolution: read principle-stats.json (built by
@@ -221,9 +299,9 @@ async function discoverPrinciples({ flags = {} } = {}) {
       repo_path: scan.repo_path,
       scanned_at: startedAt,
       interview_completed: interactive && interviewLog.length > 0,
-      ...(refresh
+      ...(mode !== "init"
         ? {
-            mode: "refresh",
+            mode,
             prior_principle_count: priorPrinciples.length
           }
         : {})

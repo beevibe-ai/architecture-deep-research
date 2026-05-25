@@ -1,5 +1,9 @@
+import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 // Caps so the source sample never blows the LLM context. The goal is "enough
 // real code that the LLM cites real lines", not "complete representation".
@@ -219,4 +223,63 @@ async function sampleRepoSource(repoPath) {
   };
 }
 
-export { sampleRepoSource };
+// Incremental sampling — used by `adr principles incremental`. Reads
+// `git log --since=<sinceIso> --name-only` to find files that changed in
+// the window, then reads + truncates each one as a sample. Skips files
+// the source filter would normally reject (tests, lockfiles, etc.).
+async function sampleChangedFilesSince(repoPath, sinceIso) {
+  let stdout = "";
+  try {
+    const result = await execFileAsync(
+      "git",
+      [
+        "log",
+        `--since=${sinceIso}`,
+        "--name-only",
+        "--pretty=format:",
+        "--diff-filter=AMR" // added, modified, renamed (skip pure deletes)
+      ],
+      { cwd: repoPath, maxBuffer: 10 * 1024 * 1024 }
+    );
+    stdout = result.stdout;
+  } catch {
+    return { samples: [], summary: { total_files: 0, top_levels: [], since: sinceIso } };
+  }
+
+  const changedSet = new Set();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    changedSet.add(trimmed);
+  }
+
+  const samples = [];
+  const topLevels = new Set();
+  for (const relPath of changedSet) {
+    if (!isSourceFile(relPath)) continue;
+    if (isLikelyTest(relPath)) continue;
+    if (samples.length >= MAX_TOTAL_FILES) break;
+    const segments = relPath.split(path.sep).filter(Boolean);
+    if (segments.length > 1) topLevels.add(segments[0]);
+    const absPath = path.resolve(repoPath, relPath);
+    const content = await safeReadFile(absPath, MAX_BYTES_PER_FILE);
+    if (!content) continue; // file may have been deleted in a later commit
+    samples.push({
+      path: relPath,
+      top_level: segments.length > 1 ? segments[0] : null,
+      content
+    });
+  }
+
+  return {
+    samples,
+    summary: {
+      total_files: samples.length,
+      top_levels: [...topLevels],
+      since: sinceIso,
+      changed_total: changedSet.size
+    }
+  };
+}
+
+export { sampleRepoSource, sampleChangedFilesSince };

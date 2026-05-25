@@ -226,24 +226,32 @@ async function main() {
 
   if (command === "principles") {
     const sub = inputPath || "init";
-    if (sub !== "init" && sub !== "refresh") {
+    const validSubs = new Set(["init", "refresh", "incremental"]);
+    if (!validSubs.has(sub)) {
       console.error(
-        `Unknown principles subcommand: ${sub}. Try \`adr principles init\` or \`adr principles refresh\`.`
+        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`, \`refresh\`, or \`incremental\`.`
       );
       process.exitCode = 1;
       return;
     }
     const result = await discoverPrinciples({
-      flags: { ...flags, ...(sub === "refresh" ? { refresh: true } : {}) }
+      flags: {
+        ...flags,
+        ...(sub === "refresh" ? { refresh: true } : {}),
+        ...(sub === "incremental" ? { incremental: true } : {})
+      }
     });
     console.log("");
-    console.log(
-      sub === "refresh"
-        ? `Refreshed ${result.principles.length} principles in:`
-        : `Wrote ${result.principles.length} principles to:`
-    );
-    console.log(`  ${result.mdPath}`);
-    console.log(`  ${result.jsonPath}`);
+    if (result.noChanges) {
+      console.log(
+        `No source files changed since the last refresh. ${result.principles.length} principles carried forward.`
+      );
+    } else {
+      const verb = sub === "init" ? "Wrote" : "Refreshed";
+      console.log(`${verb} ${result.principles.length} principles in:`);
+      console.log(`  ${result.mdPath}`);
+      console.log(`  ${result.jsonPath}`);
+    }
     console.log("");
     console.log("Next: `adr review <PR#>` to check a PR against this list.");
     return;
