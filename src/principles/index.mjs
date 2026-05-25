@@ -20,6 +20,10 @@ import {
 import { consolidatePrinciples } from "./consolidator.mjs";
 import { pruneFabricatedCitations } from "./cite-verifier.mjs";
 import { mergePrinciples } from "./refresh-merge.mjs";
+import {
+  applyStatsToConfidence,
+  loadStatsForEvolution
+} from "./confidence-evolution.mjs";
 import { renderPrinciplesMarkdown } from "./render-markdown.mjs";
 
 function assertPrinciplesRuntime() {
@@ -189,6 +193,25 @@ async function discoverPrinciples({ flags = {} } = {}) {
     const { merged, stats } = mergePrinciples(prunedPrinciples, priorPrinciples);
     principles = merged;
     await appendEvent(outDir, "refresh_merged", stats);
+  }
+
+  // STEP 5d — confidence evolution: read principle-stats.json (built by
+  // `adr review` over time) and override confidence based on real usage.
+  // Principles with >=50% recent skip rate get demoted to "low".
+  // Principles with >=80% recent accept rate get promoted to "high".
+  // This is the loop that prevents static-lint drift — a principle that
+  // fires 20x and gets skipped 18x doesn't stay confident.
+  const statsArtifact = await loadStatsForEvolution(outDir);
+  if (statsArtifact) {
+    const { principles: evolved, changes } = applyStatsToConfidence(
+      principles,
+      statsArtifact
+    );
+    principles = evolved;
+    await appendEvent(outDir, "confidence_evolved", {
+      changes,
+      change_count: changes.length
+    });
   }
 
   // STEP 6 — emit principles.json + principles.md
