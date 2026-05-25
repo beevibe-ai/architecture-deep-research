@@ -41,10 +41,10 @@ async function loadFromBranch({ cwd, base }) {
   return stdout;
 }
 
-async function loadFromPr({ prNumber, cwd }) {
-  // `gh pr diff <N>` includes the unified diff with adequate context. If gh
-  // is missing or not authenticated, surface the underlying error — the user
-  // needs to fix that before the review can run.
+async function loadFromPr({ prNumber, cwd, scm = "github" }) {
+  if (scm === "gitlab") return loadFromGlabMr({ mrNumber: prNumber, cwd });
+  if (scm === "bitbucket") return loadFromBbPr({ prId: prNumber, cwd });
+  // Default: GitHub
   try {
     const { stdout } = await execFileAsync(
       "gh",
@@ -62,10 +62,52 @@ async function loadFromPr({ prNumber, cwd }) {
   }
 }
 
-async function loadDiff({ source, value, cwd = process.cwd() } = {}) {
+async function loadFromGlabMr({ mrNumber, cwd }) {
+  try {
+    const { stdout } = await execFileAsync(
+      "glab",
+      ["mr", "diff", String(mrNumber)],
+      { cwd, maxBuffer: 50 * 1024 * 1024 }
+    );
+    return stdout;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new Error(
+        "glab CLI not found. Install GitLab's glab (https://gitlab.com/gitlab-org/cli) and run `glab auth login` to review MRs."
+      );
+    }
+    throw error;
+  }
+}
+
+async function loadFromBbPr({ prId, cwd }) {
+  // Bitbucket: use curl + REST API. Diff endpoint returns the diff text.
+  const token = process.env.BB_TOKEN || process.env.BITBUCKET_TOKEN;
+  if (!token) {
+    throw new Error(
+      "Bitbucket diff fetch needs BB_TOKEN (or BITBUCKET_TOKEN) env var. Set it to a token with `pullrequest:read` scope."
+    );
+  }
+  const remote = (
+    await execFileAsync("git", ["remote", "get-url", "origin"], { cwd })
+  ).stdout.trim();
+  const m = remote.match(/bitbucket\.org[:/]([^/]+)\/([^/.]+)/);
+  if (!m) {
+    throw new Error(`Could not parse Bitbucket origin: ${remote}`);
+  }
+  const url = `https://api.bitbucket.org/2.0/repositories/${m[1]}/${m[2]}/pullrequests/${prId}/diff`;
+  const { stdout } = await execFileAsync(
+    "curl",
+    ["-sSL", "-H", `Authorization: Bearer ${token}`, url],
+    { cwd, maxBuffer: 50 * 1024 * 1024 }
+  );
+  return stdout;
+}
+
+async function loadDiff({ source, value, cwd = process.cwd(), scm = "github" } = {}) {
   let raw;
   if (source === "pr") {
-    raw = await loadFromPr({ prNumber: value, cwd });
+    raw = await loadFromPr({ prNumber: value, cwd, scm });
   } else if (source === "staged") {
     raw = await loadFromStaged({ cwd });
   } else if (source === "branch") {

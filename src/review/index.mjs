@@ -18,7 +18,10 @@ import {
   renderViolationForTerminal
 } from "./comment-renderer.mjs";
 import { runInteractiveWalkthrough } from "./interactive-walkthrough.mjs";
-import { postReviewComments } from "./gh-poster.mjs";
+import { postReviewComments as postGithubComments } from "./gh-poster.mjs";
+import { postReviewComments as postGitlabComments } from "./glab-poster.mjs";
+import { postReviewComments as postBitbucketComments } from "./bb-poster.mjs";
+import { detectScm, resolveScm } from "./scm-detect.mjs";
 import { computeHealthSnapshot } from "../principles/cite-verifier.mjs";
 import { recordOutcomes } from "./principle-stats.mjs";
 import { applySuppressions } from "./suppression.mjs";
@@ -98,6 +101,8 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
   const runtime = assertReviewRuntime();
   const startedAt = nowIso();
   const source = resolveSource(inputPath, flags);
+  const detectedScm = await detectScm(repoPath);
+  const scm = resolveScm({ flagScm: flags.scm, detected: detectedScm });
 
   await appendEvent(outDir, "review_started", {
     runtime,
@@ -105,7 +110,8 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
     principles_path: principlesPath,
     source,
     interactive,
-    post
+    post,
+    scm
   });
 
   const principlesArtifact = await readPrinciples(principlesPath);
@@ -157,7 +163,8 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
   const rawDiff = await loadDiff({
     source: source.kind,
     value: source.value,
-    cwd: repoPath
+    cwd: repoPath,
+    scm
   });
   const files = parseDiff(rawDiff);
   const filesReviewed = files
@@ -244,12 +251,28 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
   let postResult = null;
   if (post && accepted.length > 0 && source.kind === "pr") {
     try {
-      postResult = await postReviewComments({
-        prNumber: source.value,
-        violations: accepted,
-        principles
-      });
-      await appendEvent(outDir, "comments_posted", postResult);
+      if (scm === "gitlab") {
+        postResult = await postGitlabComments({
+          mrNumber: source.value,
+          violations: accepted,
+          principles,
+          cwd: repoPath
+        });
+      } else if (scm === "bitbucket") {
+        postResult = await postBitbucketComments({
+          prId: source.value,
+          violations: accepted,
+          principles,
+          cwd: repoPath
+        });
+      } else {
+        postResult = await postGithubComments({
+          prNumber: source.value,
+          violations: accepted,
+          principles
+        });
+      }
+      await appendEvent(outDir, "comments_posted", { scm, ...postResult });
       console.log(
         `\nPosted ${postResult.posted} of ${accepted.length} comments to PR #${source.value}.`
       );
