@@ -104,4 +104,87 @@ async function installGuards({ repoPath = process.cwd() } = {}) {
   return { claude, precommit };
 }
 
-export { installGuards, installClaudeHook, installPreCommitHook };
+async function uninstallClaudeHook(repoPath) {
+  const file = path.join(repoPath, ".claude", "settings.local.json");
+  if (!(await exists(file))) {
+    return { path: file, removed: false, reason: "no_settings_file" };
+  }
+  const current = await readJsonOr(file, {});
+  if (!current?.hooks?.PreToolUse) {
+    return { path: file, removed: false, reason: "no_pretooluse_hooks" };
+  }
+  const original = current.hooks.PreToolUse;
+  const filtered = original
+    .map((entry) => ({
+      ...entry,
+      hooks: (entry.hooks || []).filter(
+        (h) => !(h.type === "command" && h.command === HOOK_COMMAND)
+      )
+    }))
+    .filter((entry) => entry.hooks.length > 0);
+
+  if (filtered.length === original.length &&
+      filtered.every((e, i) => e.hooks.length === original[i].hooks.length)) {
+    return { path: file, removed: false, reason: "not_installed" };
+  }
+
+  const next = { ...current, hooks: { ...current.hooks, PreToolUse: filtered } };
+  if (filtered.length === 0) delete next.hooks.PreToolUse;
+  if (Object.keys(next.hooks).length === 0) delete next.hooks;
+
+  await writeFile(file, `${JSON.stringify(next, null, 2)}\n`);
+  return { path: file, removed: true };
+}
+
+async function uninstallPreCommitHook(repoPath) {
+  const file = path.join(repoPath, ".git", "hooks", "pre-commit");
+  if (!(await exists(file))) {
+    return { path: file, removed: false, reason: "no_hook_file" };
+  }
+  const existing = await readFile(file, "utf8");
+  if (!existing.includes(PRECOMMIT_LINE)) {
+    return { path: file, removed: false, reason: "not_installed" };
+  }
+  // Strip our banner + command line, preserving anything else the user
+  // had in the hook.
+  const lines = existing.split("\n");
+  const stripped = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line === PRECOMMIT_BANNER) continue;
+    if (line.trim() === PRECOMMIT_LINE) continue;
+    stripped.push(line);
+  }
+  // Collapse trailing blank lines but keep the shebang.
+  while (stripped.length > 1 && stripped[stripped.length - 1].trim() === "") {
+    stripped.pop();
+  }
+  const next = `${stripped.join("\n")}\n`;
+  // If we're left with just `#!/bin/sh\n` (or nothing meaningful), delete
+  // the file rather than leave an empty hook.
+  const meaningful = stripped.filter(
+    (l) => l.trim() && !l.startsWith("#!")
+  );
+  if (meaningful.length === 0) {
+    const { unlink } = await import("node:fs/promises");
+    await unlink(file);
+    return { path: file, removed: true, deleted: true };
+  }
+  await writeFile(file, next);
+  return { path: file, removed: true, deleted: false };
+}
+
+async function uninstallGuards({ repoPath = process.cwd() } = {}) {
+  const claude = await uninstallClaudeHook(repoPath);
+  const precommit = await uninstallPreCommitHook(repoPath);
+  return { claude, precommit };
+}
+
+export {
+  installGuards,
+  installClaudeHook,
+  installPreCommitHook,
+  uninstallGuards,
+  uninstallClaudeHook,
+  uninstallPreCommitHook
+};
