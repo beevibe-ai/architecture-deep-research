@@ -364,6 +364,7 @@ const schemaByFilename = {
   "follow-up-questions.json": "../docs/schemas/follow-up-questions.schema.json",
   "knowledge-map.json": "../docs/schemas/knowledge-map.schema.json",
   "peers.json": "../docs/schemas/peers.schema.json",
+  "principles.json": "../docs/schemas/principles.schema.json",
   "research-plan.json": "../docs/schemas/research-plan.schema.json",
   "strategic-context.json": "../docs/schemas/strategic-context.schema.json",
   "supersedes.json": "../docs/schemas/supersedes.schema.json"
@@ -5988,6 +5989,14 @@ async function discoverPatterns(input) {
   return mod.discoverPatterns(input);
 }
 
+// `discoverPrinciples` lives in src/principles/index.mjs. Same lazy-import
+// pattern as discoverPatterns to avoid a circular import — the principles
+// modules re-enter this kernel for callLlmJson / appendEvent / writeJson.
+async function discoverPrinciples(input) {
+  const mod = await import("./principles/index.mjs");
+  return mod.discoverPrinciples(input);
+}
+
 // generateHandoff is the lazy handoff stage. The default pipeline produces
 // only the research report; this command reads research-report.json from
 // an existing run dir, scopes to one chosen candidate, and writes the
@@ -6117,6 +6126,7 @@ export {
   deriveComparisonAxes,
   digestPaper,
   discoverPatterns,
+  discoverPrinciples,
   executeResearchPhase,
   extractClaims,
   extractDecisionContext,

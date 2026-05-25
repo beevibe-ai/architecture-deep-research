@@ -37,6 +37,7 @@ import {
   deriveComparisonAxes,
   digestPaper,
   discoverPatterns,
+  discoverPrinciples,
   getLlmJsonProvider,
   inspectGithubRepo,
   isGithubRepoUrl,
@@ -218,6 +219,10 @@ if (emptyMatrix.candidates.length !== 0 || emptyMatrix.cells.length !== 0) {
 // pipeline here (that's covered hermetically by kernel-regression-tests.mjs) —
 // we only verify the kernel exposes the entry point so adapters and CLIs can
 // import it.
+if (typeof discoverPrinciples !== "function") {
+  throw new Error("Kernel did not export discoverPrinciples.");
+}
+
 if (typeof discoverPatterns !== "function") {
   throw new Error("Kernel did not export discoverPatterns.");
 }

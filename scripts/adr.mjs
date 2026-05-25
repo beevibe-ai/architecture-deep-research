@@ -5,6 +5,7 @@ import { renderReportHtml } from "../src/render/html.mjs";
 import {
   deepResearch,
   discoverPatterns,
+  discoverPrinciples,
   generateHandoff,
   research,
   supersedeAdr
@@ -218,6 +219,25 @@ async function main() {
 
   if (command === "discover") {
     await discoverPatterns({ inputPath, flags });
+    return;
+  }
+
+  if (command === "principles") {
+    const sub = inputPath || "init";
+    if (sub !== "init") {
+      console.error(
+        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`.`
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const result = await discoverPrinciples({ flags });
+    console.log("");
+    console.log(`Wrote ${result.principles.length} principles to:`);
+    console.log(`  ${result.mdPath}`);
+    console.log(`  ${result.jsonPath}`);
+    console.log("");
+    console.log("Next: `adr review <PR#>` to check a PR against this list.");
     return;
   }
 

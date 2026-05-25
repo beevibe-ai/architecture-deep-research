@@ -18,6 +18,7 @@ import {
   critiqueDecisionPhase,
   deriveComparisonAxes,
   discoverPatterns,
+  discoverPrinciples,
   extractClaims,
   extractDecisionContext,
   filterPromotedByRelevance,
@@ -619,6 +620,164 @@ try {
   ]);
 
   await rm(discoverOutDir, { recursive: true, force: true });
+  await rm(fakeRepoDir, { recursive: true, force: true });
+} finally {
+  setLlmJsonProvider(null);
+}
+
+// ---------------------------------------------------------------------------
+// Principles-stage regression: build a tiny fake repo, install fixtures for
+// the four principles labels, run discoverPrinciples in --non-interactive
+// mode, and verify principles.json + principles.md land on disk with the
+// expected shape and event log.
+// ---------------------------------------------------------------------------
+
+try {
+  const principlesOutDir = await mkdtemp(
+    path.join(os.tmpdir(), "adr-principles-test-")
+  );
+  const fakeRepoDir = await mkdtemp(
+    path.join(os.tmpdir(), "adr-principles-repo-")
+  );
+
+  await writeFile(
+    path.join(fakeRepoDir, "README.md"),
+    [
+      "# fake-repo",
+      "",
+      "Tiny synthetic repo for the principles regression test.",
+      "",
+      "## Conventions",
+      "- State lives in /stores via Zustand.",
+      "- No useState for cross-component selections."
+    ].join("\n")
+  );
+  await writeFile(
+    path.join(fakeRepoDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "fake-repo",
+        type: "module",
+        dependencies: { zustand: "^4.0.0" }
+      },
+      null,
+      2
+    )
+  );
+  await mkdir(path.join(fakeRepoDir, "stores"), { recursive: true });
+  await writeFile(
+    path.join(fakeRepoDir, "stores", "chatStore.ts"),
+    "// canonical zustand store\nexport const useChatStore = () => null;\n"
+  );
+
+  installProvider((label) => {
+    if (label === "principles_lens_discovery") {
+      return {
+        lenses: [
+          {
+            slug: "state-boundaries",
+            name: "State boundaries",
+            rationale:
+              "Repo uses Zustand and declares state conventions in README.",
+            scan_signals: ["package.json", "README.md", "stores/chatStore.ts"]
+          }
+        ]
+      };
+    }
+    if (label === "principles_pattern_extractor") {
+      return {
+        positive_patterns: [
+          {
+            name: "state_via_zustand_stores",
+            rule: "State lives in /stores via Zustand, not in component-local useState.",
+            evidence_cite: ["stores/chatStore.ts:1", "README.md"],
+            why: "README declares it; chatStore.ts demonstrates it."
+          }
+        ],
+        antipatterns: [],
+        ambiguities: []
+      };
+    }
+    if (label === "principles_interview_generator") {
+      return { questions: [] };
+    }
+    if (label === "principles_consolidator") {
+      return {
+        principles: [
+          {
+            id: "state-via-zustand-stores",
+            lens: "state-boundaries",
+            polarity: "do",
+            rule: "State lives in /stores via Zustand.",
+            rationale: "Team convention declared in README + chatStore.ts.",
+            evidence_cite: ["stores/chatStore.ts:1", "README.md"],
+            examples_to_follow: ["stores/chatStore.ts:1"],
+            examples_to_avoid: [],
+            confirmed_by_interview: false,
+            confidence: "high"
+          }
+        ]
+      };
+    }
+    throw new Error(
+      `principles regression fixture: unexpected label ${label}`
+    );
+  });
+
+  const result = await discoverPrinciples({
+    flags: {
+      repo: fakeRepoDir,
+      out: principlesOutDir,
+      "non-interactive": true
+    }
+  });
+
+  assert.equal(result.lenses.length, 1);
+  assert.equal(result.lenses[0].slug, "state-boundaries");
+  assert.equal(result.principles.length, 1);
+  assert.equal(result.principles[0].id, "state-via-zustand-stores");
+  assert.equal(result.principles[0].polarity, "do");
+  assert.equal(result.principles[0].confidence, "high");
+  assert.equal(result.interviewLog.length, 0);
+
+  const persisted = JSON.parse(
+    await readFile(path.join(principlesOutDir, "principles.json"), "utf8")
+  );
+  assert.equal(persisted.lenses.length, 1);
+  assert.equal(persisted.principles.length, 1);
+  assert.ok(
+    persisted.principles[0].evidence_cite.includes("stores/chatStore.ts:1")
+  );
+
+  const markdown = await readFile(
+    path.join(principlesOutDir, "principles.md"),
+    "utf8"
+  );
+  assert.ok(markdown.includes("# Team principles"));
+  assert.ok(markdown.includes("State boundaries"));
+  assert.ok(markdown.includes("DO: State lives in /stores via Zustand."));
+
+  const events = (
+    await readFile(path.join(principlesOutDir, "events.jsonl"), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const eventTypes = events.map((event) => event.type);
+  assert.deepEqual(eventTypes, [
+    "principles_started",
+    "repo_scanned",
+    "source_sampled",
+    "lenses_discovered",
+    "lens_patterns_extracted",
+    "interview_skipped",
+    "principles_consolidated",
+    "citations_verified",
+    "principles_emitted",
+    "principles_completed"
+  ]);
+
+  await rm(principlesOutDir, { recursive: true, force: true });
   await rm(fakeRepoDir, { recursive: true, force: true });
 } finally {
   setLlmJsonProvider(null);
