@@ -97,4 +97,95 @@ async function postReviewComments({ prNumber, violations, principles }) {
   return { posted, failures };
 }
 
-export { postReviewComments, ghAvailable };
+// Batched review (#12) — one API call to POST /pulls/<N>/reviews with all
+// inline comments attached + a summary body. Saves rate-limit budget vs
+// the one-by-one path and lands as a single review event on the PR
+// timeline. The non-interactive / CI path.
+async function postBatchedReview({
+  prNumber,
+  violations,
+  principles,
+  event = "COMMENT"
+}) {
+  if (!(await ghAvailable())) {
+    throw new Error(
+      "gh CLI not found. Install GitHub's gh and run `gh auth login`."
+    );
+  }
+  if (!["COMMENT", "REQUEST_CHANGES", "APPROVE"].includes(event)) {
+    throw new Error(
+      `Invalid --event: ${event}. Expected COMMENT, REQUEST_CHANGES, or APPROVE.`
+    );
+  }
+  const meta = await getPrMeta(prNumber);
+
+  const comments = [];
+  for (const v of violations) {
+    const principle = findPrinciple(principles, v.principle_id);
+    if (!principle) continue;
+    comments.push({
+      path: v.file,
+      line: v.line,
+      side: "RIGHT",
+      body: renderViolationComment(v, principle)
+    });
+  }
+
+  if (comments.length === 0) {
+    return { posted: 0, failures: [], skipped_empty: true };
+  }
+
+  const byCounts = violations.reduce(
+    (a, v) => ({ ...a, [v.severity]: (a[v.severity] || 0) + 1 }),
+    {}
+  );
+  const summary = [
+    `**adr review**: ${violations.length} principle violation${violations.length === 1 ? "" : "s"} found.`,
+    "",
+    `Severity: high=${byCounts.high || 0}, medium=${byCounts.medium || 0}, low=${byCounts.low || 0}.`,
+    "",
+    "Each comment cites the team's own file:line as the example to follow. Suppress with `// adr-ignore: <principle-id>`."
+  ].join("\n");
+
+  const payload = {
+    commit_id: meta.commitId,
+    body: summary,
+    event,
+    comments
+  };
+
+  // Write payload to a temp file and pass via `--input` so multiline body
+  // doesn't run afoul of shell escaping.
+  const { writeFile, mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "adr-review-batch-"));
+  const payloadPath = path.join(tmpDir, "payload.json");
+  await writeFile(payloadPath, JSON.stringify(payload));
+
+  try {
+    await execFileAsync(
+      "gh",
+      [
+        "api",
+        "--method",
+        "POST",
+        `repos/${meta.owner}/${meta.repo}/pulls/${prNumber}/reviews`,
+        "--input",
+        payloadPath
+      ],
+      { maxBuffer: 5 * 1024 * 1024 }
+    );
+    return { posted: comments.length, failures: [], batched: true };
+  } catch (error) {
+    return {
+      posted: 0,
+      failures: [{ error: String(error?.message || error) }],
+      batched: true
+    };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export { postReviewComments, postBatchedReview, ghAvailable };

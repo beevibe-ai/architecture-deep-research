@@ -18,7 +18,10 @@ import {
   renderViolationForTerminal
 } from "./comment-renderer.mjs";
 import { runInteractiveWalkthrough } from "./interactive-walkthrough.mjs";
-import { postReviewComments as postGithubComments } from "./gh-poster.mjs";
+import {
+  postReviewComments as postGithubComments,
+  postBatchedReview as postGithubBatchedReview
+} from "./gh-poster.mjs";
 import { postReviewComments as postGitlabComments } from "./glab-poster.mjs";
 import { postReviewComments as postBitbucketComments } from "./bb-poster.mjs";
 import { detectScm, resolveScm } from "./scm-detect.mjs";
@@ -90,6 +93,9 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
   );
   const interactive = flags["non-interactive"] !== true;
   const post = flags.post === true || flags.post === "true";
+  const batch = flags.batch === true || flags.batch === "true";
+  const reviewEvent =
+    typeof flags.event === "string" ? flags.event.toUpperCase() : "COMMENT";
   const topN = Number.isFinite(Number(flags["top-n"]))
     ? Number(flags["top-n"])
     : null;
@@ -265,6 +271,15 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
           principles,
           cwd: repoPath
         });
+      } else if (batch) {
+        // Roadmap #12 — single batched PR review event with all comments.
+        // Only on GitHub for now; glab/bb stay on per-comment posts.
+        postResult = await postGithubBatchedReview({
+          prNumber: source.value,
+          violations: accepted,
+          principles,
+          event: reviewEvent
+        });
       } else {
         postResult = await postGithubComments({
           prNumber: source.value,
@@ -272,7 +287,7 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
           principles
         });
       }
-      await appendEvent(outDir, "comments_posted", { scm, ...postResult });
+      await appendEvent(outDir, "comments_posted", { scm, batch, ...postResult });
       console.log(
         `\nPosted ${postResult.posted} of ${accepted.length} comments to PR #${source.value}.`
       );
