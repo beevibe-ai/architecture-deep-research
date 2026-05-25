@@ -11,6 +11,7 @@ import {
   refinePrinciple,
   research,
   reviewDiff,
+  runDrift,
   supersedeAdr
 } from "../src/kernel.mjs";
 
@@ -285,6 +286,11 @@ async function main() {
 
   if (command === "guard") {
     await guard({ inputPath, flags });
+    return;
+  }
+
+  if (command === "drift") {
+    await runDrift({ flags });
     return;
   }
 

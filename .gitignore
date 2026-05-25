@@ -14,5 +14,6 @@ web/dist/
 # per-run review artifacts and the regenerated health snapshot are not.
 .adr/events.jsonl
 .adr/reviews/
+.adr/drift/
 .adr/principles-health.json
 .adr/principle-stats.json

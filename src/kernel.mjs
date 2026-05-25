@@ -6017,6 +6017,12 @@ async function guard(input) {
   return mod.guard(input);
 }
 
+// `runDrift` lives in src/drift/index.mjs. Same lazy-import pattern.
+async function runDrift(input) {
+  const mod = await import("./drift/index.mjs");
+  return mod.runDrift(input);
+}
+
 // generateHandoff is the lazy handoff stage. The default pipeline produces
 // only the research report; this command reads research-report.json from
 // an existing run dir, scopes to one chosen candidate, and writes the
@@ -6169,6 +6175,7 @@ export {
   refinePrinciple,
   resetLlmCost,
   reviewDiff,
+  runDrift,
   runResearchAgents,
   searchWithProvider,
   setLlmJsonProvider,

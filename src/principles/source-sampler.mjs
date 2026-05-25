@@ -282,4 +282,55 @@ async function sampleChangedFilesSince(repoPath, sinceIso) {
   };
 }
 
-export { sampleRepoSource, sampleChangedFilesSince };
+// Full repo source walk for `adr drift`. Different from sampleRepoSource:
+// drift wants every reviewable file, not a per-top-level sample. Still
+// capped (drift LLM cost scales with file count), but the cap is far
+// higher because drift is meant to be thorough.
+const DRIFT_MAX_FILES = 200;
+
+async function walkAllSourceFiles(repoPath, { maxFiles = DRIFT_MAX_FILES } = {}) {
+  const collected = [];
+  async function walk(dir, depth) {
+    if (depth > MAX_DEPTH) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (collected.length >= maxFiles) return;
+      if (IGNORED_DIRS.has(entry.name)) continue;
+      if (entry.name.startsWith(".")) continue;
+      const childPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(childPath, depth + 1);
+      } else if (entry.isFile() && isSourceFile(entry.name)) {
+        if (isLikelyTest(entry.name)) continue;
+        collected.push({
+          absPath: childPath,
+          relPath: path.relative(repoPath, childPath)
+        });
+      }
+    }
+  }
+  await walk(repoPath, 0);
+
+  const samples = [];
+  for (const file of collected) {
+    const content = await safeReadFile(file.absPath, MAX_BYTES_PER_FILE);
+    if (!content) continue;
+    samples.push({
+      path: file.relPath,
+      content
+    });
+  }
+  return samples;
+}
+
+export {
+  sampleRepoSource,
+  sampleChangedFilesSince,
+  walkAllSourceFiles,
+  DRIFT_MAX_FILES
+};
