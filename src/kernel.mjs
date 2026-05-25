@@ -6000,6 +6000,11 @@ async function discoverPrinciples(input) {
   return mod.discoverPrinciples(input);
 }
 
+async function refinePrinciple(input) {
+  const mod = await import("./principles/refine.mjs");
+  return mod.refinePrinciple(input);
+}
+
 // `reviewDiff` lives in src/review/index.mjs. Same lazy-import pattern.
 async function reviewDiff(input) {
   const mod = await import("./review/index.mjs");
@@ -6161,6 +6166,7 @@ export {
   prepareRun,
   proposeFollowUpQuestions,
   research,
+  refinePrinciple,
   resetLlmCost,
   reviewDiff,
   runResearchAgents,

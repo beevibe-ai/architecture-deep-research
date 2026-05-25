@@ -8,6 +8,7 @@ import {
   discoverPrinciples,
   generateHandoff,
   guard,
+  refinePrinciple,
   research,
   reviewDiff,
   supersedeAdr
@@ -226,12 +227,32 @@ async function main() {
 
   if (command === "principles") {
     const sub = inputPath || "init";
-    const validSubs = new Set(["init", "refresh", "incremental"]);
+    const validSubs = new Set(["init", "refresh", "incremental", "refine"]);
     if (!validSubs.has(sub)) {
       console.error(
-        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`, \`refresh\`, or \`incremental\`.`
+        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`, \`refresh\`, \`incremental\`, or \`refine <id>\`.`
       );
       process.exitCode = 1;
+      return;
+    }
+    if (sub === "refine") {
+      const targetId = flags.id;
+      if (!targetId) {
+        console.error(
+          "adr principles refine requires --id <principle-id>. Example: --id schema-validate-before-write."
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const result = await refinePrinciple({ inputPath: targetId, flags });
+      console.log("");
+      if (result.replaced) {
+        console.log(`Refined principle: ${targetId}`);
+        console.log(`  before: ${result.target.rule}`);
+        console.log(`  after:  ${result.replacement.rule}`);
+      } else {
+        console.log(`No usable replacement for "${targetId}". Prior version kept.`);
+      }
       return;
     }
     const result = await discoverPrinciples({
