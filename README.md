@@ -10,11 +10,16 @@
 
 **The decision layer your coding agents are missing.**
 
-ADR (Architecture Deep Research) produces a research report on an architectural decision space. 
+The full loop, from architecture decision through PR review:
 
-**[See an example report →](https://beevibe.ai/cto/example-report/)** A real, unedited ADR run on a Beevibe decision: 11 candidates, 60 citations, 4 Mermaid diagrams, $0.27, 122 LLM calls.
+| Command | What it does |
+| --- | --- |
+| `adr decide` | Live deep-research on an architectural decision → an HTML report with N candidates, citations, and Mermaid diagrams. **[See an example →](https://beevibe.ai/cto/example-report/)** |
+| `adr principles init` | Scans your repo, discovers the team's code-review lenses (state-boundaries, schema-validate-before-write, etc.), walks you through an interview, writes `.adr/principles.{md,json}` |
+| `adr review` | Checks a PR / staged diff / branch against those principles. Inline comments cite the team's own file:line as the example to follow. |
+| `adr guard install` | Wires the principles into Claude Code (PreToolUse hook surfaces them at write time) + git pre-commit (blocks high-severity violations). |
 
-The brain + `adr guard` / `review` / `drift` close the loop; Upcoming.
+The brain + `adr drift` close the rest of the loop; upcoming.
 
 ---
 
@@ -36,6 +41,9 @@ Then in any Claude Code session:
 | `/adr:doctor` | One-time: audit env, walk through API keys, persist to `~/.adr/config.json` |
 | `/adr:decide` | Ask a decision name, scan the repo, run the full pipeline, summarize the report |
 | `/adr:discover` | Quick scan only — drafts a PRD without the full deep-research run |
+| `/adr:principles` | Discover the team's code-review principles from the repo, walk through the interview conversationally |
+| `/adr:review` | Check a PR / staged diff against the principles, walk through violations one at a time |
+| `/adr:guard` | Install the PreToolUse + pre-commit hooks so principles fire automatically on every edit |
 
 ### MCP server — Cursor, Codex, any MCP host
 
@@ -50,7 +58,7 @@ Add to your host's MCP config:
 { "mcpServers": { "adr": { "command": "adr-mcp" } } }
 ```
 
-Three tools become available: `adr_discover`, `adr_deep_research`, `adr_read_handoff`.
+Five tools become available: `adr_discover`, `adr_deep_research`, `adr_read_handoff`, `adr_principles`, `adr_review`.
 
 ### CLI — terminal, CI, GitHub Action
 
@@ -101,6 +109,35 @@ The report at `<out_dir>/ADR.md` has:
 - Where to Dig Deeper — pre-filled `adr deep-research` commands for the next iteration
 
 The decision becomes a tree of ADR runs. Each one drills into the highest-uncertainty axis from the prior run.
+
+## Keep the implementation honest — principles, review, guard
+
+Decisions don't survive contact with the codebase. The senior engineer who knows what your team standardized on becomes the only memory — repeating the same review comment to 10 different juniors, every week.
+
+Three commands close that loop:
+
+```bash
+# Step 1: discover what the team's conventions actually are (run once per repo)
+adr principles init                    # scans the repo, interviews you, writes .adr/principles.{md,json}
+
+# Step 2: check a PR against those principles
+adr review 42                          # GitHub PR
+adr review --staged                    # pre-commit local
+adr review --branch main               # current branch vs base
+
+# Step 3: wire the principles into your workflow so they fire automatically
+adr guard install                      # PreToolUse hook + git pre-commit
+```
+
+**`adr principles init`** uses the LLM end-to-end — no hardcoded lens taxonomy. It samples real source files from your repo, asks the model to surface the code-review angles a senior would catch (state boundaries, schema-validate-before-write, CLI patterns, test-fixture discipline, ownership routing…), extracts positive patterns + antipatterns + ambiguities with `file:line` citations, then walks you through an interactive interview to confirm. A cite-or-die filter drops any path the model invented — only principles backed by real lines on disk survive.
+
+**`adr review`** loads the principles + a unified diff (PR / staged / branch / arbitrary diff file / stdin), groups hunks by file, runs one LLM call per file to detect violations, ranks by severity, and walks you through accept/edit/skip one at a time. Approved comments post via `gh pr review` with the team's own example cited as "follow this".
+
+**`adr guard install`** wires two hooks:
+- **Claude Code `PreToolUse`** — every Edit/Write/MultiEdit, the hook filters principles to ones relevant to the file's top-level dir (no LLM call on the hot path) and injects them into the agent's context. The agent sees the team's conventions before it generates the violation.
+- **Git pre-commit** — runs `adr review --staged --top-n 5`. HIGH-severity violations block the commit; medium/low are advisory.
+
+All three operate on the same `.adr/principles.json` artifact. Re-run `adr principles init` whenever the team's posture shifts; review and guard pick up the new rules automatically.
 
 ## API keys
 
@@ -167,27 +204,19 @@ adr deep-research --discover-first --open \
 
 ## Status
 
-**Shipped (the ADR flagship):**
+**Shipped:**
 
-- Live agentic research kernel — `adr decide`.
-- Discover stage: stack signals, patterns, antipatterns from your own repo.
-- Peer products via `--include-peers`, with `architecture` / `adoption` / `both` evidence strategies.
-- Community-source class (Reddit / HN / Twitter / Stack Exchange) with relaxed citation auditing.
-- Non-blocking gap detection + follow-up questions driven by matrix axis variance.
-- Mermaid diagrams (decision space + per-candidate deployment topology).
-- Cost transparency: `--dry-run`, `cost-estimate.json`, per-stage tally.
-- Crash-aware `state.json` + `adr resume`.
-- HTML report via `adr open` (mermaid as SVG, dark/light mode).
-- LangGraph and Google ADK adapters (same kernel, same artifacts).
-- Claude Code plugin with MCP server + `/adr:decide`, `/adr:discover`, `/adr:doctor`.
-- Web UI (`adr-web`) for live operator / developer views.
+- **ADR flagship** — `adr decide`, `adr discover`, `adr open`, `adr handoff`, `adr resume`, `adr supersede`. Live agentic research kernel, peer discovery, community sources, citation + claim audits, Mermaid diagrams, HTML report, crash-aware state.
+- **`adr principles init`** — LLM-discovered code-review lenses, per-lens patterns + antipatterns, interactive interview, cite-or-die filter. Writes `.adr/principles.{md,json}`.
+- **`adr review`** — PR / staged / branch / file modes. Walks the user through violations one at a time, posts inline comments via `gh pr review` citing the team's own `file:line` as the example to follow.
+- **`adr guard`** — Claude Code `PreToolUse` hook (write-time principle injection) + git pre-commit (blocks high-severity violations). Pure file-based filter on the hot path; idempotent install.
+- **Adapters + UI** — LangGraph and Google ADK (same kernel, same artifacts). Web UI (`adr-web`) for live operator / developer views.
+- **Claude Code plugin** — six slash commands: `/adr:doctor`, `/adr:decide`, `/adr:discover`, `/adr:principles`, `/adr:review`, `/adr:guard`.
 
-**In development (the rest of the AI CTO loop):**
+**In development:**
 
-- **The brain** — always-on knowledge graph that watches voices, trending OSS, competitor architecture, and papers. Personalized to your stack via your PRD + past ADR runs. Visual + browsable.
-- `adr guard` — Claude Code hook + pre-commit check that streams team antipatterns into the coding agent's context at write time.
-- `adr review <PR#>` — PR-time check against the per-option contract + antipattern set.
-- `adr drift <out_dir>` — periodic scan against the saved spec, reports drift by file:line.
+- **The brain** — always-on knowledge graph that watches voices, trending OSS, competitor architecture, and papers. Personalized to your stack via your PRD + past ADR runs + discovered principles. Markdown-in-git source of truth (Obsidian-compatible) + derived Postgres+pgvector indexes; LLM maintains the wiki, watchers ingest sources continuously.
+- `adr drift <out_dir>` — periodic scan against the saved spec, reports drift by `file:line`.
 
 Open-source core under Apache-2.0. The commercial Beevibe surface layers curated corpora, managed researcher agents, org-level memory, and team governance on top.
 
