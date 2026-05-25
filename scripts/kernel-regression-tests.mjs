@@ -19,6 +19,7 @@ import {
   deriveComparisonAxes,
   discoverPatterns,
   discoverPrinciples,
+  reviewDiff,
   extractClaims,
   extractDecisionContext,
   filterPromotedByRelevance,
@@ -779,6 +780,137 @@ try {
 
   await rm(principlesOutDir, { recursive: true, force: true });
   await rm(fakeRepoDir, { recursive: true, force: true });
+} finally {
+  setLlmJsonProvider(null);
+}
+
+// ---------------------------------------------------------------------------
+// Review-stage regression: stage a fake repo with .adr/principles.json plus
+// a synthetic unified diff, install a fixture for the violation-detector
+// label, run reviewDiff in non-interactive mode, and verify the structured
+// violation artifact lands on disk.
+// ---------------------------------------------------------------------------
+
+try {
+  const reviewRepoDir = await mkdtemp(
+    path.join(os.tmpdir(), "adr-review-repo-")
+  );
+  const diffPath = path.join(reviewRepoDir, "change.patch");
+
+  // Stage a principles.json that the review will load.
+  await mkdir(path.join(reviewRepoDir, ".adr"), { recursive: true });
+  await writeJson(path.join(reviewRepoDir, ".adr", "principles.json"), {
+    version: "test",
+    source: {
+      repo_path: reviewRepoDir,
+      scanned_at: "2026-05-25T00:00:00.000Z",
+      interview_completed: true
+    },
+    lenses: [
+      {
+        slug: "state-boundaries",
+        name: "State boundaries",
+        rationale: "State lives in Zustand stores, not useState."
+      }
+    ],
+    principles: [
+      {
+        id: "state-via-zustand-stores",
+        lens: "state-boundaries",
+        polarity: "do",
+        rule: "State lives in /stores via Zustand.",
+        rationale: "Cross-component state belongs in the store.",
+        evidence_cite: ["stores/chatStore.ts:14"],
+        examples_to_follow: ["stores/chatStore.ts:14"],
+        examples_to_avoid: [],
+        confirmed_by_interview: true,
+        confidence: "high"
+      }
+    ],
+    interview_log: []
+  });
+
+  // Synthetic unified diff: one file, one hunk, one offending addition.
+  const diff = [
+    "diff --git a/web/src/components/ChatHeader.tsx b/web/src/components/ChatHeader.tsx",
+    "index 1111111..2222222 100644",
+    "--- a/web/src/components/ChatHeader.tsx",
+    "+++ b/web/src/components/ChatHeader.tsx",
+    "@@ -1,6 +1,8 @@",
+    " import React from \"react\";",
+    " ",
+    " export function ChatHeader() {",
+    "+  const [selectedAgentId, setSelectedAgentId] = React.useState(null);",
+    "+  // rebuilds state in TSX instead of using chatStore",
+    "   return <div>header</div>;",
+    " }",
+    ""
+  ].join("\n");
+  await writeFile(diffPath, diff);
+
+  installProvider((label) => {
+    if (label === "review_violation_detector") {
+      return {
+        violations: [
+          {
+            principle_id: "state-via-zustand-stores",
+            file: "web/src/components/ChatHeader.tsx",
+            line: 4,
+            severity: "high",
+            message:
+              "Adds component-local useState for selectedAgentId. Cross-component selections live in chatStore.",
+            suggested_fix:
+              "Move `selectedAgentId` to chatStore.ts:14 and expose via useSelectedAgent()."
+          }
+        ]
+      };
+    }
+    throw new Error(
+      `review regression fixture: unexpected label ${label}`
+    );
+  });
+
+  const result = await reviewDiff({
+    flags: {
+      repo: reviewRepoDir,
+      diff: diffPath,
+      "non-interactive": true
+    }
+  });
+
+  assert.equal(result.violations.length, 1);
+  assert.equal(result.violations[0].principle_id, "state-via-zustand-stores");
+  assert.equal(result.violations[0].severity, "high");
+  assert.equal(result.violations[0].line, 4);
+  assert.equal(result.filesReviewed.length, 1);
+  assert.equal(
+    result.filesReviewed[0],
+    "web/src/components/ChatHeader.tsx"
+  );
+
+  const persisted = JSON.parse(
+    await readFile(path.join(result.outDir, "review.json"), "utf8")
+  );
+  assert.equal(persisted.violations.length, 1);
+  assert.equal(persisted.source.kind, "file");
+  assert.equal(persisted.files_reviewed.length, 1);
+
+  const events = (
+    await readFile(path.join(result.outDir, "events.jsonl"), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const eventTypes = events.map((event) => event.type);
+  assert.deepEqual(eventTypes, [
+    "review_started",
+    "principles_loaded",
+    "diff_parsed",
+    "violations_detected",
+    "review_completed"
+  ]);
+
+  await rm(reviewRepoDir, { recursive: true, force: true });
 } finally {
   setLlmJsonProvider(null);
 }

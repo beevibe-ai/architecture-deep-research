@@ -62,7 +62,13 @@ try {
   await client.connect(transport);
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
-  const expected = ["adr_deep_research", "adr_discover", "adr_read_handoff"];
+  const expected = [
+    "adr_deep_research",
+    "adr_discover",
+    "adr_principles",
+    "adr_read_handoff",
+    "adr_review"
+  ];
   if (JSON.stringify(names) !== JSON.stringify(expected)) {
     throw new Error(
       `MCP server exposed unexpected tools. Got ${JSON.stringify(names)}, expected ${JSON.stringify(expected)}.`

@@ -23,6 +23,7 @@ const schemaByFilename = {
   "peers.json": "docs/schemas/peers.schema.json",
   "principles.json": "docs/schemas/principles.schema.json",
   "research-plan.json": "docs/schemas/research-plan.schema.json",
+  "review.json": "docs/schemas/review-violations.schema.json",
   "strategic-context.json": "docs/schemas/strategic-context.schema.json",
   "supersedes.json": "docs/schemas/supersedes.schema.json"
 };

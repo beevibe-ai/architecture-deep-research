@@ -26,6 +26,8 @@ import { loadConfigIntoEnv } from "./adr-doctor.mjs";
 import {
   deepResearch,
   discoverPatterns,
+  discoverPrinciples,
+  reviewDiff,
   VERSION
 } from "../src/kernel.mjs";
 
@@ -161,6 +163,77 @@ const tools = [
       },
       required: ["out_dir"]
     }
+  },
+  {
+    name: "adr_principles",
+    description:
+      "Scan a local repo and discover the team's code-review principles: lenses (state-boundaries, llm-call-discipline, etc.), positive patterns, antipatterns, and ambiguities. Returns the principles JSON the slash command should walk the user through to confirm. Caller is responsible for the interactive interview — pass non_interactive: true here and conduct the interview in chat.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo_path: {
+          type: "string",
+          description:
+            "Absolute or relative path to the local repo to scan. Defaults to the MCP server's cwd."
+        },
+        out_dir: {
+          type: "string",
+          description:
+            "Where to write principles.{md,json} and events.jsonl. Defaults to <repo_path>/.adr."
+        },
+        non_interactive: {
+          type: "boolean",
+          description:
+            "When true (recommended for MCP), skips the readline-driven interview. Slash commands should handle the interview conversationally in chat."
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: "adr_review",
+    description:
+      "Detect violations of team principles in a diff. Reads .adr/principles.json from the repo, loads the diff (from a PR#, a file, the staged area, or a branch comparison), and returns structured violations the slash command can walk the user through. By default does NOT post — the slash command should walk the user through accept/edit/skip in chat, then post via gh CLI from its own tool use.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo_path: {
+          type: "string",
+          description: "Path to the repo. Defaults to MCP server cwd."
+        },
+        pr_number: {
+          type: "integer",
+          description:
+            "When set, fetch the diff via `gh pr diff <N>` and review it. Requires gh CLI + authentication."
+        },
+        diff_path: {
+          type: "string",
+          description:
+            "Path to a unified diff file. Use this for arbitrary diffs (e.g., feature branches without an open PR)."
+        },
+        staged: {
+          type: "boolean",
+          description:
+            "When true, review `git diff --staged` (the pre-commit diff)."
+        },
+        branch: {
+          type: "string",
+          description:
+            "When set, review `git diff <branch>...HEAD`. Defaults to comparing against 'main' when truthy."
+        },
+        top_n: {
+          type: "integer",
+          description:
+            "Cap the number of violations returned (ranked high → medium → low). Defaults to all."
+        },
+        principles_path: {
+          type: "string",
+          description:
+            "Override the principles.json location. Defaults to <repo_path>/.adr/principles.json."
+        }
+      },
+      required: []
+    }
   }
 ];
 
@@ -277,6 +350,104 @@ async function handleReadHandoff(args) {
   return textResult(JSON.parse(raw));
 }
 
+async function handlePrinciples(args) {
+  const flags = {
+    repo: args.repo_path || ".",
+    "non-interactive":
+      args.non_interactive === false ? false : true
+  };
+  if (args.out_dir) flags.out = args.out_dir;
+  const result = await discoverPrinciples({ flags });
+  return textResult({
+    out_dir: result.outDir,
+    repo_path: result.repoPath,
+    lens_count: result.lenses.length,
+    lenses: result.lenses.map((l) => ({
+      slug: l.slug,
+      name: l.name,
+      rationale: l.rationale
+    })),
+    principle_count: result.principles.length,
+    principles: result.principles.map((p) => ({
+      id: p.id,
+      lens: p.lens,
+      polarity: p.polarity,
+      rule: p.rule,
+      rationale: p.rationale,
+      evidence_cite: p.evidence_cite,
+      examples_to_follow: p.examples_to_follow,
+      confidence: p.confidence,
+      confirmed_by_interview: p.confirmed_by_interview
+    })),
+    md_path: result.mdPath,
+    json_path: result.jsonPath,
+    interview_skipped: flags["non-interactive"] === true,
+    next_step: flags["non-interactive"]
+      ? "The interactive interview was skipped (MCP mode). Walk the user through the ambiguities in chat, then re-run with confirmed answers, or accept the principles as-is and run adr_review against a PR."
+      : "Principles are confirmed and ready. Run adr_review against a PR to check it."
+  });
+}
+
+async function handleReview(args) {
+  const flags = {
+    repo: args.repo_path || ".",
+    "non-interactive": true  // MCP is non-interactive; chat handles UX
+  };
+  let inputPath = null;
+  if (typeof args.pr_number === "number") {
+    inputPath = String(args.pr_number);
+  } else if (args.diff_path) {
+    flags.diff = args.diff_path;
+  } else if (args.staged === true) {
+    flags.staged = true;
+  } else if (args.branch) {
+    flags.branch = args.branch;
+  } else {
+    throw new Error(
+      "adr_review needs one of: pr_number, diff_path, staged: true, or branch."
+    );
+  }
+  if (typeof args.top_n === "number") flags["top-n"] = String(args.top_n);
+  if (args.principles_path) flags.principles = args.principles_path;
+
+  const result = await reviewDiff({ inputPath, flags });
+
+  // Read the principles back so the slash command can render comments
+  // without a second MCP call.
+  const principlesPath = path.resolve(
+    args.principles_path ||
+      path.join(args.repo_path || ".", ".adr", "principles.json")
+  );
+  let principlesArtifact = null;
+  try {
+    principlesArtifact = JSON.parse(await readFile(principlesPath, "utf8"));
+  } catch {
+    // already validated by reviewDiff; ignore
+  }
+
+  return textResult({
+    out_dir: result.outDir,
+    artifact_path: result.artifactPath,
+    files_reviewed: result.filesReviewed,
+    violation_count: result.violations.length,
+    violations: result.violations,
+    principles: principlesArtifact
+      ? principlesArtifact.principles.map((p) => ({
+          id: p.id,
+          lens: p.lens,
+          polarity: p.polarity,
+          rule: p.rule,
+          rationale: p.rationale,
+          examples_to_follow: p.examples_to_follow
+        }))
+      : [],
+    next_step:
+      result.violations.length === 0
+        ? "No principle violations found. Ship it."
+        : `Walk the user through these ${result.violations.length} violations one at a time. For each, show: principle.rule, the violation message, file:line, and the team example to follow. Accept/edit/skip per the user's input. For accepted ones, post via gh CLI: \`gh api repos/<owner>/<repo>/pulls/<N>/comments --method POST -f body=<rendered> -f commit_id=<sha> -f path=<file> -F line=<line> -f side=RIGHT\`.`
+  });
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const name = request.params?.name;
   const args = request.params?.arguments || {};
@@ -292,6 +463,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "adr_discover") return await handleDiscover(args);
     if (name === "adr_deep_research") return await handleDeepResearch(args);
     if (name === "adr_read_handoff") return await handleReadHandoff(args);
+    if (name === "adr_principles") return await handlePrinciples(args);
+    if (name === "adr_review") return await handleReview(args);
     return errorResult(
       "unknown_tool",
       new Error(

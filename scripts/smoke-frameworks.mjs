@@ -38,6 +38,7 @@ import {
   digestPaper,
   discoverPatterns,
   discoverPrinciples,
+  reviewDiff,
   getLlmJsonProvider,
   inspectGithubRepo,
   isGithubRepoUrl,
@@ -221,6 +222,10 @@ if (emptyMatrix.candidates.length !== 0 || emptyMatrix.cells.length !== 0) {
 // import it.
 if (typeof discoverPrinciples !== "function") {
   throw new Error("Kernel did not export discoverPrinciples.");
+}
+
+if (typeof reviewDiff !== "function") {
+  throw new Error("Kernel did not export reviewDiff.");
 }
 
 if (typeof discoverPatterns !== "function") {

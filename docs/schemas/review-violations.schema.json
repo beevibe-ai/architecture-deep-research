@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/review-violations.schema.json",
+  "title": "Beevibe ADR Review Violations",
+  "description": "Output of `adr review` — violations of `adr principles init` rules surfaced in a diff. Consumed by `gh pr review` (post inline comments) and by Claude Code slash commands (interactive walkthrough).",
+  "type": "object",
+  "required": ["version", "source", "principles_path", "violations"],
+  "properties": {
+    "version": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["pr", "staged", "branch", "file"]
+        },
+        "value": { "type": ["string", "number", "null"] },
+        "loaded_at": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "principles_path": { "type": "string" },
+    "files_reviewed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["principle_id", "file", "line", "severity", "message"],
+        "properties": {
+          "principle_id": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "severity": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "message": { "type": "string" },
+          "suggested_fix": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "post_result": {
+      "type": "object",
+      "properties": {
+        "posted": { "type": "integer" },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "principle_id": { "type": "string" },
+              "line": { "type": "integer" },
+              "error": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -366,6 +366,7 @@ const schemaByFilename = {
   "peers.json": "../docs/schemas/peers.schema.json",
   "principles.json": "../docs/schemas/principles.schema.json",
   "research-plan.json": "../docs/schemas/research-plan.schema.json",
+  "review.json": "../docs/schemas/review-violations.schema.json",
   "strategic-context.json": "../docs/schemas/strategic-context.schema.json",
   "supersedes.json": "../docs/schemas/supersedes.schema.json"
 };
@@ -5997,6 +5998,12 @@ async function discoverPrinciples(input) {
   return mod.discoverPrinciples(input);
 }
 
+// `reviewDiff` lives in src/review/index.mjs. Same lazy-import pattern.
+async function reviewDiff(input) {
+  const mod = await import("./review/index.mjs");
+  return mod.reviewDiff(input);
+}
+
 // generateHandoff is the lazy handoff stage. The default pipeline produces
 // only the research report; this command reads research-report.json from
 // an existing run dir, scopes to one chosen candidate, and writes the
@@ -6146,6 +6153,7 @@ export {
   proposeFollowUpQuestions,
   research,
   resetLlmCost,
+  reviewDiff,
   runResearchAgents,
   searchWithProvider,
   setLlmJsonProvider,

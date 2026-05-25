@@ -8,6 +8,7 @@ import {
   discoverPrinciples,
   generateHandoff,
   research,
+  reviewDiff,
   supersedeAdr
 } from "../src/kernel.mjs";
 
@@ -238,6 +239,11 @@ async function main() {
     console.log(`  ${result.jsonPath}`);
     console.log("");
     console.log("Next: `adr review <PR#>` to check a PR against this list.");
+    return;
+  }
+
+  if (command === "review") {
+    await reviewDiff({ inputPath, flags });
     return;
   }
 
