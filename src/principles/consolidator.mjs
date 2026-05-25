@@ -109,12 +109,28 @@ async function consolidatePrinciples({
             .map((s) => s.trim())
         : [],
       confirmed_by_interview: Boolean(p.confirmed_by_interview),
-      confidence:
-        p.confidence === "high" || p.confidence === "low"
-          ? p.confidence
-          : "medium"
+      // Deterministic confidence post-process — the LLM is too optimistic
+      // and tends to return "high" for everything (the v0.2 self-test
+      // returned 11 of 11 high). Override with rule-based grading:
+      //   - high   = confirmed_by_interview true
+      //   - medium = >= 2 evidence citations, not confirmed
+      //   - low    = single citation, not confirmed
+      // The LLM's confidence is kept as a hint but ignored in favor of
+      // the rule. Roadmap #8.
+      confidence: gradeConfidence(p)
     }))
     .filter((p) => p.evidence_cite.length > 0);
+}
+
+function gradeConfidence(rawPrinciple) {
+  if (rawPrinciple.confirmed_by_interview === true) return "high";
+  const cites = Array.isArray(rawPrinciple.evidence_cite)
+    ? rawPrinciple.evidence_cite.filter(
+        (s) => typeof s === "string" && s.trim()
+      )
+    : [];
+  if (cites.length >= 2) return "medium";
+  return "low";
 }
 
 export { consolidatePrinciples };

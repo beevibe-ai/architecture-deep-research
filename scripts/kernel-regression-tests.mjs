@@ -739,7 +739,10 @@ try {
   assert.equal(result.principles.length, 1);
   assert.equal(result.principles[0].id, "state-via-zustand-stores");
   assert.equal(result.principles[0].polarity, "do");
-  assert.equal(result.principles[0].confidence, "high");
+  // After #8 (deterministic confidence grading), non-interactive runs
+  // with >=2 evidence cites land at "medium" by rule. "high" requires
+  // confirmed_by_interview=true.
+  assert.equal(result.principles[0].confidence, "medium");
   assert.equal(result.interviewLog.length, 0);
 
   const persisted = JSON.parse(
