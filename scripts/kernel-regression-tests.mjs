@@ -1055,6 +1055,335 @@ try {
 assert.equal(typeof guard, "function");
 
 // ---------------------------------------------------------------------------
+// Pure-logic coverage for the modules shipped in roadmap #1-#12. These
+// don't need an LLM fixture — they test deterministic behavior.
+// ---------------------------------------------------------------------------
+
+{
+  // refresh-merge: filename overlap matching + ID match
+  const { mergePrinciples, citeOverlap } = await import(
+    "../src/principles/refresh-merge.mjs"
+  );
+
+  const priorPrinciples = [
+    {
+      id: "schema-validate",
+      lens: "validation",
+      polarity: "do",
+      rule: "Validate before write",
+      evidence_cite: ["src/kernel.mjs:42", "src/kernel.mjs:50"],
+      examples_to_follow: [],
+      confirmed_by_interview: true,
+      confidence: "high"
+    },
+    {
+      id: "use-stores",
+      lens: "state",
+      polarity: "do",
+      rule: "State in stores",
+      evidence_cite: ["web/stores/chatStore.ts:14"],
+      examples_to_follow: [],
+      confirmed_by_interview: false,
+      confidence: "medium"
+    }
+  ];
+
+  // Exact-id match should inherit confirmation.
+  const newOne = [
+    {
+      id: "schema-validate",
+      lens: "validation",
+      polarity: "do",
+      rule: "Validate before write (rephrased)",
+      evidence_cite: ["src/kernel.mjs:100"],
+      examples_to_follow: [],
+      confirmed_by_interview: false,
+      confidence: "medium"
+    }
+  ];
+  const { merged: m1 } = mergePrinciples(newOne, priorPrinciples);
+  assert.equal(m1[0].confirmed_by_interview, true);
+  assert.equal(m1[0].confidence, "high");
+  assert.equal(m1[0].rule, "Validate before write (rephrased)");
+
+  // Filename-overlap match (different id, shared filename)
+  const renamedNew = [
+    {
+      id: "validate-json-before-persist",
+      lens: "validation",
+      polarity: "do",
+      rule: "Use writeJson() helper",
+      evidence_cite: ["src/kernel.mjs:100", "src/kernel.mjs:101"],
+      examples_to_follow: [],
+      confirmed_by_interview: false,
+      confidence: "medium"
+    }
+  ];
+  const { merged: m2 } = mergePrinciples(renamedNew, priorPrinciples);
+  assert.equal(m2[0].confirmed_by_interview, true);
+
+  // No match (different file entirely): stays new
+  const orphan = [
+    {
+      id: "brand-new",
+      lens: "new-lens",
+      polarity: "do",
+      rule: "New rule",
+      evidence_cite: ["unrelated/path.ts:1"],
+      examples_to_follow: [],
+      confirmed_by_interview: false,
+      confidence: "medium"
+    }
+  ];
+  const { merged: m3, stats } = mergePrinciples(orphan, priorPrinciples);
+  assert.equal(m3[0].confirmed_by_interview, false);
+  assert.equal(stats.new, 1);
+
+  // citeOverlap is a small helper — sanity-check it directly
+  assert.equal(
+    citeOverlap(["a:1", "b:2"], ["a:9", "c:3"]),
+    1
+  );
+}
+
+{
+  // confidence-evolution: skip rate demotes, accept rate promotes
+  const { applyStatsToConfidence } = await import(
+    "../src/principles/confidence-evolution.mjs"
+  );
+
+  const principles = [
+    { id: "p-skipped", confidence: "medium" },
+    { id: "p-accepted", confidence: "medium" },
+    { id: "p-mixed", confidence: "medium" },
+    { id: "p-low-data", confidence: "high" }
+  ];
+
+  const stats = {
+    by_principle: {
+      "p-skipped": {
+        total_seen: 10,
+        accepted: 0,
+        edited: 0,
+        skipped: 10,
+        recent_outcomes: Array(10).fill("skipped")
+      },
+      "p-accepted": {
+        total_seen: 10,
+        accepted: 10,
+        edited: 0,
+        skipped: 0,
+        recent_outcomes: Array(10).fill("accepted")
+      },
+      "p-mixed": {
+        total_seen: 10,
+        accepted: 4,
+        edited: 2,
+        skipped: 4,
+        recent_outcomes: ["accepted", "skipped", "accepted", "skipped", "edited", "accepted", "skipped", "skipped", "edited", "accepted"]
+      },
+      "p-low-data": {
+        // below MIN_DATAPOINTS — should NOT change despite 100% skip
+        total_seen: 2,
+        accepted: 0,
+        edited: 0,
+        skipped: 2,
+        recent_outcomes: ["skipped", "skipped"]
+      }
+    }
+  };
+
+  const { principles: evolved, changes } = applyStatsToConfidence(principles, stats);
+  const map = new Map(evolved.map((p) => [p.id, p]));
+  assert.equal(map.get("p-skipped").confidence, "low");
+  assert.equal(map.get("p-accepted").confidence, "high");
+  assert.equal(map.get("p-mixed").confidence, "medium"); // no change
+  assert.equal(map.get("p-low-data").confidence, "high"); // no change (below min)
+  const changeIds = new Set(changes.map((c) => c.principle_id));
+  assert.ok(changeIds.has("p-skipped"));
+  assert.ok(changeIds.has("p-accepted"));
+  assert.ok(!changeIds.has("p-mixed"));
+  assert.ok(!changeIds.has("p-low-data"));
+}
+
+{
+  // suppression: all comment forms + multi-principle + wildcard
+  const { parseSuppressionLine, applySuppressions } = await import(
+    "../src/review/suppression.mjs"
+  );
+
+  // Form coverage
+  assert.deepEqual(parseSuppressionLine("// adr-ignore: foo"), ["foo"]);
+  assert.deepEqual(parseSuppressionLine("# adr-ignore: foo, bar"), ["foo", "bar"]);
+  assert.deepEqual(
+    parseSuppressionLine("/* adr-ignore: foo */"),
+    ["foo"]
+  );
+  assert.deepEqual(
+    parseSuppressionLine("<!-- adr-ignore: foo -->"),
+    ["foo"]
+  );
+  assert.equal(parseSuppressionLine("// nothing here"), null);
+
+  // applySuppressions end-to-end
+  const violations = [
+    { principle_id: "p1", file: "src/foo.ts", line: 5, severity: "high", message: "x" },
+    { principle_id: "p2", file: "src/foo.ts", line: 7, severity: "medium", message: "y" },
+    { principle_id: "p3", file: "src/foo.ts", line: 10, severity: "low", message: "z" }
+  ];
+  const file = {
+    new_path: "src/foo.ts",
+    binary: false,
+    hunks: [
+      {
+        new_start: 1,
+        new_count: 10,
+        section: "",
+        lines: [
+          { kind: "add", new_line: 4, text: "// adr-ignore: p1" },
+          { kind: "add", new_line: 5, text: "violating code 1" },
+          { kind: "context", new_line: 7, text: "violating code 2  // adr-ignore: p2" },
+          { kind: "context", new_line: 10, text: "violating code 3  // adr-ignore: *" }
+        ]
+      }
+    ]
+  };
+  const result = applySuppressions(violations, [file]);
+  assert.equal(result.kept.length, 0);
+  assert.equal(result.suppressed.length, 3);
+}
+
+{
+  // principle-stats: applyOutcomes + window
+  const { applyOutcomes, emptyStats } = await import(
+    "../src/review/principle-stats.mjs"
+  );
+  let stats = emptyStats();
+  stats = applyOutcomes(
+    stats,
+    [
+      { principle_id: "p1", outcome: "accepted" },
+      { principle_id: "p1", outcome: "skipped" },
+      { principle_id: "p1", outcome: "accepted" },
+      { principle_id: "p2", outcome: "edited" }
+    ],
+    "2026-05-25T00:00:00.000Z"
+  );
+  assert.equal(stats.by_principle.p1.total_seen, 3);
+  assert.equal(stats.by_principle.p1.accepted, 2);
+  assert.equal(stats.by_principle.p1.skipped, 1);
+  assert.equal(stats.by_principle.p2.edited, 1);
+  // Window cap: push 30 outcomes, expect only last 20 kept
+  const many = Array.from({ length: 30 }, () => ({
+    principle_id: "p3",
+    outcome: "accepted"
+  }));
+  stats = applyOutcomes(stats, many, "2026-05-25T00:01:00.000Z");
+  assert.equal(stats.by_principle.p3.recent_outcomes.length, 20);
+}
+
+{
+  // hunk-parser: rename, binary, multi-hunk
+  const { parseDiff } = await import("../src/review/hunk-parser.mjs");
+
+  // Rename + content change
+  const renamed = parseDiff(
+    [
+      "diff --git a/old/path.ts b/new/path.ts",
+      "similarity index 95%",
+      "rename from old/path.ts",
+      "rename to new/path.ts",
+      "index 1111111..2222222 100644",
+      "--- a/old/path.ts",
+      "+++ b/new/path.ts",
+      "@@ -1,3 +1,3 @@",
+      " context",
+      "-old line",
+      "+new line",
+      " more context",
+      ""
+    ].join("\n")
+  );
+  assert.equal(renamed.length, 1);
+  assert.equal(renamed[0].new_path, "new/path.ts");
+  assert.equal(renamed[0].old_path, "old/path.ts");
+
+  // Binary
+  const binary = parseDiff(
+    [
+      "diff --git a/foo.png b/foo.png",
+      "Binary files a/foo.png and b/foo.png differ",
+      ""
+    ].join("\n")
+  );
+  assert.equal(binary.length, 1);
+  assert.equal(binary[0].binary, true);
+  assert.equal(binary[0].hunks.length, 0);
+
+  // Multi-hunk
+  const multi = parseDiff(
+    [
+      "diff --git a/x.ts b/x.ts",
+      "--- a/x.ts",
+      "+++ b/x.ts",
+      "@@ -1,3 +1,3 @@",
+      " a",
+      "-b",
+      "+B",
+      " c",
+      "@@ -10,3 +10,3 @@",
+      " d",
+      "-e",
+      "+E",
+      " f",
+      ""
+    ].join("\n")
+  );
+  assert.equal(multi[0].hunks.length, 2);
+  assert.equal(multi[0].hunks[0].new_start, 1);
+  assert.equal(multi[0].hunks[1].new_start, 10);
+}
+
+{
+  // cite-verifier: computeHealthSnapshot
+  const { computeHealthSnapshot } = await import(
+    "../src/principles/cite-verifier.mjs"
+  );
+  const verifyRepoDir = await mkdtemp(
+    path.join(os.tmpdir(), "adr-cite-verifier-")
+  );
+  await mkdir(path.join(verifyRepoDir, "src"), { recursive: true });
+  await writeFile(path.join(verifyRepoDir, "src", "real.ts"), "// real");
+
+  const artifact = {
+    principles: [
+      {
+        id: "p-fresh",
+        evidence_cite: ["src/real.ts:1", "src/real.ts:5"]
+      },
+      {
+        id: "p-stale",
+        evidence_cite: ["src/ghost.ts:1", "src/real.ts:1"]
+      },
+      {
+        id: "p-rotten",
+        evidence_cite: ["src/ghost.ts:1", "src/missing.ts:1"]
+      }
+    ]
+  };
+  const health = await computeHealthSnapshot(artifact, verifyRepoDir);
+  assert.equal(health.total_principles, 3);
+  assert.equal(health.total_citations, 6);
+  assert.equal(health.stale_citation_count, 3);
+  // p-fresh: 0/2 = 0% → not stale
+  // p-stale: 1/2 = 50% → stale
+  // p-rotten: 2/2 = 100% → stale
+  assert.equal(health.stale_principle_count, 2);
+
+  await rm(verifyRepoDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // Follow-up coverage: synthetic-evidence injection + anti-pattern axes.
 // We stage a discovered-principles.json on disk, then exercise the two
 // integration points without spinning up a full deep-research run.

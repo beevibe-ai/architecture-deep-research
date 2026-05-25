@@ -14,19 +14,24 @@
 // tolerated. Wildcard "*" suppresses all principles on that line — use
 // sparingly; the bot loses signal.
 
-const SUPPRESSION_PATTERN =
-  /(?:\/\/|#|\/\*|<!--)\s*adr-ignore:\s*([^\n*\/>]+?)(?:\s*\*\/|\s*-->)?\s*$/;
+const SUPPRESSION_PATTERN = /(?:\/\/|#|\/\*|<!--)\s*adr-ignore:\s*(.+?)$/;
 
 function parseSuppressionLine(text) {
   const m = text.match(SUPPRESSION_PATTERN);
   if (!m) return null;
-  const idsRaw = m[1].trim();
+  // Strip trailing block-comment or HTML-comment terminators that the
+  // capture group otherwise greedily eats. After this, the wildcard
+  // form `*` parses correctly (previously the character class excluded
+  // `*` because of `*/`, which silently dropped wildcards).
+  const idsRaw = m[1]
+    .replace(/\*\/\s*$/, "")
+    .replace(/-->\s*$/, "")
+    .trim();
   if (!idsRaw) return null;
-  const ids = idsRaw
+  return idsRaw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  return ids;
 }
 
 // Walk the parsed file's hunks and return a Map<line, Set<id>> where each
