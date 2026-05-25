@@ -259,19 +259,27 @@ If the user wants to add context before the run completes, the right move is to 
 You'll be notified when the background deep-research task completes (the one from Step 4, NOT the tail task). At that point:
 
 1. Stop the `tail -F` task (let it die naturally — it has no more input — or kill it explicitly via Bash).
-2. **Read `ADR.md` first.** This is the founder-facing research report — executive summary, option space, per-candidate sections (`what evidence shows` / `what evidence does not show` / pick / avoid / citations), cross-cutting tradeoffs, open questions, where to dig deeper, references. It's what the user actually wants to read.
+2. **Open the rendered HTML report in the user's browser.** This fires first so the user has the report visible while you're still reading it. The `adr open` subcommand renders `ADR.md` → `ADR.html` (mermaid diagrams as SVG, tables, dark/light mode CSS) and opens it via the OS default browser. Output is one line: `Opened <path>/ADR.html in your browser.`
+
+```bash
+adr open .adr-runs/<SLUG>
+```
+
+If `adr open` errors (rare — typically because `ADR.md` doesn't exist yet, which means the run crashed before synthesis), report it inline and continue with the markdown summary.
+
+3. **Read `ADR.md` first.** This is the founder-facing research report — executive summary, option space, per-candidate sections (`what evidence shows` / `what evidence does not show` / pick / avoid / citations), cross-cutting tradeoffs, open questions, where to dig deeper, references. It's what the user actually wants to read.
 
 ```bash
 cat .adr-runs/<SLUG>/ADR.md
 ```
 
-3. Then read `research-report.json` if you need the structured `options[]` for Step 8's summary.
+4. Then read `research-report.json` if you need the structured `options[]` for Step 8's summary.
 
 ```bash
 cat .adr-runs/<SLUG>/research-report.json
 ```
 
-4. If `ADR.md` doesn't exist, the run did not reach the artifact stage. Inspect `.adr-runs/<SLUG>/state.json` (the kernel writes `{"status": "crashed", "error": ...}` on every failure path now) and the tail of `events.jsonl` to find out what died. Report clearly to the user. Salvageable run state: `evidence.json`, `comparison-matrix.json`, and `critique.json` may still be present and useful even when the run crashed.
+5. If `ADR.md` doesn't exist, the run did not reach the artifact stage. Inspect `.adr-runs/<SLUG>/state.json` (the kernel writes `{"status": "crashed", "error": ...}` on every failure path now) and the tail of `events.jsonl` to find out what died. Report clearly to the user. Salvageable run state: `evidence.json`, `comparison-matrix.json`, and `critique.json` may still be present and useful even when the run crashed. In this branch, skip step 2's `adr open` call — there's no report yet to render.
 
 ## Step 8 — Summarize the result
 
