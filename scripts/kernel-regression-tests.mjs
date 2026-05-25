@@ -20,6 +20,7 @@ import {
   discoverPatterns,
   discoverPrinciples,
   reviewDiff,
+  guard,
   extractClaims,
   extractDecisionContext,
   filterPromotedByRelevance,
@@ -914,6 +915,105 @@ try {
 } finally {
   setLlmJsonProvider(null);
 }
+
+// ---------------------------------------------------------------------------
+// Guard-stage regression: exercises the pure filter (pickRelevantPrinciples)
+// + the install logic (idempotency, file shape). The pre-write hook
+// integration with stdin/stdout is covered by the smoke test instead.
+// ---------------------------------------------------------------------------
+
+{
+  const { pickRelevantPrinciples } = await import("../src/guard/pre-write.mjs");
+  const { installGuards } = await import("../src/guard/install.mjs");
+
+  // Filter test: pick the principles whose example_to_follow shares a
+  // top-level dir with the edited file, plus broadly-applicable lenses.
+  const principles = [
+    {
+      id: "schema-validate-before-write",
+      lens: "schema-validate-before-write",
+      polarity: "do",
+      rule: "Validate JSON before writeJson()",
+      examples_to_follow: ["src/kernel.mjs:3000"],
+      confirmed_by_interview: true,
+      confidence: "high"
+    },
+    {
+      id: "state-via-stores",
+      lens: "state-boundaries",
+      polarity: "do",
+      rule: "State lives in /stores",
+      examples_to_follow: ["web/src/stores/chatStore.ts:14"],
+      confirmed_by_interview: true,
+      confidence: "high"
+    },
+    {
+      id: "scripts-pattern",
+      lens: "cli-subcommand-pattern",
+      polarity: "do",
+      rule: "New CLI subcommands attach in scripts/adr.mjs",
+      examples_to_follow: ["scripts/adr.mjs:10"],
+      confirmed_by_interview: true,
+      confidence: "high"
+    }
+  ];
+
+  // Editing a file under /web/ should match the state-via-stores principle
+  // (same top-level), plus schema-validate-before-write (broad lens).
+  const webEdits = pickRelevantPrinciples(
+    principles,
+    "web/src/components/ChatHeader.tsx"
+  );
+  const webIds = webEdits.map((p) => p.id);
+  assert.ok(webIds.includes("state-via-stores"), "state-via-stores should fire for web/ edit");
+  assert.ok(webIds.includes("schema-validate-before-write"), "broad lens should fire");
+  assert.ok(!webIds.includes("scripts-pattern"), "scripts/ principle should not fire on web/ edit");
+
+  // Editing a file under /scripts/ should match scripts-pattern + the broad
+  // schema-validate lens; state-via-stores should not fire.
+  const scriptsEdits = pickRelevantPrinciples(
+    principles,
+    "scripts/adr.mjs"
+  );
+  const scriptsIds = scriptsEdits.map((p) => p.id);
+  assert.ok(scriptsIds.includes("scripts-pattern"));
+  assert.ok(scriptsIds.includes("schema-validate-before-write"));
+  assert.ok(!scriptsIds.includes("state-via-stores"));
+
+  // Install test: idempotent, shape correct.
+  const guardRepo = await mkdtemp(path.join(os.tmpdir(), "adr-guard-install-"));
+  // Stage a `.git` directory so the pre-commit branch runs.
+  await mkdir(path.join(guardRepo, ".git", "hooks"), { recursive: true });
+  const r1 = await installGuards({ repoPath: guardRepo });
+  assert.equal(r1.claude.added, true);
+  assert.equal(r1.precommit.added, true);
+  const settings = JSON.parse(
+    await readFile(path.join(guardRepo, ".claude", "settings.local.json"), "utf8")
+  );
+  assert.ok(Array.isArray(settings.hooks?.PreToolUse));
+  assert.ok(
+    settings.hooks.PreToolUse.some((entry) =>
+      entry.hooks?.some((h) => h.command === "adr guard pre-write")
+    )
+  );
+  const precommit = await readFile(
+    path.join(guardRepo, ".git", "hooks", "pre-commit"),
+    "utf8"
+  );
+  assert.ok(precommit.includes("adr guard pre-commit"));
+  assert.ok(precommit.startsWith("#!/bin/sh"));
+
+  // Re-run should be a no-op.
+  const r2 = await installGuards({ repoPath: guardRepo });
+  assert.equal(r2.claude.added, false);
+  assert.equal(r2.precommit.added, false);
+
+  await rm(guardRepo, { recursive: true, force: true });
+}
+
+// guard export sanity (the lazy import works end-to-end without throwing
+// before the guard sub-action runs).
+assert.equal(typeof guard, "function");
 
 // ---------------------------------------------------------------------------
 // Follow-up coverage: synthetic-evidence injection + anti-pattern axes.

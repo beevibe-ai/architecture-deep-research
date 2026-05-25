@@ -39,6 +39,7 @@ import {
   discoverPatterns,
   discoverPrinciples,
   reviewDiff,
+  guard,
   getLlmJsonProvider,
   inspectGithubRepo,
   isGithubRepoUrl,
@@ -226,6 +227,10 @@ if (typeof discoverPrinciples !== "function") {
 
 if (typeof reviewDiff !== "function") {
   throw new Error("Kernel did not export reviewDiff.");
+}
+
+if (typeof guard !== "function") {
+  throw new Error("Kernel did not export guard.");
 }
 
 if (typeof discoverPatterns !== "function") {

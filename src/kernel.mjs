@@ -6004,6 +6004,12 @@ async function reviewDiff(input) {
   return mod.reviewDiff(input);
 }
 
+// `guard` lives in src/guard/index.mjs. Same lazy-import pattern.
+async function guard(input) {
+  const mod = await import("./guard/index.mjs");
+  return mod.guard(input);
+}
+
 // generateHandoff is the lazy handoff stage. The default pipeline produces
 // only the research report; this command reads research-report.json from
 // an existing run dir, scopes to one chosen candidate, and writes the
@@ -6139,6 +6145,7 @@ export {
   extractDecisionContext,
   filterPromotedByRelevance,
   generateHandoff,
+  guard,
   openUrl,
   getLlmJsonProvider,
   githubApi,

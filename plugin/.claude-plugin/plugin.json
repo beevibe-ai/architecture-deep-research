@@ -22,6 +22,9 @@
   "commands": [
     "./commands/decide.md",
     "./commands/discover.md",
-    "./commands/doctor.md"
+    "./commands/doctor.md",
+    "./commands/guard.md",
+    "./commands/principles.md",
+    "./commands/review.md"
   ]
 }

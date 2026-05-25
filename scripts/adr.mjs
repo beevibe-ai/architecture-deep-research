@@ -7,6 +7,7 @@ import {
   discoverPatterns,
   discoverPrinciples,
   generateHandoff,
+  guard,
   research,
   reviewDiff,
   supersedeAdr
@@ -244,6 +245,11 @@ async function main() {
 
   if (command === "review") {
     await reviewDiff({ inputPath, flags });
+    return;
+  }
+
+  if (command === "guard") {
+    await guard({ inputPath, flags });
     return;
   }
 
