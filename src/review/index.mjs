@@ -20,6 +20,7 @@ import {
 import { runInteractiveWalkthrough } from "./interactive-walkthrough.mjs";
 import { postReviewComments } from "./gh-poster.mjs";
 import { computeHealthSnapshot } from "../principles/cite-verifier.mjs";
+import { recordOutcomes } from "./principle-stats.mjs";
 
 function assertReviewRuntime() {
   const llm = activeLlmProvider();
@@ -190,14 +191,47 @@ async function reviewDiff({ inputPath, flags = {} } = {}) {
   });
 
   let accepted = capped;
+  let walkthroughOutcomes = [];
   if (interactive && capped.length > 0) {
-    accepted = await runInteractiveWalkthrough(capped, principles);
+    const walkthroughResult = await runInteractiveWalkthrough(
+      capped,
+      principles
+    );
+    accepted = walkthroughResult.accepted;
+    walkthroughOutcomes = walkthroughResult.outcomes;
     await appendEvent(outDir, "walkthrough_completed", {
       accepted: accepted.length,
-      dropped: capped.length - accepted.length
+      dropped: capped.length - accepted.length,
+      outcomes: walkthroughOutcomes.reduce(
+        (counts, o) => ({ ...counts, [o.outcome]: (counts[o.outcome] || 0) + 1 }),
+        {}
+      )
     });
   } else if (capped.length === 0) {
     console.log("\nNo principle violations found. Ship it.");
+  } else if (!interactive && capped.length > 0) {
+    // Non-interactive mode: every detected violation counts as an
+    // implicit "accepted" outcome — that's what CI bots do.
+    walkthroughOutcomes = capped.map((v) => ({
+      principle_id: v.principle_id,
+      outcome: "accepted"
+    }));
+  }
+
+  // Persist outcomes to principle-stats.json next to principles.json. This
+  // is roadmap #3 — the signal #5 uses to auto-evolve confidence.
+  if (walkthroughOutcomes.length > 0) {
+    const principlesDir = path.dirname(principlesPath);
+    const stats = await recordOutcomes(
+      principlesDir,
+      walkthroughOutcomes,
+      startedAt
+    );
+    await appendEvent(outDir, "principle_stats_updated", {
+      stats_path: path.join(principlesDir, "principle-stats.json"),
+      outcomes_recorded: walkthroughOutcomes.length,
+      tracked_principles: Object.keys(stats.by_principle).length
+    });
   }
 
   let postResult = null;

@@ -15,3 +15,4 @@ web/dist/
 .adr/events.jsonl
 .adr/reviews/
 .adr/principles-health.json
+.adr/principle-stats.json

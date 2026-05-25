@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/principle-stats.schema.json",
+  "title": "Beevibe ADR Principle Usage Stats",
+  "description": "Per-principle accept/edit/skip counts across all `adr review` runs. Persisted next to principles.json. Feeds the confidence auto-evolution loop (roadmap #5) and lets dashboards surface dead-letter principles users always skip.",
+  "type": "object",
+  "required": ["version", "by_principle"],
+  "properties": {
+    "version": { "type": "integer" },
+    "last_updated": { "type": ["string", "null"] },
+    "by_principle": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["principle_id", "total_seen", "accepted", "edited", "skipped"],
+        "properties": {
+          "principle_id": { "type": "string" },
+          "total_seen": { "type": "integer", "minimum": 0 },
+          "accepted": { "type": "integer", "minimum": 0 },
+          "edited": { "type": "integer", "minimum": 0 },
+          "skipped": { "type": "integer", "minimum": 0 },
+          "first_seen_at": { "type": ["string", "null"] },
+          "last_seen_at": { "type": ["string", "null"] },
+          "recent_outcomes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["accepted", "edited", "skipped"]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -10,12 +10,14 @@ import {
 //   s      → skip (drop)
 //   e      → edit the message inline before accepting
 //   q      → quit early, accept nothing further
-// Returns the accepted violations in order.
+// Returns { accepted, outcomes } so callers can use accepted for posting
+// and outcomes for stats persistence (roadmap #3).
 async function runInteractiveWalkthrough(violations, principles) {
-  if (violations.length === 0) return [];
+  if (violations.length === 0) return { accepted: [], outcomes: [] };
 
   const rl = readline.createInterface({ input, output });
   const accepted = [];
+  const outcomes = [];
   let quit = false;
 
   console.log("");
@@ -36,10 +38,12 @@ async function runInteractiveWalkthrough(violations, principles) {
 
     if (answer === "q") {
       quit = true;
+      outcomes.push({ principle_id: v.principle_id, outcome: "skipped" });
       console.log("");
       continue;
     }
     if (answer === "s") {
+      outcomes.push({ principle_id: v.principle_id, outcome: "skipped" });
       console.log("");
       continue;
     }
@@ -51,16 +55,21 @@ async function runInteractiveWalkthrough(violations, principles) {
         ...v,
         message: newMessage.length > 0 ? newMessage : v.message
       });
+      outcomes.push({
+        principle_id: v.principle_id,
+        outcome: newMessage.length > 0 ? "edited" : "accepted"
+      });
       console.log("");
       continue;
     }
     // ENTER or anything else → accept as-is
     accepted.push(v);
+    outcomes.push({ principle_id: v.principle_id, outcome: "accepted" });
     console.log("");
   }
 
   rl.close();
-  return accepted;
+  return { accepted, outcomes };
 }
 
 export { runInteractiveWalkthrough };

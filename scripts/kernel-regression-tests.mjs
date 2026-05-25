@@ -909,8 +909,25 @@ try {
     "principles_health_checked",
     "diff_parsed",
     "violations_detected",
+    "principle_stats_updated",
     "review_completed"
   ]);
+
+  // Stats artifact should have one entry — the offending principle.
+  const stats = JSON.parse(
+    await readFile(
+      path.join(reviewRepoDir, ".adr", "principle-stats.json"),
+      "utf8"
+    )
+  );
+  assert.equal(
+    stats.by_principle["state-via-zustand-stores"].accepted,
+    1
+  );
+  assert.equal(
+    stats.by_principle["state-via-zustand-stores"].total_seen,
+    1
+  );
 
   // The health check should have written principles-health.json next to
   // the principles file. In this test, the cited path
