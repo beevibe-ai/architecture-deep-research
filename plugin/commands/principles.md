@@ -14,9 +14,23 @@ npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
 
 `adr principles` only needs an LLM provider (no web search). If that one is missing, invoke `/adr:doctor`.
 
-## Step 2 — Run principles discovery via the MCP server
+## Step 2 — Set expectations, then run
 
-Use the `adr_principles` MCP tool with `non_interactive: true` — you (the bot) will run the interview conversationally in chat instead of the readline prompt:
+Before calling the tool, tell the user EXACTLY what's about to happen — the tool runs for 2-4 minutes with no other visible output, so without this the user just sees a spinner.
+
+Print something like:
+
+> Running principles discovery on the repo. This takes ~2-4 minutes and runs in five steps:
+>
+> 1. Scan the repo (files, manifests, docs) — instant
+> 2. Sample ~24 representative source files — instant
+> 3. **Extract product intent + discover review lenses** (parallel LLM, ~15s)
+> 4. Per-lens pattern extraction (parallel LLM, ~30s)
+> 5. Consolidate + cite-verify + write `.adr/principles.{md,json}` (~30s)
+>
+> Cost: ~$0.15 on gpt-4.1-mini. You'll see the result when it's done.
+
+THEN call the `adr_principles` MCP tool with `non_interactive: true`:
 
 ```json
 {
@@ -25,18 +39,23 @@ Use the `adr_principles` MCP tool with `non_interactive: true` — you (the bot)
 }
 ```
 
-The tool returns the lenses it found, the per-lens patterns (the actual content lives in `.adr/principles.json` on disk), and an `interview_skipped: true` flag.
+The MCP server emits `notifications/message` for every step, and `notifications/progress` when the client opts in via `_meta.progressToken`. Some clients surface these in the spinner; others don't. Either way the upfront step list gives the user something to read.
 
-Runs in 1-3 minutes and costs $0.05-$0.20 on `gpt-4.1-mini`.
+The tool returns the lenses, the per-lens patterns, AND the product intent block (`identity`, `architectural_intent`, `product_philosophy`, `non_goals`). The full content lives in `.adr/principles.{md,json}` on disk.
 
 ## Step 3 — Show the user what we found
 
-Read `.adr/principles.json` to see the full structure, especially the per-lens ambiguities the LLM surfaced (those are the questions the user should resolve). Then show the user:
+Read `.adr/principles.json` to see the full structure. Then show the user — **lead with the product portrait, NOT the lint rules**:
 
-- **The lenses** — name + rationale for each. These are the angles a senior reviewer would catch in a PR for this codebase.
-- **The principles per lens** — the top 2-3 strongest principles per lens, with the team file:line they cite.
+1. **What this is** — the `identity` field. One sentence on what the product actually is.
+2. **Architectural intent** — the 3-6 foundational decisions from `architectural_intent`. Each with its `why` and the files cited.
+3. **Product philosophy** — the 3-6 recurring design principles from `product_philosophy`. These are the team's voice — quote verbatim where pulled from CLAUDE.md / AGENTS.md.
+4. **Non-goals** — what the team explicitly chose NOT to do. Often the most telling part.
+5. **Code-level lenses + their principles** — show top 2-3 strongest per lens, with team `file:line` citations.
 
 Be concrete. "DO: state lives in `/stores/*Store.ts`, not component-local useState (lens: state-boundaries) — cited to `web/src/stores/chatStore.ts:14`". Not "DO: maintain clean architecture".
+
+The order matters: the product portrait makes the user say "yes, this gets us" before they dive into the code rules. Reversing it makes the output read like a lint config.
 
 ## Step 4 — Walk through ambiguities one at a time
 

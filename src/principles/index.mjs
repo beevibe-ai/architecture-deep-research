@@ -27,15 +27,27 @@ import {
 import { extractProductIntent } from "./product-intent.mjs";
 import { renderPrinciplesMarkdown } from "./render-markdown.mjs";
 
-// Stream a one-line progress note during the multi-minute LLM pipeline.
-// Written to stderr so it stays line-buffered when piped (Node buffers
-// stdout when it isn't a TTY, which made the streaming invisible in
-// CI / `tee` runs). Matches npm/git/cargo convention: stderr for progress,
-// stdout for the final result.
-function progress(label, detail) {
-  const stamp = new Date().toISOString().slice(11, 19);
-  const right = detail ? `  \x1b[2m${detail}\x1b[0m` : "";
-  process.stderr.write(`  \x1b[2m${stamp}\x1b[0m  \x1b[36m${label}\x1b[0m${right}\n`);
+// Build a progress reporter that writes to stderr (visible when run as
+// a CLI / piped through tee) AND optionally invokes an onProgress
+// callback (used by the MCP handler to forward as notifications). The
+// MCP server process's stderr is captured but not shown mid-call by
+// Claude Code, so the callback is what makes progress visible in the
+// chat UI.
+function buildProgress(onProgress) {
+  return function progress(label, detail) {
+    const stamp = new Date().toISOString().slice(11, 19);
+    const right = detail ? `  \x1b[2m${detail}\x1b[0m` : "";
+    process.stderr.write(
+      `  \x1b[2m${stamp}\x1b[0m  \x1b[36m${label}\x1b[0m${right}\n`
+    );
+    if (typeof onProgress === "function") {
+      try {
+        onProgress({ label, detail: detail || "" });
+      } catch {
+        // Never let a progress callback failure abort the pipeline.
+      }
+    }
+  };
 }
 
 function assertPrinciplesRuntime() {
@@ -57,7 +69,8 @@ async function readPriorArtifact(outDir) {
   }
 }
 
-async function discoverPrinciples({ flags = {} } = {}) {
+async function discoverPrinciples({ flags = {}, onProgress } = {}) {
+  const progress = buildProgress(onProgress);
   const repoPath = path.resolve(flags.repo || ".");
   const outDir = path.resolve(flags.out || path.join(repoPath, ".adr"));
   const interactive = flags["non-interactive"] !== true;
@@ -110,6 +123,14 @@ async function discoverPrinciples({ flags = {} } = {}) {
   process.stderr.write(
     `\n\x1b[1madr principles\x1b[0m  \x1b[2m(${mode} mode, ~2-4 min, ~$0.15)\x1b[0m\n\n`
   );
+  if (typeof onProgress === "function") {
+    try {
+      onProgress({
+        label: "adr principles started",
+        detail: `${mode} mode, ~2-4 min, ~$0.15`
+      });
+    } catch {}
+  }
 
   // STEP 1 — deterministic scan (no LLM, reused from discover/)
   progress("scanning repo", "");

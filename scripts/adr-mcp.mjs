@@ -239,7 +239,10 @@ const tools = [
 
 const server = new Server(
   { name: SERVER_NAME, version: SERVER_VERSION },
-  { capabilities: { tools: {} } }
+  // logging capability lets us push notifications/message during long
+  // tool calls so the client can show what's happening mid-call instead
+  // of just a spinner.
+  { capabilities: { tools: {}, logging: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -350,14 +353,49 @@ async function handleReadHandoff(args) {
   return textResult(JSON.parse(raw));
 }
 
-async function handlePrinciples(args) {
+// Build an onProgress callback that forwards each principles-pipeline
+// step to the MCP client as both a logging message AND (when the request
+// supplied a progressToken) a structured progress notification. Different
+// MCP clients surface different notification types — sending both is
+// cheap and maximizes the chance the user sees live progress in the
+// chat UI instead of staring at a spinner.
+function buildMcpProgressCallback(progressToken) {
+  let counter = 0;
+  return ({ label, detail }) => {
+    counter += 1;
+    const message = detail ? `${label} — ${detail}` : label;
+    // logging notification — universally surfaced
+    server
+      .sendLoggingMessage({ level: "info", data: message, logger: "adr_principles" })
+      .catch(() => {});
+    // progress notification — used by clients that opted in via
+    // _meta.progressToken. Send only when token is present; otherwise
+    // it's a no-op.
+    if (progressToken !== undefined && progressToken !== null) {
+      server
+        .notification({
+          method: "notifications/progress",
+          params: {
+            progressToken,
+            progress: counter,
+            message
+          }
+        })
+        .catch(() => {});
+    }
+  };
+}
+
+async function handlePrinciples(args, extra) {
   const flags = {
     repo: args.repo_path || ".",
     "non-interactive":
       args.non_interactive === false ? false : true
   };
   if (args.out_dir) flags.out = args.out_dir;
-  const result = await discoverPrinciples({ flags });
+  const progressToken = extra?._meta?.progressToken ?? extra?.requestId;
+  const onProgress = buildMcpProgressCallback(progressToken);
+  const result = await discoverPrinciples({ flags, onProgress });
   return textResult({
     out_dir: result.outDir,
     repo_path: result.repoPath,
@@ -448,9 +486,15 @@ async function handleReview(args) {
   });
 }
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const name = request.params?.name;
   const args = request.params?.arguments || {};
+  // Forward the request's _meta (carries progressToken) so handlers can
+  // emit live notifications during long-running tool calls.
+  const handlerExtra = {
+    _meta: request.params?._meta || {},
+    requestId: extra?.requestId
+  };
 
   // Re-read ~/.adr/config.json on every tool call. The user may have run
   // `adr-doctor set ...` since the server booted (e.g. through the /adr:doctor
@@ -463,7 +507,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "adr_discover") return await handleDiscover(args);
     if (name === "adr_deep_research") return await handleDeepResearch(args);
     if (name === "adr_read_handoff") return await handleReadHandoff(args);
-    if (name === "adr_principles") return await handlePrinciples(args);
+    if (name === "adr_principles") return await handlePrinciples(args, handlerExtra);
     if (name === "adr_review") return await handleReview(args);
     return errorResult(
       "unknown_tool",
