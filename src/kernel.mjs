@@ -367,6 +367,7 @@ const schemaByFilename = {
   "principles.json": "../docs/schemas/principles.schema.json",
   "principles-health.json": "../docs/schemas/principles-health.schema.json",
   "principle-stats.json": "../docs/schemas/principle-stats.schema.json",
+  "drift-report.json": "../docs/schemas/drift-report.schema.json",
   "research-plan.json": "../docs/schemas/research-plan.schema.json",
   "review.json": "../docs/schemas/review-violations.schema.json",
   "strategic-context.json": "../docs/schemas/strategic-context.schema.json",

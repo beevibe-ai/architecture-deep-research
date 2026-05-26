@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/drift-report.schema.json",
+  "title": "Beevibe ADR Drift Report",
+  "description": "Output of `adr drift` — full-repo scan against `.adr/principles.json`. Lists violations of team principles found anywhere in the codebase (not just in a diff).",
+  "type": "object",
+  "required": ["version", "source", "principle_count", "violations"],
+  "properties": {
+    "version": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["repo_path", "scanned_at", "files_scanned"],
+      "properties": {
+        "repo_path": { "type": "string" },
+        "principles_path": { "type": "string" },
+        "scanned_at": { "type": "string" },
+        "files_scanned": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "principle_count": { "type": "integer", "minimum": 0 },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["principle_id", "file", "line", "severity", "message"],
+        "properties": {
+          "principle_id": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "message": { "type": "string" },
+          "suggested_fix": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -80,7 +80,13 @@ function mergePrinciples(newPrinciples, priorPrinciples) {
   };
 
   for (const np of newPrinciples) {
-    const match = findPriorMatch(np, priorPrinciples);
+    // Exclude priors already claimed by a previous match. Without this,
+    // multiple new principles can latch onto the same prior (when several
+    // of them touch the same files), producing duplicate IDs in the output.
+    const availablePriors = priorPrinciples.filter(
+      (p) => !matchedPriorIds.has(p.id)
+    );
+    const match = findPriorMatch(np, availablePriors);
     if (!match) {
       merged.push({ ...np });
       stats.new += 1;
@@ -89,6 +95,11 @@ function mergePrinciples(newPrinciples, priorPrinciples) {
     matchedPriorIds.add(match.prior.id);
     merged.push({
       ...np,
+      // Inherit the prior ID so principle-stats.json (keyed by id) stays
+      // valid across refreshes. The LLM tends to suffix slugs slightly
+      // each run; without this remap, every stats record is orphaned
+      // after one refresh and confidence-evolution can't fire.
+      id: match.prior.id,
       // Inherit confirmation status — the user already said yes/no to this
       // convention. Don't bother them again.
       confirmed_by_interview: Boolean(match.prior.confirmed_by_interview),
