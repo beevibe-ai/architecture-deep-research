@@ -399,6 +399,9 @@ async function handlePrinciples(args, extra) {
   return textResult({
     out_dir: result.outDir,
     repo_path: result.repoPath,
+    // PRODUCT INTENT (the portrait the user wants to see FIRST).
+    // The slash command must lead with this, not the lens rules.
+    product_intent: result.productIntent || null,
     lens_count: result.lenses.length,
     lenses: result.lenses.map((l) => ({
       slug: l.slug,
@@ -420,9 +423,24 @@ async function handlePrinciples(args, extra) {
     md_path: result.mdPath,
     json_path: result.jsonPath,
     interview_skipped: flags["non-interactive"] === true,
-    next_step: flags["non-interactive"]
-      ? "The interactive interview was skipped (MCP mode). Walk the user through the ambiguities in chat, then re-run with confirmed answers, or accept the principles as-is and run adr_review against a PR."
-      : "Principles are confirmed and ready. Run adr_review against a PR to check it."
+    next_step: [
+      "MANDATORY ORDER — present these to the user in this exact sequence:",
+      "",
+      "1. **What this is** — the `product_intent.identity` string (one sentence).",
+      "2. **Architectural intent** — every item in `product_intent.architectural_intent`,",
+      "   each with its `why` and the cited files.",
+      "3. **Product philosophy** — every item in `product_intent.product_philosophy`,",
+      "   pulled verbatim from CLAUDE.md / AGENTS.md where the team wrote them.",
+      "4. **Non-goals** — every item in `product_intent.non_goals`.",
+      "5. Only AFTER all four sections above: the code-level lenses and their principles.",
+      "",
+      "Do NOT skip sections 1-4. They are the report's value proposition — the user",
+      "should say 'this knows my product' before they see any lint rules.",
+      "",
+      flags["non-interactive"]
+        ? "If any principle has low confidence or confirmed_by_interview=false, walk the user through 1-3 short clarification questions in chat. Then run adr_review against a PR."
+        : "Principles are confirmed. Run adr_review against a PR to check it."
+    ].join("\n")
   });
 }
 
