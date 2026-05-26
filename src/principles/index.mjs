@@ -24,7 +24,19 @@ import {
   applyStatsToConfidence,
   loadStatsForEvolution
 } from "./confidence-evolution.mjs";
+import { extractProductIntent } from "./product-intent.mjs";
 import { renderPrinciplesMarkdown } from "./render-markdown.mjs";
+
+// Stream a one-line progress note during the multi-minute LLM pipeline.
+// Written to stderr so it stays line-buffered when piped (Node buffers
+// stdout when it isn't a TTY, which made the streaming invisible in
+// CI / `tee` runs). Matches npm/git/cargo convention: stderr for progress,
+// stdout for the final result.
+function progress(label, detail) {
+  const stamp = new Date().toISOString().slice(11, 19);
+  const right = detail ? `  \x1b[2m${detail}\x1b[0m` : "";
+  process.stderr.write(`  \x1b[2m${stamp}\x1b[0m  \x1b[36m${label}\x1b[0m${right}\n`);
+}
 
 function assertPrinciplesRuntime() {
   const llm = activeLlmProvider();
@@ -95,9 +107,17 @@ async function discoverPrinciples({ flags = {} } = {}) {
     prior_principle_count: priorPrinciples.length,
     prior_interview_log_count: priorInterviewLog.length
   });
+  process.stderr.write(
+    `\n\x1b[1madr principles\x1b[0m  \x1b[2m(${mode} mode, ~2-4 min, ~$0.15)\x1b[0m\n\n`
+  );
 
   // STEP 1 — deterministic scan (no LLM, reused from discover/)
+  progress("scanning repo", "");
   const scan = await scanRepo(repoPath);
+  progress(
+    "✓ scanned",
+    `${scan.summary.file_count} files, ${scan.summary.doc_count} docs, ${scan.summary.manifest_count} manifests`
+  );
   await appendEvent(outDir, "repo_scanned", { ...scan.summary });
 
   // STEP 1b — sample real source code so lens discovery and extraction can
@@ -107,6 +127,12 @@ async function discoverPrinciples({ flags = {} } = {}) {
   const sourceSample = incremental
     ? await sampleChangedFilesSince(repoPath, priorScannedAt)
     : await sampleRepoSource(repoPath);
+  progress(
+    "✓ sampled source",
+    incremental
+      ? `${sourceSample.summary.total_files} files (of ${sourceSample.summary.changed_total} changed since ${priorScannedAt})`
+      : `${sourceSample.summary.total_files} files across ${sourceSample.summary.top_levels.length} top-level dirs`
+  );
   await appendEvent(outDir, "source_sampled", {
     sample_count: sourceSample.summary.total_files,
     top_levels: sourceSample.summary.top_levels,
@@ -140,12 +166,53 @@ async function discoverPrinciples({ flags = {} } = {}) {
     };
   }
 
-  // STEP 2 — discover lenses. Incremental mode reuses prior lenses (the
-  // team's review angles don't change every commit). Init/refresh mode
-  // discovers fresh.
-  const lenses = incremental
-    ? priorLenses
-    : await discoverLenses(scan, sourceSample);
+  // STEP 1c — product intent. The "what is this product" pass. Runs in
+  // parallel with lens discovery (different LLM calls, no shared state).
+  // Refresh + incremental preserve prior intent unless --reset-intent.
+  const resetIntent =
+    flags["reset-intent"] === true || flags["reset-intent"] === "true";
+  const priorIntent = priorArtifact?.product_intent || null;
+  let productIntent;
+  let lenses;
+  const shouldDeriveIntent =
+    !priorIntent || resetIntent || mode === "init";
+
+  if (shouldDeriveIntent) {
+    progress("extracting product intent + discovering lenses", "(LLM, parallel)");
+    const [intentResult, lensResult] = await Promise.all([
+      extractProductIntent(scan, sourceSample),
+      incremental ? Promise.resolve(priorLenses) : discoverLenses(scan, sourceSample)
+    ]);
+    productIntent = intentResult;
+    lenses = lensResult;
+    progress(
+      "✓ product intent",
+      `${productIntent.architectural_intent.length} architectural decisions, ${productIntent.product_philosophy.length} philosophy items, ${productIntent.non_goals.length} non-goals`
+    );
+    progress(
+      "✓ lenses discovered",
+      lenses.map((l) => l.slug).join(", ")
+    );
+  } else {
+    progress("discovering lenses", "(LLM)");
+    lenses = incremental
+      ? priorLenses
+      : await discoverLenses(scan, sourceSample);
+    productIntent = priorIntent;
+    progress("✓ lenses discovered", lenses.map((l) => l.slug).join(", "));
+    progress(
+      "✓ product intent",
+      `carried forward from prior (use --reset-intent to re-derive)`
+    );
+  }
+
+  await appendEvent(outDir, "product_intent_extracted", {
+    identity_present: Boolean(productIntent.identity),
+    architectural_count: productIntent.architectural_intent.length,
+    philosophy_count: productIntent.product_philosophy.length,
+    non_goals_count: productIntent.non_goals.length,
+    carried_forward: !shouldDeriveIntent
+  });
   await appendEvent(outDir, "lenses_discovered", {
     lens_count: lenses.length,
     lenses: lenses.map((l) => ({ slug: l.slug, name: l.name })),
@@ -158,6 +225,10 @@ async function discoverPrinciples({ flags = {} } = {}) {
   }
 
   // STEP 3 — extract per-lens patterns in parallel
+  progress(
+    `extracting patterns`,
+    `${lenses.length} lenses in parallel (LLM)`
+  );
   const perLensExtractions = await Promise.all(
     lenses.map((lens) => extractPatternsForLens(scan, sourceSample, lens))
   );
@@ -169,6 +240,14 @@ async function discoverPrinciples({ flags = {} } = {}) {
       ambiguity_count: extraction.ambiguities.length
     });
   }
+  const totalPatterns = perLensExtractions.reduce(
+    (n, e) => n + e.positive_patterns.length + e.antipatterns.length,
+    0
+  );
+  progress(
+    "✓ patterns extracted",
+    `${totalPatterns} across ${lenses.length} lenses`
+  );
 
   // STEP 4 — generate interview questions (only when interactive). In
   // refresh mode, the generator gets the prior log so it can skip
@@ -293,6 +372,7 @@ async function discoverPrinciples({ flags = {} } = {}) {
   }
 
   // STEP 6 — emit principles.json + principles.md
+  progress("writing principles.{md,json}", "");
   const artifact = {
     version: VERSION,
     source: {
@@ -306,6 +386,7 @@ async function discoverPrinciples({ flags = {} } = {}) {
           }
         : {})
     },
+    product_intent: productIntent,
     lenses,
     principles,
     interview_log: interviewLog
@@ -329,10 +410,16 @@ async function discoverPrinciples({ flags = {} } = {}) {
       .length
   });
 
+  progress(
+    "✓ done",
+    `${lenses.length} lenses, ${principles.length} principles, ${productIntent.architectural_intent.length} architectural intents`
+  );
+
   return {
     outDir,
     repoPath: scan.repo_path,
     lenses,
+    productIntent,
     principles,
     interviewLog,
     jsonPath,

@@ -17,6 +17,51 @@
       },
       "additionalProperties": true
     },
+    "product_intent": {
+      "type": "object",
+      "properties": {
+        "identity": { "type": "string" },
+        "architectural_intent": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "why": { "type": "string" },
+              "evidence_cite": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "product_philosophy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "statement": { "type": "string" },
+              "evidence_cite": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "non_goals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["statement"],
+            "properties": {
+              "statement": { "type": "string" },
+              "evidence_cite": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "lenses": {
       "type": "array",
       "items": {

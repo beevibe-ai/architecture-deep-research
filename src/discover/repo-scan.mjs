@@ -87,7 +87,13 @@ const DOC_FILE_NAMES = [
   "CONTRIBUTING.md",
   "CODE_OF_CONDUCT.md",
   "DESIGN.md",
-  "DECISIONS.md"
+  "DECISIONS.md",
+  // Agent + team-philosophy docs — high-signal for product-intent
+  // extraction (the team often encodes "how we work" here, not in code).
+  "CLAUDE.md",
+  "AGENTS.md",
+  "PHILOSOPHY.md",
+  "PRINCIPLES.md"
 ];
 
 const DOC_DIRS = ["docs/adr", "docs/architecture", "docs/decisions", "adr", "decisions"];

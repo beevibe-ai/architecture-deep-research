@@ -673,6 +673,31 @@ try {
   );
 
   installProvider((label) => {
+    if (label === "principles_product_intent") {
+      return {
+        identity: "Tiny synthetic repo used by the principles regression test.",
+        architectural_intent: [
+          {
+            name: "State lives in /stores via Zustand",
+            why: "README explicitly declares it.",
+            evidence_cite: ["README.md", "stores/chatStore.ts"]
+          }
+        ],
+        product_philosophy: [
+          {
+            name: "Lazy users",
+            statement: "Default to interactive flows; never require markdown edits.",
+            evidence_cite: ["README.md"]
+          }
+        ],
+        non_goals: [
+          {
+            statement: "Cross-component state via useState.",
+            evidence_cite: ["README.md"]
+          }
+        ]
+      };
+    }
     if (label === "principles_lens_discovery") {
       return {
         lenses: [
@@ -773,6 +798,7 @@ try {
     "principles_started",
     "repo_scanned",
     "source_sampled",
+    "product_intent_extracted",
     "lenses_discovered",
     "lens_patterns_extracted",
     "interview_skipped",

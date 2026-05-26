@@ -16,7 +16,86 @@ function renderPrinciplesMarkdown(artifact) {
       "against this list. Run `adr principles init` again to refresh."
   );
   lines.push("");
-  lines.push("## Lenses");
+
+  // ── PRODUCT INTENT — the portrait of what this product is and what
+  // ── the team stands for. Leads the artifact so a reader gets the big
+  // ── picture before drowning in per-lens rules.
+  const intent = artifact.product_intent;
+  if (intent && (intent.identity || intent.architectural_intent?.length)) {
+    if (intent.identity) {
+      lines.push("## What this is");
+      lines.push("");
+      lines.push(intent.identity);
+      lines.push("");
+    }
+
+    if (intent.architectural_intent?.length > 0) {
+      lines.push("## Architectural intent");
+      lines.push("");
+      lines.push(
+        "The foundational decisions everything else hangs off of."
+      );
+      lines.push("");
+      for (const item of intent.architectural_intent) {
+        lines.push(`### ${escapeMd(item.name)}`);
+        lines.push("");
+        if (item.why) {
+          lines.push(item.why);
+          lines.push("");
+        }
+        if (item.evidence_cite?.length > 0) {
+          lines.push(
+            `_Anchored in: ${item.evidence_cite.map((c) => `\`${c}\``).join(", ")}_`
+          );
+          lines.push("");
+        }
+      }
+    }
+
+    if (intent.product_philosophy?.length > 0) {
+      lines.push("## Product philosophy");
+      lines.push("");
+      lines.push(
+        "Recurring design principles. The team's taste, not its tech stack."
+      );
+      lines.push("");
+      for (const item of intent.product_philosophy) {
+        const cites =
+          item.evidence_cite?.length > 0
+            ? ` _(${item.evidence_cite.map((c) => `\`${c}\``).join(", ")})_`
+            : "";
+        lines.push(`- **${escapeMd(item.name)}** — ${escapeMd(item.statement)}${cites}`);
+      }
+      lines.push("");
+    }
+
+    if (intent.non_goals?.length > 0) {
+      lines.push("## Non-goals");
+      lines.push("");
+      lines.push(
+        "What the team explicitly chose NOT to do — often more revealing than what they did."
+      );
+      lines.push("");
+      for (const item of intent.non_goals) {
+        const cites =
+          item.evidence_cite?.length > 0
+            ? ` _(${item.evidence_cite.map((c) => `\`${c}\``).join(", ")})_`
+            : "";
+        lines.push(`- ${escapeMd(item.statement)}${cites}`);
+      }
+      lines.push("");
+    }
+
+    lines.push("---");
+    lines.push("");
+  }
+
+  // ── CODE-LEVEL PRINCIPLES — the per-lens review rules.
+  lines.push("## Code-level lenses");
+  lines.push("");
+  lines.push(
+    "Review angles a senior engineer would catch in a PR for this codebase."
+  );
   lines.push("");
   for (const lens of artifact.lenses) {
     lines.push(`- **${lens.name}** (\`${lens.slug}\`) — ${lens.rationale}`);
@@ -30,7 +109,7 @@ function renderPrinciplesMarkdown(artifact) {
     byLens.get(p.lens).push(p);
   }
 
-  lines.push("## Principles");
+  lines.push("## Code-level principles");
   lines.push("");
   for (const lens of artifact.lenses) {
     const principles = byLens.get(lens.slug) || [];
