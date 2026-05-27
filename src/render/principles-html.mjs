@@ -416,9 +416,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     }
 
     .part-divider {
-      padding: 56px 0 24px;
-      border-top: 1px solid var(--border);
-      background: var(--bg-alt);
+      padding: 48px 0 0;
     }
     .part-divider .eyebrow {
       font-family: 'JetBrains Mono', monospace;
@@ -429,7 +427,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       margin-bottom: 8px;
     }
     .part-title {
-      font-size: clamp(24px, 3vw, 32px);
+      font-size: clamp(22px, 2.6vw, 28px);
       font-weight: 800;
       margin: 0 0 6px;
       letter-spacing: -0.015em;
@@ -437,14 +435,20 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
     .filter-bar {
       position: sticky; top: 0; z-index: 10;
-      background: rgba(13, 17, 23, 0.95);
+      background: rgba(13, 17, 23, 0.92);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
-      padding: 12px 0;
+      padding: 10px 0;
+      margin-top: 20px;
     }
-    .filter-bar-inner { display: flex; flex-direction: column; gap: 10px; }
-    .filter-row {
-      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    .filter-bar-inner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+    }
+    .filter-group {
+      display: flex; flex-wrap: nowrap; gap: 4px; align-items: center;
     }
     .filter-bar-label {
       font-family: 'JetBrains Mono', monospace;
@@ -452,8 +456,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.1em;
-      margin-right: 6px;
-      min-width: 70px;
+      margin-right: 4px;
     }
     .chip {
       background: var(--bg-alt);
@@ -469,17 +472,24 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     .chip:hover { border-color: var(--primary); }
     .chip.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
     .search-input {
-      flex: 1 1 240px;
-      max-width: 360px;
+      flex: 1 1 180px;
+      max-width: 260px;
       background: var(--bg-alt);
       border: 1px solid var(--border);
       color: var(--fg);
-      padding: 6px 12px;
-      border-radius: var(--radius);
+      padding: 5px 11px;
+      border-radius: 999px;
       font-family: inherit;
-      font-size: 13px;
+      font-size: 12px;
     }
     .search-input:focus { outline: none; border-color: var(--primary); }
+    .filter-lens-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      margin-top: 8px;
+    }
 
     .view-toggle {
       margin-left: auto;
@@ -503,7 +513,9 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     .view-btn:hover { color: var(--fg); }
     .view-btn.active { background: var(--primary); color: var(--primary-fg); }
 
-    .section { padding: 40px 0; border-bottom: 1px solid var(--border); }
+    .section { padding: 36px 0; }
+    .section + .section { padding-top: 12px; }
+    .section.section-bordered { border-bottom: 1px solid var(--border); }
     h2 { font-size: 22px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.01em; }
     .section-sub { color: var(--muted); margin: 0 0 20px; }
 
@@ -731,38 +743,37 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
   <div class="part-divider">
     <div class="shell">
-      <div class="eyebrow">Part 2</div>
-      <h2 class="part-title">Explore the code-level rules</h2>
-      <p class="section-sub">${principles.length} review rules across ${lenses.length} lenses, grounded in your team's own file:line citations. Filter, search, or jump to a file.</p>
+      <div class="eyebrow">Part 2 · the explorer</div>
+      <h2 class="part-title">${principles.length} code-level rules across ${lenses.length} lenses</h2>
+      <p class="section-sub">Grounded in your team's own <code>file:line</code> citations. Filter, search, or switch the view.</p>
     </div>
   </div>
 
   <div class="filter-bar">
     <div class="shell filter-bar-inner">
-      <div class="filter-row">
+      <div class="filter-group">
         <span class="filter-bar-label">Polarity</span>
         <button class="chip polarity-chip active" data-polarity="all">All</button>
         <button class="chip polarity-chip" data-polarity="do">DO</button>
         <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
-        <span class="filter-bar-label" style="margin-left:14px;">Confidence</span>
+      </div>
+      <div class="filter-group">
+        <span class="filter-bar-label">Confidence</span>
         <button class="chip confidence-chip active" data-confidence="all">All</button>
         <button class="chip confidence-chip" data-confidence="high">High</button>
-        <button class="chip confidence-chip" data-confidence="medium">Medium</button>
+        <button class="chip confidence-chip" data-confidence="medium">Med</button>
         <button class="chip confidence-chip" data-confidence="low">Low</button>
       </div>
-      <div class="filter-row">
-        <span class="filter-bar-label">Lens</span>
-        <button class="chip lens-chip active" data-lens="all">All</button>
-        ${lensChipsHtml}
+      <input type="text" id="search" class="search-input" placeholder="search rules…" />
+      <div class="view-toggle">
+        <button class="view-btn active" data-view="by-lens">By lens</button>
+        <button class="view-btn" data-view="by-file">By file</button>
       </div>
-      <div class="filter-row">
-        <span class="filter-bar-label">Search</span>
-        <input type="text" id="search" class="search-input" placeholder="rule text or principle id…" />
-        <div class="view-toggle">
-          <button class="view-btn active" data-view="by-lens">By lens</button>
-          <button class="view-btn" data-view="by-file">By file</button>
-        </div>
-      </div>
+    </div>
+    <div class="shell filter-lens-row">
+      <span class="filter-bar-label">Lens</span>
+      <button class="chip lens-chip active" data-lens="all">All</button>
+      ${lensChipsHtml}
     </div>
   </div>
 
@@ -775,7 +786,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
   <section class="section hidden" id="view-by-file">
     <div class="shell">
-      <p class="section-sub">Files ranked by how many principles cite them. Click a file path to open in your editor (<code>vscode://</code>); click a lens tag to filter; click a principle id to jump to it.</p>
+      <p class="section-sub">Files ranked by how many principles cite them. Click a file path to open in your editor; click a lens tag to filter to it; click a principle id to jump to its rule.</p>
       <div class="codemap-wrapper">
         <table class="codemap">
           <thead>
