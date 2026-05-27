@@ -43,7 +43,20 @@ function summarizeScanForIntent(scan, sourceSample) {
     // A small source sample helps the LLM ground philosophy claims in
     // real code patterns (e.g. the "specialists take actions" rule lives
     // in a real route handler, not just in CLAUDE.md).
-    source_samples: (sourceSample?.samples || []).slice(0, 8)
+    source_samples: (sourceSample?.samples || []).slice(0, 8),
+    // Rich comments — the team's own written-down WHY. File-header
+    // intent, rationale comments, prohibition comments, JSDoc tags.
+    rich_comments: scan.rich_comments || null,
+    // Test descriptors — describe/it/test names as executable invariants.
+    test_descriptors: scan.test_descriptors?.descriptors?.slice(0, 30) || [],
+    // GitHub signals — closed wontfix issues + arch-keyword merged PRs.
+    // Best-effort; absent when origin isn't github or gh CLI missing.
+    github_signals: scan.github_signals?.available
+      ? {
+          rejected_issues: scan.github_signals.rejected_issues,
+          arch_keyword_prs: scan.github_signals.arch_keyword_prs
+        }
+      : null
   };
 }
 
@@ -59,6 +72,23 @@ async function extractProductIntent(scan, sourceSample) {
       "one. NOT a list of code-style rules — those come later.",
       "",
       "Four sections to produce:",
+      "",
+      "Use ALL the inputs — not just the docs. Specifically:",
+      "  - rich_comments.headers : file-header comments describing what",
+      "    a module is for. Pure intent.",
+      "  - rich_comments.rationales : comments containing 'why',",
+      "    'because', 'see ADR', 'intentionally' — the team's own WHY.",
+      "  - rich_comments.prohibitions : 'do not', 'don't', 'never',",
+      "    'must not' — explicit antipattern flags pre-written by the team.",
+      "  - test_descriptors : describe/it/test names. Executable",
+      "    invariants. 'it(\"must not allow duplicate selections\")' is",
+      "    a principle the team encoded in CI.",
+      "  - github_signals.rejected_issues : closed issues with wontfix /",
+      "    out-of-scope / not-planned labels. Direct input for non_goals.",
+      "  - github_signals.arch_keyword_prs : merged PRs whose titles",
+      "    contain refactor/migrate/switch/move/etc. The PR descriptions",
+      "    are where the team wrote the rationale for big architectural",
+      "    changes. Direct input for architectural_intent.why.",
       "",
       "1. identity (string, 1-2 sentences)",
       "   What IS this product? Plain language a non-expert could",

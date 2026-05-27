@@ -28,7 +28,19 @@ function summarizeScanForLensDiscovery(scan, sourceSample) {
             scan.git_signals.package_json_history_excerpt
         }
       : null,
-    source_samples: sourceSample.samples
+    source_samples: sourceSample.samples,
+    rich_comments: scan.rich_comments || null,
+    test_descriptors: scan.test_descriptors?.descriptors?.slice(0, 30) || [],
+    github_signals: scan.github_signals?.available
+      ? {
+          rejected_issue_titles: (scan.github_signals.rejected_issues || []).map(
+            (i) => i.title
+          ),
+          arch_keyword_pr_titles: (scan.github_signals.arch_keyword_prs || []).map(
+            (p) => p.title
+          )
+        }
+      : null
   };
 }
 

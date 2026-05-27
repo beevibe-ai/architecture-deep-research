@@ -798,6 +798,7 @@ try {
     "principles_started",
     "repo_scanned",
     "source_sampled",
+    "signals_enriched",
     "product_intent_extracted",
     "lenses_discovered",
     "lens_patterns_extracted",

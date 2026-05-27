@@ -25,6 +25,9 @@ import {
   loadStatsForEvolution
 } from "./confidence-evolution.mjs";
 import { extractProductIntent } from "./product-intent.mjs";
+import { extractRichComments } from "./comment-extractor.mjs";
+import { extractTestDescriptors } from "./test-descriptor-extractor.mjs";
+import { extractGitHubSignals } from "./github-signals.mjs";
 import { renderPrinciplesMarkdown } from "./render-markdown.mjs";
 
 // Build a progress reporter that writes to stderr (visible when run as
@@ -161,6 +164,34 @@ async function discoverPrinciples({ flags = {}, onProgress } = {}) {
     ...(incremental
       ? { since: sourceSample.summary.since, changed_total: sourceSample.summary.changed_total }
       : {})
+  });
+
+  // STEP 1c — enrich signals (deterministic, no LLM). Three sources:
+  //   - rich comments    : marker bodies + rationale/prohibition/header/JSDoc
+  //   - test descriptors : describe/it/test names as executable invariants
+  //   - github signals   : closed wontfix issues + arch-keyword merged PRs
+  //                        (best-effort; skipped if gh CLI or origin missing)
+  progress("collecting comments + tests + github signals", "");
+  const [richComments, testDescriptors, githubSignals] = await Promise.all([
+    extractRichComments(sourceSample),
+    extractTestDescriptors(repoPath),
+    extractGitHubSignals({ repoPath })
+  ]);
+  scan.rich_comments = richComments;
+  scan.test_descriptors = testDescriptors;
+  scan.github_signals = githubSignals;
+  progress(
+    "✓ enriched signals",
+    `${richComments.summary.marker_count} markers, ${richComments.summary.rationale_count} rationales, ${richComments.summary.prohibition_count} prohibitions, ${richComments.summary.jsdoc_count} jsdoc, ${testDescriptors.summary.descriptor_count} test names${
+      githubSignals.available
+        ? `, ${githubSignals.summary.rejected_issue_count} rejected issues, ${githubSignals.summary.arch_keyword_pr_count} arch PRs`
+        : ` (github skipped: ${githubSignals.summary.reason})`
+    }`
+  );
+  await appendEvent(outDir, "signals_enriched", {
+    rich_comments: richComments.summary,
+    test_descriptors: testDescriptors.summary,
+    github_signals: githubSignals.summary
   });
 
   // Incremental shortcut: if no files have changed, skip the rest and

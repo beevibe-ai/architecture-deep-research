@@ -30,7 +30,15 @@ function summarizeScanForExtraction(scan, sourceSample) {
             scan.git_signals.package_json_history_excerpt
         }
       : null,
-    source_samples: sourceSample.samples
+    source_samples: sourceSample.samples,
+    rich_comments: scan.rich_comments || null,
+    test_descriptors: scan.test_descriptors?.descriptors?.slice(0, 30) || [],
+    github_signals: scan.github_signals?.available
+      ? {
+          rejected_issues: scan.github_signals.rejected_issues,
+          arch_keyword_prs: scan.github_signals.arch_keyword_prs
+        }
+      : null
   };
 }
 
@@ -89,6 +97,23 @@ async function extractPatternsForLens(scan, sourceSample, lens) {
       "  beats a product description (`the system handles X`).",
       "- If the lens turns out to have no real signal in this repo,",
       "  return empty arrays. Do not pad.",
+      "",
+      "MINE THE RICHER SIGNALS — they are higher-leverage than guessing:",
+      "  - rich_comments.rationales: the team has already written WHY in",
+      "    code comments containing 'because' / 'see ADR' / 'intentionally'.",
+      "    A rationale becomes the `why` for a positive_pattern.",
+      "  - rich_comments.prohibitions: 'do not' / 'don't' / 'never' /",
+      "    'must not' comments become antipatterns DIRECTLY — the team",
+      "    already wrote the rule down. Cite the comment's file:line.",
+      "  - rich_comments.markers: HACK / FIXME / DEPRECATED with bodies",
+      "    often name a specific antipattern + the alternative.",
+      "  - test_descriptors: 'it(\"must not allow X\")' is an explicit",
+      "    antipattern; 'it(\"persists across refreshes\")' is an explicit",
+      "    positive pattern.",
+      "  - github_signals.rejected_issues: closed wontfix titles often",
+      "    name antipatterns directly (\"don't use Redis here\").",
+      "  - github_signals.arch_keyword_prs: merged PR titles like 'drop",
+      "    kafka' encode antipatterns; PR descriptions encode rationale.",
       "",
       "ANTIPATTERN SIGNALS to look for harder (most teams have some):",
       "- todo_hits / FIXME / XXX / DEPRECATED comments naming things to",
