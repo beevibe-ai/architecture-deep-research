@@ -1,15 +1,18 @@
-// Render principles.json into a self-contained, interactive principles.html
-// report. Single file, no build step, CDN deps. Renders:
+// Notion-style interactive principles.html report.
 //
-//   - Hero with product identity + stats bar
-//   - Architectural intent / philosophy / non-goals cards
-//   - Code map (lens ↔ files matrix you can click + filter)
-//   - Per-lens accordion with principles, citations, evolvability stats
-//   - Health snapshot — stale citations highlighted inline
+// Design: design-shotgun approved variant B (2026-05-26):
+//   - Warm dark theme (#1f1f1f bg, #2d2d2d cards)
+//   - Lora serif for display headings, Inter for body, JetBrains Mono
+//     for code/citations
+//   - Soft drop-shadow cards with confidence-colored left border
+//   - 280px sidebar nav (portrait shortcuts + lenses) + single main
+//     reading column (max ~1080px)
+//   - Click any citation → vscode://file/<abs>:<line>
 //
-// Citations link via `vscode://file/<abs-path>:<line>` so clicking opens
-// the file in the user's editor. Filter chips re-render via vanilla JS
-// without a build step. Sits next to `adr open` (which renders ADR.md).
+// Renders four blocks in order: Portrait (identity / arch intent /
+// philosophy / non-goals), Code-level rules accordion, Code map
+// (toggleable view), Health snapshot. All under one sticky filter
+// bar (polarity / confidence / search / view toggle).
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -32,12 +35,6 @@ async function loadOptional(filePath) {
   }
 }
 
-function severityClass(confidence) {
-  if (confidence === "high") return "conf-high";
-  if (confidence === "low") return "conf-low";
-  return "conf-medium";
-}
-
 function fileFromCite(cite) {
   if (!cite) return null;
   const [p] = String(cite).split(":");
@@ -52,11 +49,8 @@ function lineFromCite(cite) {
   return m ? Number(m[1]) : null;
 }
 
-// Build the lens × file map used by the Code Map section. For each file,
-// collect which lenses + principles touch it.
 function buildCodeMap(artifact) {
   const fileMap = new Map();
-  const lensList = artifact.lenses || [];
   for (const p of artifact.principles || []) {
     const cites = [
       ...(p.evidence_cite || []),
@@ -66,21 +60,24 @@ function buildCodeMap(artifact) {
       const f = fileFromCite(cite);
       if (!f) continue;
       if (!fileMap.has(f)) {
-        fileMap.set(f, { file: f, lenses: new Set(), principles: new Set() });
+        fileMap.set(f, {
+          file: f,
+          lenses: new Set(),
+          principles: new Set()
+        });
       }
       const entry = fileMap.get(f);
       entry.lenses.add(p.lens || "");
       entry.principles.add(p.id);
     }
   }
-  const files = [...fileMap.values()]
+  return [...fileMap.values()]
     .map((e) => ({
       file: e.file,
       lenses: [...e.lenses],
       principles: [...e.principles]
     }))
     .sort((a, b) => b.principles.length - a.principles.length);
-  return { files, lensList };
 }
 
 function renderCitations(cites, repoPath) {
@@ -95,7 +92,7 @@ function renderCitations(cites, repoPath) {
         : "#";
       return `<a class="cite" href="${escapeHtml(href)}">${escapeHtml(cite)}</a>`;
     })
-    .join(" ");
+    .join("");
 }
 
 function statSummary(stats, principleId) {
@@ -107,19 +104,24 @@ function statSummary(stats, principleId) {
     total,
     accepted: slot.accepted || 0,
     edited: slot.edited || 0,
-    skipped: slot.skipped || 0,
-    skipRate: total > 0 ? slot.skipped / total : 0
+    skipped: slot.skipped || 0
   };
 }
 
-function healthSummary(health, principleId) {
+function healthFor(health, principleId) {
   if (!health?.by_principle) return null;
   return health.by_principle.find((p) => p.principle_id === principleId) || null;
 }
 
+function confidenceColor(c) {
+  if (c === "high") return "#3fb950";
+  if (c === "low") return "#f85149";
+  return "#d29922";
+}
+
 function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
   const productIntent = artifact.product_intent || {};
-  const identity = productIntent.identity || "";
+  const identity = productIntent.identity || "Team principles";
   const archIntent = productIntent.architectural_intent || [];
   const philosophy = productIntent.product_philosophy || [];
   const nonGoals = productIntent.non_goals || [];
@@ -141,142 +143,127 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
   );
   const staleCitations = health?.stale_citation_count || 0;
 
-  const lensChipsHtml = lenses
-    .map(
-      (l) => `
-      <button class="chip lens-chip" data-lens="${escapeHtml(l.slug)}">${escapeHtml(l.name)}</button>`
-    )
+  // ── sidebar nav (portrait shortcuts + lenses)
+  const lensNavHtml = lenses
+    .map((lens) => {
+      const count = (principlesByLens.get(lens.slug) || []).length;
+      return `
+      <a class="nav-link" href="#lens-${escapeHtml(lens.slug)}" data-lens-anchor="${escapeHtml(lens.slug)}">
+        <span class="nav-name">${escapeHtml(lens.name)}</span>
+        <span class="nav-count">${count}</span>
+      </a>`;
+    })
     .join("");
 
+  // ── architectural intent: each decision with a yellow left rule
   const archHtml = archIntent.length
     ? `
-    <div class="portrait-block">
-        <h2>Architectural intent</h2>
-        <p class="section-sub">Foundational decisions everything else hangs off of.</p>
-        <div class="card-stack">
-
-          ${archIntent
-            .map(
-              (item) => `
-          <div class="card arch-card">
-            <h3>${escapeHtml(item.name)}</h3>
-            ${item.why ? `<p>${escapeHtml(item.why)}</p>` : ""}
-            ${
-              item.evidence_cite?.length
-                ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
-                : ""
-            }
-          </div>`
-            )
-            .join("")}
-        </div>
-    </div>`
+    <section class="portrait-block" id="architectural-intent">
+      <h2 class="serif">Architectural intent</h2>
+      <p class="block-sub">The foundational decisions everything else hangs off of.</p>
+      ${archIntent
+        .map(
+          (item) => `
+      <div class="arch-decision">
+        <h3 class="serif">${escapeHtml(item.name)}</h3>
+        ${item.why ? `<p>${escapeHtml(item.why)}</p>` : ""}
+        ${
+          item.evidence_cite?.length
+            ? `<div class="cites-line">Anchored in ${renderCitations(item.evidence_cite, repoPath)}</div>`
+            : ""
+        }
+      </div>`
+        )
+        .join("")}
+    </section>`
     : "";
 
+  // ── product philosophy: soft cards
   const philHtml = philosophy.length
     ? `
-    <div class="portrait-block">
-        <h2>Product philosophy</h2>
-        <p class="section-sub">Recurring design principles. The team's taste.</p>
-        <ul class="philosophy-list">
-          ${philosophy
-            .map(
-              (item) => `
-          <li>
-            <strong>${escapeHtml(item.name)}</strong> — ${escapeHtml(item.statement)}
-            ${
-              item.evidence_cite?.length
-                ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
-                : ""
-            }
-          </li>`
-            )
-            .join("")}
-        </ul>
-    </div>`
+    <section class="portrait-block" id="product-philosophy">
+      <h2 class="serif">Product philosophy</h2>
+      <p class="block-sub">Recurring design principles — the team's taste, not its tech stack.</p>
+      <div class="philosophy-stack">
+        ${philosophy
+          .map(
+            (item) => `
+        <div class="philosophy-card">
+          <strong class="serif">${escapeHtml(item.name)}</strong>
+          <p>${escapeHtml(item.statement)}</p>
+          ${
+            item.evidence_cite?.length
+              ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
+              : ""
+          }
+        </div>`
+          )
+          .join("")}
+      </div>
+    </section>`
     : "";
 
+  // ── non-goals: dashed separator list with ✕
   const nonGoalsHtml = nonGoals.length
     ? `
-    <div class="portrait-block">
-        <h2>Non-goals</h2>
-        <p class="section-sub">What the team explicitly chose NOT to do.</p>
-        <ul class="nongoal-list">
-          ${nonGoals
-            .map(
-              (item) => `
-          <li>
+    <section class="portrait-block" id="non-goals">
+      <h2 class="serif">Non-goals</h2>
+      <p class="block-sub">What the team explicitly chose NOT to do.</p>
+      <div class="nongoal-list">
+        ${nonGoals
+          .map(
+            (item) => `
+        <div class="nongoal">
+          <span class="nongoal-mark">✕</span>
+          <div class="nongoal-body">
             ${escapeHtml(item.statement)}
             ${
               item.evidence_cite?.length
                 ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
                 : ""
             }
-          </li>`
-            )
-            .join("")}
-        </ul>
-    </div>`
+          </div>
+        </div>`
+          )
+          .join("")}
+      </div>
+    </section>`
     : "";
 
-  // Code map — files sorted by principle coverage, each annotated with
-  // its lenses + principle IDs. Filterable by lens via the chips above.
-  const codeMapRowsHtml = codeMap.files
-    .slice(0, 60)
-    .map((entry) => {
-      const lensTags = entry.lenses
-        .map(
-          (slug) => `<span class="lens-tag" data-lens="${escapeHtml(slug)}">${escapeHtml(lensBySlug.get(slug)?.name || slug)}</span>`
-        )
-        .join("");
-      const principleTags = entry.principles
-        .map(
-          (id) => `<a class="principle-tag" href="#p-${escapeHtml(id)}" data-principle="${escapeHtml(id)}">${escapeHtml(id)}</a>`
-        )
-        .join("");
-      const abs = path.resolve(repoPath, entry.file);
-      return `
-      <tr class="codemap-row" data-lenses="${escapeHtml(entry.lenses.join(","))}">
-        <td><a class="cite" href="vscode://file/${escapeHtml(abs)}">${escapeHtml(entry.file)}</a></td>
-        <td class="lens-cell">${lensTags}</td>
-        <td class="principle-cell">${principleTags}</td>
-      </tr>`;
-    })
-    .join("");
-
-  const lensesAccordionHtml = lenses
+  // ── per-lens rule cards (the accordion view)
+  const lensSectionsHtml = lenses
     .map((lens) => {
-      const lensPrinciples = principlesByLens.get(lens.slug) || [];
-      if (lensPrinciples.length === 0) return "";
-      const itemsHtml = lensPrinciples
+      const items = principlesByLens.get(lens.slug) || [];
+      if (items.length === 0) return "";
+      const cardsHtml = items
         .map((p) => {
           const sStat = statSummary(stats, p.id);
-          const hStat = healthSummary(health, p.id);
-          const polarityBadge =
-            p.polarity === "do"
-              ? `<span class="badge badge-do">DO</span>`
-              : `<span class="badge badge-dont">DON'T</span>`;
-          const confidenceBadge = `<span class="badge ${severityClass(p.confidence)}">${escapeHtml(p.confidence || "medium")}</span>`;
-          const confirmedBadge = p.confirmed_by_interview
-            ? `<span class="badge badge-confirmed">confirmed</span>`
+          const hStat = healthFor(health, p.id);
+          const polarity = p.polarity === "do" ? "DO" : "DON'T";
+          const polarityClass = `badge-${p.polarity}`;
+          const confClr = confidenceColor(p.confidence);
+          const statsLine = sStat
+            ? `<div class="stats-line">Seen ${sStat.total} · accepted ${sStat.accepted} · edited ${sStat.edited} · skipped ${sStat.skipped}</div>`
             : "";
           const staleBadge = hStat?.is_stale
-            ? `<span class="badge badge-stale" title="${escapeHtml(hStat.stale_cites)}/${escapeHtml(hStat.total_cites)} citations missing">stale</span>`
-            : "";
-          const statsLine = sStat
-            ? `<div class="stats-line">Seen <strong>${sStat.total}</strong> · accepted <strong>${sStat.accepted}</strong> · edited <strong>${sStat.edited}</strong> · skipped <strong>${sStat.skipped}</strong></div>`
+            ? `<span class="stale-flag" title="${escapeHtml(hStat.stale_cites)}/${escapeHtml(hStat.total_cites)} citations missing">stale</span>`
             : "";
           return `
-          <details id="p-${escapeHtml(p.id)}" class="principle" data-polarity="${escapeHtml(p.polarity)}" data-confidence="${escapeHtml(p.confidence || "medium")}">
+          <details id="p-${escapeHtml(p.id)}" class="rule-card" data-polarity="${escapeHtml(p.polarity)}" data-confidence="${escapeHtml(p.confidence || "medium")}" style="border-left-color: ${confClr}">
             <summary>
-              <span class="badges">${polarityBadge}${confidenceBadge}${confirmedBadge}${staleBadge}</span>
-              <span class="rule">${escapeHtml(p.rule)}</span>
+              <div class="rule-card-meta">
+                <span class="badge ${polarityClass}">${polarity}</span>
+                <span class="conf-tag" style="color: ${confClr}">${escapeHtml(p.confidence || "medium")}</span>
+                ${p.confirmed_by_interview ? `<span class="confirmed-tag">confirmed</span>` : ""}
+                ${staleBadge}
+              </div>
+              <h4 class="rule-text serif">${escapeHtml(p.rule)}</h4>
             </summary>
-            <div class="principle-body">
+            <div class="rule-body">
               ${p.rationale ? `<p class="rationale">${escapeHtml(p.rationale)}</p>` : ""}
               ${
                 p.examples_to_follow?.length
-                  ? `<div class="example-block"><div class="example-label">Team examples to follow</div><div class="citations">${renderCitations(p.examples_to_follow, repoPath)}</div></div>`
+                  ? `<div class="example-block"><div class="example-label">Team example to follow</div><div class="citations">${renderCitations(p.examples_to_follow, repoPath)}</div></div>`
                   : ""
               }
               ${
@@ -290,26 +277,57 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
         })
         .join("");
       return `
-        <section class="lens-block" id="lens-${escapeHtml(lens.slug)}" data-lens="${escapeHtml(lens.slug)}">
-          <header class="lens-header">
-            <h3>${escapeHtml(lens.name)} <span class="lens-slug">${escapeHtml(lens.slug)}</span></h3>
-            <p class="lens-rationale">${escapeHtml(lens.rationale || "")}</p>
-          </header>
-          ${itemsHtml}
-        </section>`;
+      <section class="lens-section" id="lens-${escapeHtml(lens.slug)}" data-lens="${escapeHtml(lens.slug)}">
+        <header class="lens-section-head">
+          <h3 class="serif">${escapeHtml(lens.name)}</h3>
+          <p class="lens-rationale">${escapeHtml(lens.rationale || "")}</p>
+        </header>
+        <div class="rule-card-stack">
+          ${cardsHtml}
+        </div>
+      </section>`;
     })
     .join("");
 
+  // ── code map: notion-style. Soft rows, serif filename, big readable.
+  const codeMapHtml = codeMap
+    .slice(0, 80)
+    .map((entry) => {
+      const lensTags = entry.lenses
+        .map((slug) => {
+          const name = lensBySlug.get(slug)?.name || slug;
+          return `<span class="cm-lens-tag" data-lens="${escapeHtml(slug)}">${escapeHtml(name)}</span>`;
+        })
+        .join("");
+      const principleTags = entry.principles
+        .map(
+          (id) => `<a class="cm-principle-tag" href="#p-${escapeHtml(id)}" data-principle="${escapeHtml(id)}">${escapeHtml(id)}</a>`
+        )
+        .join("");
+      const abs = path.resolve(repoPath, entry.file);
+      return `
+      <div class="cm-row" data-lenses="${escapeHtml(entry.lenses.join(","))}">
+        <a class="cm-file serif" href="vscode://file/${escapeHtml(abs)}">${escapeHtml(entry.file)}</a>
+        <div class="cm-meta">
+          <div class="cm-lenses">${lensTags}</div>
+          <div class="cm-principles">${principleTags}</div>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  // ── health
   const healthHtml = health
     ? `
-    <section class="section health-section">
-      <h2>Health</h2>
-      <div class="health-stats">
-        <div class="health-stat ${staleCitations > 0 ? "alert" : ""}">
+    <section class="portrait-block" id="health">
+      <h2 class="serif">Health</h2>
+      <p class="block-sub">Cite-rot check from the last <code>adr review</code> run.</p>
+      <div class="health-cards">
+        <div class="health-card ${staleCitations > 0 ? "alert" : "ok"}">
           <div class="health-num">${totalCitations - staleCitations}/${totalCitations}</div>
           <div class="health-label">live citations</div>
         </div>
-        <div class="health-stat ${staleCitations > 0 ? "alert" : ""}">
+        <div class="health-card ${(health.stale_principle_count || 0) > 0 ? "alert" : "ok"}">
           <div class="health-num">${health.stale_principle_count || 0}/${health.total_principles || principles.length}</div>
           <div class="health-label">principles with stale cites</div>
         </div>
@@ -327,125 +345,145 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeHtml(identity ? identity.split(".")[0] : "Team principles")} — Principles report</title>
+  <title>${escapeHtml(identity.split(".")[0])} — Principles report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --fg: #e6edf3;
-      --muted: #9198a1;
-      --bg: #0d1117;
-      --bg-alt: #161b22;
-      --bg-elev: #1d2025;
-      --border: #30363d;
-      --border-strong: #484f58;
+      --bg: #1f1f1f;
+      --bg-alt: #2a2a2a;
+      --bg-card: #2d2d2d;
+      --bg-elev: #353535;
+      --fg: #e8e6e3;
+      --muted: #a8a29e;
+      --muted-2: #78716c;
       --primary: #facc15;
-      --primary-fg: #0d1117;
-      --accent: #3aada4;
+      --teal: #3aada4;
       --do: #3fb950;
       --dont: #f85149;
       --warn: #d29922;
-      --radius: 8px;
+      --border: #3a3a38;
+      --shadow: 0 4px 16px rgba(0,0,0,0.35);
+      --shadow-lg: 0 8px 28px rgba(0,0,0,0.4);
     }
     * { box-sizing: border-box; }
     html {
       scroll-behavior: smooth;
-      /* leave room for the sticky filter bar so anchor links (jump-
-         to-principle from the code map) don't land under it */
-      scroll-padding-top: 180px;
+      scroll-padding-top: 100px;
     }
     body {
-      margin: 0; padding: 0;
+      margin: 0;
       font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
       background: var(--bg);
       color: var(--fg);
-      line-height: 1.6;
+      font-size: 15px;
+      line-height: 1.7;
       -webkit-font-smoothing: antialiased;
     }
-    code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-    a { color: var(--primary); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .shell { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+    .serif { font-family: 'Lora', Georgia, 'Times New Roman', serif; }
+    code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.92em; }
+    a { color: var(--fg); text-decoration: none; }
+    a:hover { opacity: 0.85; }
+    a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
 
-    .hero {
-      padding: 56px 0 24px;
-      background:
-        radial-gradient(circle at 82% 8%, rgba(250, 204, 21, 0.10), transparent 28rem),
-        radial-gradient(circle at 12% 38%, rgba(58, 173, 164, 0.08), transparent 24rem);
-      border-bottom: 1px solid var(--border);
+    .app {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 100vh;
     }
-    .pill {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 4px 10px;
-      border: 1px solid var(--primary);
-      color: var(--primary);
-      border-radius: 999px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 16px;
+    .sidebar {
+      background: var(--bg-alt);
+      border-right: 1px solid var(--border);
+      padding: 32px 24px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
     }
-    h1 {
-      font-size: clamp(28px, 4vw, 44px);
-      font-weight: 900;
-      letter-spacing: -0.02em;
-      line-height: 1.1;
-      margin: 0 0 16px;
-      max-width: 920px;
-    }
-    .identity {
-      font-size: 18px;
-      color: rgba(230, 237, 243, 0.92);
-      max-width: 760px;
-      margin: 0 0 24px;
-    }
-    .hero-meta {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      color: var(--muted);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      margin-top: 8px;
-    }
-
-    .part-divider {
-      padding: 48px 0 0;
-    }
-    .part-divider .eyebrow {
+    .sidebar::-webkit-scrollbar { width: 6px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .sidebar-brand {
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
       color: var(--primary);
       letter-spacing: 0.12em;
       text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 28px;
     }
-    .part-title {
-      font-size: clamp(22px, 2.6vw, 28px);
-      font-weight: 800;
-      margin: 0 0 6px;
-      letter-spacing: -0.015em;
+    .sidebar h3 {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin: 28px 0 8px;
+      font-weight: 600;
+    }
+    .sidebar h3:first-of-type { margin-top: 0; }
+    .nav-link {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 12px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      transition: all 120ms ease;
+      margin-bottom: 1px;
+    }
+    .nav-link:hover { background: var(--bg-card); color: var(--fg); opacity: 1; }
+    .nav-link.active {
+      background: var(--bg-card);
+      color: var(--primary);
+      border-left: 2px solid var(--primary);
+      padding-left: 10px;
+    }
+    .nav-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
+    .nav-count {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      opacity: 0.6;
     }
 
-    .filter-bar {
-      position: sticky; top: 0; z-index: 10;
-      background: rgba(13, 17, 23, 0.92);
-      backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      padding: 10px 0;
-      margin-top: 20px;
+    .main {
+      padding: 56px 64px 80px;
+      max-width: 1080px;
+      min-width: 0;
     }
-    .filter-bar-inner {
+    h1.editorial {
+      font-family: 'Lora', Georgia, serif;
+      font-size: clamp(34px, 4vw, 52px);
+      font-weight: 600;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      margin: 0 0 18px;
+    }
+    .meta-line {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 48px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.03em;
+    }
+
+    /* sticky filter bar — quiet, integrated into the main column */
+    .filter-bar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(31, 31, 31, 0.94);
+      backdrop-filter: blur(12px);
+      margin: 0 -64px 32px;
+      padding: 14px 64px;
+      border-bottom: 1px solid var(--border);
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 14px;
+      gap: 8px 16px;
       align-items: center;
     }
-    .filter-group {
-      display: flex; flex-wrap: nowrap; gap: 4px; align-items: center;
-    }
-    .filter-bar-label {
+    .filter-group { display: flex; gap: 4px; align-items: center; }
+    .filter-label {
       font-family: 'JetBrains Mono', monospace;
       font-size: 10px;
       color: var(--muted);
@@ -457,42 +495,39 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       background: var(--bg-alt);
       border: 1px solid var(--border);
       color: var(--fg);
-      padding: 5px 11px;
+      padding: 4px 11px;
       border-radius: 999px;
       font-size: 12px;
       cursor: pointer;
-      transition: all 160ms ease;
+      transition: all 120ms ease;
       font-family: inherit;
     }
     .chip:hover { border-color: var(--primary); }
-    .chip.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+    .chip.active {
+      background: var(--primary);
+      color: #1f1f1f;
+      border-color: var(--primary);
+      font-weight: 600;
+    }
     .search-input {
-      flex: 1 1 180px;
-      max-width: 260px;
+      flex: 1 1 200px;
+      max-width: 280px;
       background: var(--bg-alt);
       border: 1px solid var(--border);
       color: var(--fg);
-      padding: 5px 11px;
+      padding: 5px 12px;
       border-radius: 999px;
       font-family: inherit;
-      font-size: 12px;
+      font-size: 13px;
     }
     .search-input:focus { outline: none; border-color: var(--primary); }
-    .filter-lens-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      align-items: center;
-      margin-top: 8px;
-    }
-
     .view-toggle {
       margin-left: auto;
       display: flex;
       background: var(--bg-alt);
       border: 1px solid var(--border);
       border-radius: 999px;
-      padding: 3px;
+      padding: 2px;
     }
     .view-btn {
       background: transparent;
@@ -503,254 +538,247 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       cursor: pointer;
       font-family: inherit;
       font-size: 12px;
-      transition: all 160ms ease;
-    }
-    .view-btn:hover { color: var(--fg); }
-    .view-btn.active { background: var(--primary); color: var(--primary-fg); }
-
-    .section { padding: 36px 0; }
-    .section + .section { padding-top: 12px; }
-    .section.section-bordered { border-bottom: 1px solid var(--border); }
-
-    /* Portrait — side-by-side: arch intent on the left, philosophy +
-       non-goals on the right. Collapses to one column under ~900px. */
-    .portrait-grid {
-      display: grid;
-      grid-template-columns: 1.4fr 1fr;
-      gap: 36px;
-      align-items: start;
-    }
-    .portrait-block { margin-bottom: 32px; }
-    .portrait-block:last-child { margin-bottom: 0; }
-    .portrait-block h2 { font-size: 18px; margin: 0 0 4px; }
-    .portrait-block .section-sub { margin: 0 0 14px; font-size: 13px; }
-    .card-stack { display: flex; flex-direction: column; gap: 10px; }
-
-    /* Explorer — sticky lens nav on the left, principles on the right. */
-    .explorer-grid {
-      display: grid;
-      grid-template-columns: 220px 1fr;
-      gap: 32px;
-      align-items: start;
-    }
-    .lens-nav {
-      position: sticky;
-      top: 100px; /* below the sticky filter bar */
-      max-height: calc(100vh - 120px);
-      overflow-y: auto;
-      padding-right: 4px;
-    }
-    .lens-nav .nav-label {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 10px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin-bottom: 8px;
-    }
-    .lens-nav ul { list-style: none; padding: 0; margin: 0; }
-    .lens-nav li { margin: 0; }
-    .lens-nav a {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 10px;
-      border-radius: 6px;
-      color: var(--muted);
-      font-size: 13px;
       transition: all 120ms ease;
-      text-decoration: none;
     }
-    .lens-nav a:hover {
-      background: var(--bg-alt);
-      color: var(--fg);
-      text-decoration: none;
-    }
-    .lens-nav a.active {
-      background: var(--bg-alt);
-      color: var(--primary);
-      border-left: 2px solid var(--primary);
-      padding-left: 8px;
-    }
-    .nav-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .nav-count {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      color: var(--muted);
-      margin-left: 8px;
-      flex-shrink: 0;
-    }
-    .explorer-content { min-width: 0; }
+    .view-btn.active { background: var(--primary); color: #1f1f1f; font-weight: 600; }
+    .filter-lens-row { width: 100%; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 
-    @media (max-width: 900px) {
-      .portrait-grid { grid-template-columns: 1fr; gap: 24px; }
-      .explorer-grid { grid-template-columns: 1fr; }
-      .lens-nav { position: static; max-height: none; overflow: visible; margin-bottom: 16px; }
-      .lens-nav ul { display: flex; flex-wrap: wrap; gap: 4px; }
-      .lens-nav a { padding: 4px 10px; background: var(--bg-alt); border-radius: 999px; }
-    }
-    h2 { font-size: 22px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.01em; }
-    .section-sub { color: var(--muted); margin: 0 0 20px; }
-
-    .card-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 12px;
-    }
-    .card {
-      background: var(--bg-alt);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 18px 20px;
-    }
-    .card h3 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--primary); }
-    .card p { font-size: 14px; color: rgba(230, 237, 243, 0.9); margin: 0 0 8px; }
-
-    .philosophy-list, .nongoal-list { list-style: none; padding: 0; margin: 0; }
-    .philosophy-list li, .nongoal-list li {
-      padding: 12px 16px;
-      background: var(--bg-alt);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      margin-bottom: 8px;
-    }
-    .nongoal-list li::before { content: "✕  "; color: var(--dont); font-weight: 700; }
-
-    .citations {
-      display: flex; flex-wrap: wrap; gap: 6px;
-      margin-top: 8px;
-    }
-    .cite {
-      display: inline-block;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      color: var(--accent);
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 2px 6px;
-    }
-    .cite:hover { border-color: var(--accent); text-decoration: none; }
-
-    .codemap-wrapper { overflow-x: auto; }
-    table.codemap { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.codemap th, table.codemap td {
-      text-align: left;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: top;
-    }
-    table.codemap th {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+    /* portrait blocks */
+    .portrait-block { margin-bottom: 56px; }
+    .portrait-block h2 {
+      font-size: 28px;
       font-weight: 600;
-      background: var(--bg-alt);
+      margin: 0 0 6px;
+      letter-spacing: -0.005em;
     }
-    .codemap-row.hidden { display: none; }
-    .lens-tag {
-      display: inline-block;
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      color: var(--accent);
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      margin: 1px;
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .principle-tag {
-      display: inline-block;
-      font-size: 11px;
-      color: var(--primary);
-      background: rgba(250, 204, 21, 0.10);
-      border: 1px solid rgba(250, 204, 21, 0.3);
-      border-radius: 4px;
-      padding: 2px 6px;
-      margin: 1px;
-      font-family: 'JetBrains Mono', monospace;
-    }
-
-    .lens-block { margin-bottom: 28px; }
-    .lens-block.hidden { display: none; }
-    .lens-header { padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
-    .lens-header h3 { font-size: 17px; font-weight: 700; margin: 0 0 4px; }
-    .lens-slug {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
+    .block-sub {
       color: var(--muted);
-      margin-left: 8px;
-      font-weight: 400;
+      font-size: 14px;
+      margin: 0 0 24px;
+      font-style: italic;
     }
-    .lens-rationale { color: var(--muted); font-size: 13px; margin: 0; }
+    .block-sub code { font-style: normal; background: var(--bg-alt); padding: 1px 6px; border-radius: 3px; color: var(--primary); }
 
-    .principle {
+    .arch-decision {
+      border-left: 3px solid var(--primary);
+      padding: 6px 0 6px 22px;
+      margin-bottom: 28px;
+    }
+    .arch-decision:last-child { margin-bottom: 0; }
+    .arch-decision h3 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0 0 8px;
+    }
+    .arch-decision p { margin: 0 0 10px; color: rgba(232, 230, 227, 0.88); }
+    .cites-line { color: var(--muted); font-size: 12px; }
+
+    .philosophy-stack { display: flex; flex-direction: column; gap: 14px; }
+    .philosophy-card {
+      background: var(--bg-card);
+      border-radius: 10px;
+      padding: 18px 22px;
+      box-shadow: var(--shadow);
+    }
+    .philosophy-card strong {
+      display: block;
+      font-weight: 600;
+      font-size: 17px;
+      margin-bottom: 6px;
+    }
+    .philosophy-card p { margin: 0 0 8px; color: rgba(232, 230, 227, 0.88); }
+
+    .nongoal-list { display: flex; flex-direction: column; }
+    .nongoal {
+      display: flex;
+      gap: 14px;
+      padding: 14px 0;
+      border-top: 1px dashed var(--border);
+    }
+    .nongoal:first-child { border-top: none; padding-top: 4px; }
+    .nongoal-mark {
+      color: var(--dont);
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+      line-height: 1.5;
+    }
+    .nongoal-body { flex: 1; }
+
+    /* citations */
+    .citations { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .cite {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--warn);
       background: var(--bg-alt);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
+      padding: 2px 8px;
+      border-radius: 4px;
+      transition: all 120ms ease;
+    }
+    .cite:hover { background: var(--bg-elev); color: var(--primary); }
+
+    /* lens sections + rule cards */
+    .rules-divider {
+      margin: 64px 0 36px;
+      text-align: center;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+    .rules-divider::before, .rules-divider::after {
+      content: "";
+      display: inline-block;
+      width: 64px;
+      height: 1px;
+      background: var(--border);
+      vertical-align: middle;
+      margin: 0 16px;
+    }
+    .lens-section { margin-bottom: 52px; }
+    .lens-section.hidden { display: none; }
+    .lens-section-head { margin-bottom: 18px; }
+    .lens-section-head h3 {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
+    .lens-rationale { color: var(--muted); font-size: 13px; margin: 0; font-style: italic; }
+    .rule-card-stack { display: flex; flex-direction: column; gap: 14px; }
+
+    .rule-card {
+      background: var(--bg-card);
+      border-radius: 10px;
+      border-left: 4px solid var(--warn);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      transition: box-shadow 160ms ease;
+    }
+    .rule-card.hidden { display: none; }
+    .rule-card:hover { box-shadow: var(--shadow-lg); }
+    .rule-card summary {
+      cursor: pointer;
+      padding: 18px 22px;
+      list-style: none;
+    }
+    .rule-card summary::-webkit-details-marker { display: none; }
+    .rule-card-meta {
+      display: flex;
+      gap: 8px;
+      align-items: center;
       margin-bottom: 8px;
     }
-    .principle.hidden { display: none; }
-    .principle summary {
-      cursor: pointer;
-      padding: 12px 16px;
-      list-style: none;
-      display: flex; gap: 10px; align-items: flex-start;
+    .badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
     }
-    .principle summary::-webkit-details-marker { display: none; }
-    .principle summary::after {
-      content: "›";
-      margin-left: auto;
-      font-size: 18px;
-      color: var(--muted);
-      transition: transform 160ms ease;
-      flex-shrink: 0;
+    .badge-do { background: rgba(63, 185, 80, 0.15); color: var(--do); }
+    .badge-dont { background: rgba(248, 81, 73, 0.15); color: var(--dont); }
+    .conf-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
-    .principle[open] summary::after { transform: rotate(90deg); }
-    .principle .badges { display: flex; gap: 4px; flex-wrap: wrap; flex-shrink: 0; }
-    .principle .rule { flex: 1; font-weight: 500; line-height: 1.45; }
-
-    .principle-body { padding: 0 16px 16px; border-top: 1px solid var(--border); }
-    .principle-body .rationale { color: rgba(230, 237, 243, 0.85); margin: 12px 0; font-size: 14px; }
-    .example-block { margin-top: 12px; }
+    .confirmed-tag, .stale-flag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
+    }
+    .confirmed-tag { background: rgba(58, 173, 164, 0.15); color: var(--teal); }
+    .stale-flag { background: rgba(248, 81, 73, 0.15); color: var(--dont); }
+    .rule-text {
+      font-size: 17px;
+      font-weight: 600;
+      margin: 0;
+      line-height: 1.45;
+    }
+    .rule-body {
+      padding: 4px 22px 20px;
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
+    }
+    .rationale { color: rgba(232, 230, 227, 0.85); font-size: 14px; margin: 14px 0; font-style: italic; }
+    .example-block { margin-top: 14px; }
     .example-label {
       font-family: 'JetBrains Mono', monospace;
       font-size: 10px;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
-    .stats-line { font-size: 12px; color: var(--muted); margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--border); }
+    .stats-line {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
 
-    .badge {
-      display: inline-flex; align-items: center;
+    /* code map view */
+    .codemap-list { display: flex; flex-direction: column; gap: 8px; }
+    .cm-row {
+      background: var(--bg-card);
+      border-radius: 8px;
+      padding: 14px 18px;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .cm-row.hidden { display: none; }
+    .cm-file {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--primary);
+      word-break: break-all;
+    }
+    .cm-meta { display: flex; flex-direction: column; gap: 6px; }
+    .cm-lenses, .cm-principles { display: flex; flex-wrap: wrap; gap: 4px; }
+    .cm-lens-tag {
       font-family: 'JetBrains Mono', monospace;
       font-size: 10px;
-      font-weight: 700;
-      padding: 2px 6px;
+      background: var(--bg-elev);
+      color: var(--teal);
+      padding: 2px 8px;
       border-radius: 4px;
-      letter-spacing: 0.04em;
-      white-space: nowrap;
+      cursor: pointer;
+      transition: all 120ms ease;
     }
-    .badge-do { background: rgba(63, 185, 80, 0.15); color: var(--do); }
-    .badge-dont { background: rgba(248, 81, 73, 0.15); color: var(--dont); }
-    .conf-high { background: rgba(63, 185, 80, 0.10); color: var(--do); }
-    .conf-medium { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
-    .conf-low { background: rgba(248, 81, 73, 0.10); color: var(--dont); }
-    .badge-confirmed { background: rgba(58, 173, 164, 0.15); color: var(--accent); }
-    .badge-stale { background: rgba(248, 81, 73, 0.15); color: var(--dont); }
+    .cm-lens-tag:hover { background: var(--teal); color: #1f1f1f; }
+    .cm-principle-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--warn);
+      background: rgba(210, 153, 34, 0.12);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(210, 153, 34, 0.3);
+    }
+    .cm-principle-tag:hover { background: rgba(210, 153, 34, 0.25); }
 
+    /* empty state */
     .empty-state {
-      padding: 32px;
+      padding: 36px 24px;
       text-align: center;
-      background: var(--bg-alt);
-      border: 1px dashed var(--border-strong);
-      border-radius: var(--radius);
+      background: var(--bg-card);
+      border-radius: 10px;
       color: var(--muted);
       font-size: 14px;
+      font-style: italic;
     }
+    .empty-state.hidden { display: none; }
     .link-button {
       background: none;
       border: none;
@@ -760,160 +788,135 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       font-size: inherit;
       text-decoration: underline;
       padding: 0;
+      font-style: normal;
     }
-    .lens-tag { cursor: pointer; }
-    .lens-tag:hover { border-color: var(--accent); }
 
-    .health-section .health-stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      max-width: 720px;
+    /* health */
+    .health-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+    .health-card {
+      background: var(--bg-card);
+      border-radius: 10px;
+      padding: 18px 24px;
+      box-shadow: var(--shadow);
+      flex: 1 1 200px;
+      border-left: 4px solid var(--do);
     }
-    .health-stat {
-      background: var(--bg-alt);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px 18px;
+    .health-card.alert { border-left-color: var(--dont); }
+    .health-num { font-size: 28px; font-weight: 700; line-height: 1; }
+    .health-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 8px;
     }
-    .health-stat.alert { border-color: var(--dont); }
-    .health-num { font-size: 26px; font-weight: 800; }
-    .health-stat.alert .health-num { color: var(--dont); }
-    .health-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-    .health-action { margin-top: 14px; color: var(--muted); font-size: 13px; }
+    .health-action { color: var(--muted); font-size: 14px; margin-top: 14px; font-style: italic; }
+    .health-action code { background: var(--bg-alt); padding: 1px 6px; border-radius: 3px; color: var(--primary); font-style: normal; }
 
     footer {
-      padding: 32px 0;
+      margin-top: 80px;
+      padding-top: 32px;
       border-top: 1px solid var(--border);
       color: var(--muted);
       font-size: 13px;
       text-align: center;
     }
+
+    @media (max-width: 960px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar {
+        position: static;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .main { padding: 32px 28px 64px; }
+      .filter-bar { margin: 0 -28px 28px; padding: 14px 28px; }
+      h1.editorial { font-size: 32px; }
+      .cm-row { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-brand">Beevibe AI CTO</div>
+      <h3>The portrait</h3>
+      <a class="nav-link" href="#what-this-is"><span class="nav-name">What this is</span></a>
+      <a class="nav-link" href="#architectural-intent"><span class="nav-name">Architectural intent</span><span class="nav-count">${archIntent.length}</span></a>
+      <a class="nav-link" href="#product-philosophy"><span class="nav-name">Product philosophy</span><span class="nav-count">${philosophy.length}</span></a>
+      <a class="nav-link" href="#non-goals"><span class="nav-name">Non-goals</span><span class="nav-count">${nonGoals.length}</span></a>
+      <h3>Lenses</h3>
+      ${lensNavHtml}
+      <h3>Other</h3>
+      ${health ? `<a class="nav-link" href="#health"><span class="nav-name">Health</span><span class="nav-count">${staleCitations > 0 ? "⚠" : "✓"}</span></a>` : ""}
+    </aside>
 
-  <div class="hero">
-    <div class="shell">
-      <div class="pill">Beevibe AI CTO · Principles report</div>
-      <h1>${escapeHtml(identity || "Team principles")}</h1>
-      <div class="hero-meta">
-        ${lenses.length} lens${lenses.length === 1 ? "" : "es"}
-        · ${principles.length} principle${principles.length === 1 ? "" : "s"}
-        · ${archIntent.length} architectural decision${archIntent.length === 1 ? "" : "s"}
-        · ${nonGoals.length} non-goal${nonGoals.length === 1 ? "" : "s"}
+    <main class="main">
+      <h1 class="editorial" id="what-this-is">${escapeHtml(identity)}</h1>
+      <div class="meta-line">
+        ${lenses.length} lenses · ${principles.length} principles · ${archIntent.length} architectural decisions · scanned ${new Date(artifact.source.scanned_at).toLocaleDateString()}
       </div>
-    </div>
-  </div>
 
-  <!-- PART 1 — THE PORTRAIT (read-only, narrative) -->
+      ${archHtml}
+      ${philHtml}
+      ${nonGoalsHtml}
 
-  <section class="section">
-    <div class="shell">
-      <div class="portrait-grid">
-        <div class="portrait-left">
-          ${archHtml}
+      <div class="rules-divider">Code-level rules</div>
+
+      <div class="filter-bar">
+        <div class="filter-group">
+          <span class="filter-label">Polarity</span>
+          <button class="chip polarity-chip active" data-polarity="all">All</button>
+          <button class="chip polarity-chip" data-polarity="do">DO</button>
+          <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
         </div>
-        <div class="portrait-right">
-          ${philHtml}
-          ${nonGoalsHtml}
+        <div class="filter-group">
+          <span class="filter-label">Confidence</span>
+          <button class="chip confidence-chip active" data-confidence="all">All</button>
+          <button class="chip confidence-chip" data-confidence="high">High</button>
+          <button class="chip confidence-chip" data-confidence="medium">Med</button>
+          <button class="chip confidence-chip" data-confidence="low">Low</button>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- PART 2 — THE EXPLORER (filter chips apply from here down) -->
-
-  <div class="part-divider">
-    <div class="shell">
-      <div class="eyebrow">Part 2 · the explorer</div>
-      <h2 class="part-title">${principles.length} code-level rules across ${lenses.length} lenses</h2>
-      <p class="section-sub">Grounded in your team's own <code>file:line</code> citations. Filter, search, or switch the view.</p>
-    </div>
-  </div>
-
-  <div class="filter-bar">
-    <div class="shell filter-bar-inner">
-      <div class="filter-group">
-        <span class="filter-bar-label">Polarity</span>
-        <button class="chip polarity-chip active" data-polarity="all">All</button>
-        <button class="chip polarity-chip" data-polarity="do">DO</button>
-        <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
-      </div>
-      <div class="filter-group">
-        <span class="filter-bar-label">Confidence</span>
-        <button class="chip confidence-chip active" data-confidence="all">All</button>
-        <button class="chip confidence-chip" data-confidence="high">High</button>
-        <button class="chip confidence-chip" data-confidence="medium">Med</button>
-        <button class="chip confidence-chip" data-confidence="low">Low</button>
-      </div>
-      <input type="text" id="search" class="search-input" placeholder="search rules…" />
-      <div class="view-toggle">
-        <button class="view-btn active" data-view="by-lens">By lens</button>
-        <button class="view-btn" data-view="by-file">By file</button>
-      </div>
-    </div>
-    <div class="shell filter-lens-row">
-      <span class="filter-bar-label">Lens</span>
-      <button class="chip lens-chip active" data-lens="all">All</button>
-      ${lensChipsHtml}
-    </div>
-  </div>
-
-  <section class="section">
-    <div class="shell explorer-grid">
-      <aside class="lens-nav">
-        <div class="nav-label">Jump to lens</div>
-        <ul>
+        <input type="text" id="search" class="search-input" placeholder="search rules…" />
+        <div class="view-toggle">
+          <button class="view-btn active" data-view="by-lens">By lens</button>
+          <button class="view-btn" data-view="by-file">By file</button>
+        </div>
+        <div class="filter-lens-row">
+          <span class="filter-label">Lens</span>
+          <button class="chip lens-chip active" data-lens="all">All</button>
           ${lenses
-            .map((lens) => {
-              const count = (principlesByLens.get(lens.slug) || []).length;
-              return `
-          <li>
-            <a href="#lens-${escapeHtml(lens.slug)}" data-lens-anchor="${escapeHtml(lens.slug)}">
-              <span class="nav-name">${escapeHtml(lens.name)}</span>
-              <span class="nav-count">${count}</span>
-            </a>
-          </li>`;
-            })
+            .map(
+              (l) =>
+                `<button class="chip lens-chip" data-lens="${escapeHtml(l.slug)}">${escapeHtml(l.name)}</button>`
+            )
             .join("")}
-        </ul>
-      </aside>
-
-      <div class="explorer-content">
-        <div id="view-by-lens">
-          <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
-          ${lensesAccordionHtml}
-        </div>
-
-        <div id="view-by-file" class="hidden">
-          <p class="section-sub">Files ranked by how many principles cite them. Click a file path to open in your editor; click a lens tag to filter to it; click a principle id to jump to its rule.</p>
-          <div class="codemap-wrapper">
-            <table class="codemap">
-              <thead>
-                <tr><th>File</th><th>Lenses</th><th>Principles</th></tr>
-              </thead>
-              <tbody>
-                ${codeMapRowsHtml}
-              </tbody>
-            </table>
-          </div>
         </div>
       </div>
-    </div>
-  </section>
 
-  ${healthHtml ? `<div class="shell">${healthHtml}</div>` : ""}
+      <div id="view-by-lens">
+        <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
+        ${lensSectionsHtml}
+      </div>
 
-  <footer>
-    Generated by <a href="https://beevibe.ai/cto/">Beevibe AI CTO</a> · <code>adr principles init</code> ·
-    re-run to refresh · <a href="https://github.com/beevibe-ai/architecture-deep-research">source</a>
-  </footer>
+      <div id="view-by-file" class="hidden">
+        <div class="codemap-list">
+          ${codeMapHtml}
+        </div>
+      </div>
+
+      ${healthHtml}
+
+      <footer>
+        Generated by <a href="https://beevibe.ai/cto/" style="color: var(--primary);">Beevibe AI CTO</a> · <code>adr principles init</code>. Re-run to refresh.
+      </footer>
+    </main>
+  </div>
 
   <script>
     (function () {
-      // All four filters are independent and AND-ed together. Empty
-      // state (all/all/all + empty q) shows everything.
       const state = { polarity: "all", confidence: "all", lens: "all", q: "" };
 
       function bindChipGroup(selector, key, onChange) {
@@ -928,16 +931,16 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       }
 
       function applyFilters() {
-        const principles = document.querySelectorAll(".principle");
-        const blocks = document.querySelectorAll(".lens-block");
-        const rows = document.querySelectorAll(".codemap-row");
+        const cards = document.querySelectorAll(".rule-card");
+        const sections = document.querySelectorAll(".lens-section");
+        const rows = document.querySelectorAll(".cm-row");
         const q = state.q.toLowerCase().trim();
         let visibleCount = 0;
 
-        principles.forEach((el) => {
+        cards.forEach((el) => {
           const polarity = el.dataset.polarity;
           const confidence = el.dataset.confidence;
-          const lensSlug = el.closest(".lens-block")?.dataset.lens || "";
+          const lensSlug = el.closest(".lens-section")?.dataset.lens || "";
           const text = el.textContent.toLowerCase();
           let show = true;
           if (state.polarity !== "all" && polarity !== state.polarity) show = false;
@@ -948,11 +951,11 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
           if (show) visibleCount += 1;
         });
 
-        blocks.forEach((block) => {
-          const lens = block.dataset.lens;
+        sections.forEach((sec) => {
+          const lens = sec.dataset.lens;
           const lensMatch = state.lens === "all" || lens === state.lens;
-          const anyVisible = !!block.querySelector(".principle:not(.hidden)");
-          block.classList.toggle("hidden", !lensMatch || !anyVisible);
+          const anyVisible = !!sec.querySelector(".rule-card:not(.hidden)");
+          sec.classList.toggle("hidden", !lensMatch || !anyVisible);
         });
 
         rows.forEach((row) => {
@@ -964,10 +967,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
           row.classList.toggle("hidden", !show);
         });
 
-        // Empty-state surface so the user sees "no matches" instead of a
-        // silent blank screen when filters exclude everything.
-        const emptyState = document.getElementById("empty-state");
-        if (emptyState) emptyState.classList.toggle("hidden", visibleCount > 0);
+        document.getElementById("empty-state")?.classList.toggle("hidden", visibleCount > 0);
       }
 
       bindChipGroup(".polarity-chip", "polarity", applyFilters);
@@ -979,8 +979,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
         applyFilters();
       });
 
-      // View toggle — by lens (accordion) vs by file (code map). Only
-      // one view shows at a time so the eye has one place to look.
+      // View toggle
       const viewByLens = document.getElementById("view-by-lens");
       const viewByFile = document.getElementById("view-by-file");
       document.querySelectorAll(".view-btn").forEach((btn) => {
@@ -993,27 +992,56 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
         });
       });
 
-      // Lens-nav active highlight — track which lens block is in view
-      // and highlight the matching sidebar link. Uses IntersectionObserver.
-      const navLinks = document.querySelectorAll("[data-lens-anchor]");
-      const blockToLink = new Map();
-      navLinks.forEach((a) => blockToLink.set(a.dataset.lensAnchor, a));
-      const lensObserver = new IntersectionObserver(
+      // Code-map lens-tag → filter to that lens
+      document.querySelectorAll(".cm-lens-tag").forEach((tag) => {
+        tag.addEventListener("click", () => {
+          const slug = tag.dataset.lens;
+          const chip = document.querySelector('.lens-chip[data-lens="' + slug + '"]');
+          if (chip) chip.click();
+        });
+      });
+
+      // Code-map principle-tag → switch to by-lens, expand, scroll
+      document.querySelectorAll(".cm-principle-tag").forEach((tag) => {
+        tag.addEventListener("click", (e) => {
+          e.preventDefault();
+          const id = tag.dataset.principle;
+          document.querySelector('.view-btn[data-view="by-lens"]')?.click();
+          setTimeout(() => {
+            const target = document.getElementById("p-" + id);
+            if (target) {
+              target.setAttribute("open", "open");
+              target.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }, 50);
+        });
+      });
+
+      // Scroll-spy for sidebar nav
+      const sidebarLinks = document.querySelectorAll(".sidebar .nav-link[href^='#']");
+      const idToLink = new Map();
+      sidebarLinks.forEach((a) => {
+        const id = a.getAttribute("href").slice(1);
+        if (id) idToLink.set(id, a);
+      });
+      const observer = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
-            const slug = entry.target.dataset.lens;
-            if (!slug) return;
-            const link = blockToLink.get(slug);
+            const id = entry.target.id;
+            if (!id) return;
+            const link = idToLink.get(id);
             if (!link) return;
             if (entry.isIntersecting) {
-              navLinks.forEach((l) => l.classList.remove("active"));
+              sidebarLinks.forEach((l) => l.classList.remove("active"));
               link.classList.add("active");
             }
           });
         },
         { rootMargin: "-30% 0px -60% 0px", threshold: 0 }
       );
-      document.querySelectorAll(".lens-block").forEach((b) => lensObserver.observe(b));
+      document
+        .querySelectorAll("#what-this-is, #architectural-intent, #product-philosophy, #non-goals, .lens-section, #health")
+        .forEach((el) => observer.observe(el));
 
       // Reset filters
       document.getElementById("reset-filters")?.addEventListener("click", () => {
@@ -1026,28 +1054,6 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
         document.querySelectorAll(".lens-chip").forEach((c) => c.classList.toggle("active", c.dataset.lens === "all"));
         document.getElementById("search").value = "";
         applyFilters();
-      });
-
-      // Principle-tag in code map → scroll + expand
-      document.querySelectorAll(".principle-tag").forEach((tag) => {
-        tag.addEventListener("click", () => {
-          const id = tag.dataset.principle;
-          const target = document.getElementById("p-" + id);
-          if (target) {
-            target.setAttribute("open", "open");
-            setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
-          }
-        });
-      });
-
-      // Lens-tag in code map → set the lens filter to that lens
-      document.querySelectorAll(".lens-tag").forEach((tag) => {
-        tag.addEventListener("click", () => {
-          const slug = tag.dataset.lens;
-          if (!slug) return;
-          const chip = document.querySelector('.lens-chip[data-lens="' + slug + '"]');
-          if (chip) chip.click();
-        });
       });
     })();
   </script>
