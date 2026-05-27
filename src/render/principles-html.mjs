@@ -119,6 +119,28 @@ function confidenceColor(c) {
   return "#d29922";
 }
 
+// Score a principle to rank "what matters most." Brief mode picks the
+// top 5. Heuristic mixes intrinsic strength (confidence,
+// confirmed-by-interview) with usage (accept / skip counts from stats)
+// and how anchored it is in the codebase (citation count). No
+// principle ever scores below 1, so the top-5 list is always populated
+// even for a fresh repo with no stats.
+function scorePrinciple(p, stats) {
+  let score = 1;
+  if (p.confidence === "high") score += 100;
+  else if (p.confidence === "medium") score += 50;
+  else score += 10;
+  if (p.confirmed_by_interview) score += 75;
+  score += (p.evidence_cite?.length || 0) * 3;
+  score += (p.examples_to_follow?.length || 0) * 2;
+  const slot = stats?.by_principle?.[p.id];
+  if (slot) {
+    score += (slot.accepted || 0) * 5;
+    score -= (slot.skipped || 0) * 4;
+  }
+  return score;
+}
+
 function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
   const productIntent = artifact.product_intent || {};
   const identity = productIntent.identity || "Team principles";
@@ -142,6 +164,59 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     0
   );
   const staleCitations = health?.stale_citation_count || 0;
+
+  // Top 5 rules for Brief mode — see scorePrinciple() above.
+  const topPrinciples = [...principles]
+    .map((p) => ({ p, score: scorePrinciple(p, stats) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map((x) => x.p);
+
+  // Compact card renderer reused by both Brief and Full mode. Full mode
+  // wraps the same rules in <details> for accordion; Brief mode opens
+  // them by default so the top 5 read at a glance.
+  function renderRuleCard(p, { open = false } = {}) {
+    const sStat = statSummary(stats, p.id);
+    const hStat = healthFor(health, p.id);
+    const polarity = p.polarity === "do" ? "DO" : "DON'T";
+    const polarityClass = `badge-${p.polarity}`;
+    const confClr = confidenceColor(p.confidence);
+    const lens = lensBySlug.get(p.lens);
+    const lensName = lens?.name || p.lens;
+    const statsLine = sStat
+      ? `<div class="stats-line">Seen ${sStat.total} · accepted ${sStat.accepted} · edited ${sStat.edited} · skipped ${sStat.skipped}</div>`
+      : "";
+    const staleBadge = hStat?.is_stale
+      ? `<span class="stale-flag" title="${escapeHtml(hStat.stale_cites)}/${escapeHtml(hStat.total_cites)} citations missing">stale</span>`
+      : "";
+    return `
+        <details ${open ? "open" : ""} id="p-${escapeHtml(p.id)}" class="rule-card" data-polarity="${escapeHtml(p.polarity)}" data-confidence="${escapeHtml(p.confidence || "medium")}" data-lens="${escapeHtml(p.lens)}" style="border-left-color: ${confClr}">
+          <summary>
+            <div class="rule-card-meta">
+              <span class="badge ${polarityClass}">${polarity}</span>
+              <span class="conf-tag" style="color: ${confClr}">${escapeHtml(p.confidence || "medium")}</span>
+              <a class="rule-card-lens" href="#lens-${escapeHtml(p.lens)}" title="Jump to lens">${escapeHtml(lensName)}</a>
+              ${p.confirmed_by_interview ? `<span class="confirmed-tag">confirmed</span>` : ""}
+              ${staleBadge}
+            </div>
+            <h4 class="rule-text serif">${escapeHtml(p.rule)}</h4>
+          </summary>
+          <div class="rule-body">
+            ${p.rationale ? `<p class="rationale">${escapeHtml(p.rationale)}</p>` : ""}
+            ${
+              p.examples_to_follow?.length
+                ? `<div class="example-block"><div class="example-label">Team example to follow</div><div class="citations">${renderCitations(p.examples_to_follow, repoPath)}</div></div>`
+                : ""
+            }
+            ${
+              p.evidence_cite?.length
+                ? `<div class="example-block"><div class="example-label">Evidence</div><div class="citations">${renderCitations(p.evidence_cite, repoPath)}</div></div>`
+                : ""
+            }
+            ${statsLine}
+          </div>
+        </details>`;
+  }
 
   // ── sidebar nav (portrait shortcuts + lenses)
   const lensNavHtml = lenses
@@ -230,52 +305,12 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     </section>`
     : "";
 
-  // ── per-lens rule cards (the accordion view)
+  // ── per-lens rule cards (the accordion view) — uses renderRuleCard()
   const lensSectionsHtml = lenses
     .map((lens) => {
       const items = principlesByLens.get(lens.slug) || [];
       if (items.length === 0) return "";
-      const cardsHtml = items
-        .map((p) => {
-          const sStat = statSummary(stats, p.id);
-          const hStat = healthFor(health, p.id);
-          const polarity = p.polarity === "do" ? "DO" : "DON'T";
-          const polarityClass = `badge-${p.polarity}`;
-          const confClr = confidenceColor(p.confidence);
-          const statsLine = sStat
-            ? `<div class="stats-line">Seen ${sStat.total} · accepted ${sStat.accepted} · edited ${sStat.edited} · skipped ${sStat.skipped}</div>`
-            : "";
-          const staleBadge = hStat?.is_stale
-            ? `<span class="stale-flag" title="${escapeHtml(hStat.stale_cites)}/${escapeHtml(hStat.total_cites)} citations missing">stale</span>`
-            : "";
-          return `
-          <details id="p-${escapeHtml(p.id)}" class="rule-card" data-polarity="${escapeHtml(p.polarity)}" data-confidence="${escapeHtml(p.confidence || "medium")}" style="border-left-color: ${confClr}">
-            <summary>
-              <div class="rule-card-meta">
-                <span class="badge ${polarityClass}">${polarity}</span>
-                <span class="conf-tag" style="color: ${confClr}">${escapeHtml(p.confidence || "medium")}</span>
-                ${p.confirmed_by_interview ? `<span class="confirmed-tag">confirmed</span>` : ""}
-                ${staleBadge}
-              </div>
-              <h4 class="rule-text serif">${escapeHtml(p.rule)}</h4>
-            </summary>
-            <div class="rule-body">
-              ${p.rationale ? `<p class="rationale">${escapeHtml(p.rationale)}</p>` : ""}
-              ${
-                p.examples_to_follow?.length
-                  ? `<div class="example-block"><div class="example-label">Team example to follow</div><div class="citations">${renderCitations(p.examples_to_follow, repoPath)}</div></div>`
-                  : ""
-              }
-              ${
-                p.evidence_cite?.length
-                  ? `<div class="example-block"><div class="example-label">Evidence</div><div class="citations">${renderCitations(p.evidence_cite, repoPath)}</div></div>`
-                  : ""
-              }
-              ${statsLine}
-            </div>
-          </details>`;
-        })
-        .join("");
+      const cardsHtml = items.map((p) => renderRuleCard(p)).join("");
       return `
       <section class="lens-section" id="lens-${escapeHtml(lens.slug)}" data-lens="${escapeHtml(lens.slug)}">
         <header class="lens-section-head">
@@ -288,6 +323,24 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       </section>`;
     })
     .join("");
+
+  // ── BRIEF MODE: top 5 rules pre-expanded, with "see all" CTA
+  const topPrinciplesHtml = topPrinciples
+    .map((p) => renderRuleCard(p, { open: true }))
+    .join("");
+
+  // Lightweight payload for the Cmd-K palette (rule id + text + lens
+  // + cites, JSON-escaped into a data attribute). Used by the client-
+  // side fuzzy search.
+  const cmdkIndex = principles.map((p) => ({
+    id: p.id,
+    rule: p.rule,
+    lens: p.lens,
+    lensName: lensBySlug.get(p.lens)?.name || p.lens,
+    polarity: p.polarity,
+    confidence: p.confidence,
+    cites: [...(p.evidence_cite || []), ...(p.examples_to_follow || [])]
+  }));
 
   // ── code map: notion-style. Soft rows, serif filename, big readable.
   const codeMapHtml = codeMap
@@ -822,6 +875,177 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       font-size: 13px;
       text-align: center;
     }
+    footer kbd { background: var(--bg-alt); border: 1px solid var(--border); }
+
+    /* Brief mode */
+    .rules-divider-label {
+      background: var(--bg);
+      padding: 0 16px;
+    }
+    .see-all-wrap { text-align: center; margin-top: 40px; }
+    .see-all-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 14px 24px;
+      border-radius: 999px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      transition: all 160ms ease;
+    }
+    .see-all-btn:hover {
+      background: var(--primary);
+      color: #1f1f1f;
+      border-color: var(--primary);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-lg);
+    }
+    .mode-back-row { margin-bottom: 20px; }
+    .rule-card-lens {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      letter-spacing: 0.02em;
+    }
+    .rule-card-lens:hover { color: var(--primary); border-color: var(--primary); opacity: 1; }
+
+    /* Inline keyboard chip used in microcopy */
+    kbd {
+      display: inline-block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-bottom-width: 2px;
+      color: var(--fg);
+      padding: 1px 6px;
+      border-radius: 4px;
+      line-height: 1.2;
+    }
+
+    /* Cmd-K palette */
+    .cmdk-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 12vh;
+    }
+    .cmdk-overlay.hidden { display: none; }
+    .cmdk-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+    }
+    .cmdk-modal {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+      max-height: 76vh;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .cmdk-input-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .cmdk-prompt {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--primary);
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+    .cmdk-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 16px;
+      outline: none;
+    }
+    .cmdk-esc {
+      font-size: 10px;
+      opacity: 0.6;
+    }
+    .cmdk-results {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+    .cmdk-result {
+      padding: 10px 18px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      border-left: 2px solid transparent;
+    }
+    .cmdk-result.active {
+      background: var(--bg-elev);
+      border-left-color: var(--primary);
+    }
+    .cmdk-result-rule {
+      font-size: 14px;
+      font-family: 'Lora', serif;
+      font-weight: 500;
+      color: var(--fg);
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .cmdk-result-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .cmdk-result-meta .pol-do { color: var(--do); }
+    .cmdk-result-meta .pol-dont { color: var(--dont); }
+    .cmdk-empty {
+      padding: 32px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      font-style: italic;
+    }
+    .cmdk-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 18px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      gap: 18px;
+    }
+    .cmdk-footer kbd {
+      font-size: 10px;
+      background: var(--bg-elev);
+    }
+    .cmdk-match { color: var(--primary); font-weight: 700; }
 
     @media (max-width: 960px) {
       .app { grid-template-columns: 1fr; }
@@ -863,57 +1087,97 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       ${philHtml}
       ${nonGoalsHtml}
 
-      <div class="rules-divider">Code-level rules</div>
-
-      <div class="filter-bar">
-        <div class="filter-group">
-          <span class="filter-label">Polarity</span>
-          <button class="chip polarity-chip active" data-polarity="all">All</button>
-          <button class="chip polarity-chip" data-polarity="do">DO</button>
-          <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
+      <!-- BRIEF MODE — top 5 rules, no filter bar, "see all" expands to full mode -->
+      <div id="mode-brief">
+        <div class="rules-divider"><span class="rules-divider-label">Top 5 rules</span></div>
+        <p class="block-sub" style="text-align:center;margin-bottom:24px;">Ranked by confidence × evidence × team usage. Press <kbd>⌘K</kbd> to search all ${principles.length} rules, or click below to explore them.</p>
+        <div class="rule-card-stack">
+          ${topPrinciplesHtml}
         </div>
-        <div class="filter-group">
-          <span class="filter-label">Confidence</span>
-          <button class="chip confidence-chip active" data-confidence="all">All</button>
-          <button class="chip confidence-chip" data-confidence="high">High</button>
-          <button class="chip confidence-chip" data-confidence="medium">Med</button>
-          <button class="chip confidence-chip" data-confidence="low">Low</button>
-        </div>
-        <input type="text" id="search" class="search-input" placeholder="search rules…" />
-        <div class="view-toggle">
-          <button class="view-btn active" data-view="by-lens">By lens</button>
-          <button class="view-btn" data-view="by-file">By file</button>
-        </div>
-        <div class="filter-lens-row">
-          <span class="filter-label">Lens</span>
-          <button class="chip lens-chip active" data-lens="all">All</button>
-          ${lenses
-            .map(
-              (l) =>
-                `<button class="chip lens-chip" data-lens="${escapeHtml(l.slug)}">${escapeHtml(l.name)}</button>`
-            )
-            .join("")}
+        <div class="see-all-wrap">
+          <button id="see-all-btn" class="see-all-btn">
+            See all ${principles.length} rules across ${lenses.length} lenses →
+          </button>
         </div>
       </div>
 
-      <div id="view-by-lens">
-        <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
-        ${lensSectionsHtml}
-      </div>
+      <!-- FULL MODE — the existing filter bar + accordion + code-map -->
+      <div id="mode-full" class="hidden">
+        <div class="mode-back-row">
+          <button id="back-to-brief-btn" class="link-button">← Back to top 5</button>
+        </div>
+        <div class="rules-divider"><span class="rules-divider-label">All ${principles.length} rules</span></div>
 
-      <div id="view-by-file" class="hidden">
-        <div class="codemap-list">
-          ${codeMapHtml}
+        <div class="filter-bar">
+          <div class="filter-group">
+            <span class="filter-label">Polarity</span>
+            <button class="chip polarity-chip active" data-polarity="all">All</button>
+            <button class="chip polarity-chip" data-polarity="do">DO</button>
+            <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">Confidence</span>
+            <button class="chip confidence-chip active" data-confidence="all">All</button>
+            <button class="chip confidence-chip" data-confidence="high">High</button>
+            <button class="chip confidence-chip" data-confidence="medium">Med</button>
+            <button class="chip confidence-chip" data-confidence="low">Low</button>
+          </div>
+          <input type="text" id="search" class="search-input" placeholder="search rules…" />
+          <div class="view-toggle">
+            <button class="view-btn active" data-view="by-lens">By lens</button>
+            <button class="view-btn" data-view="by-file">By file</button>
+          </div>
+          <div class="filter-lens-row">
+            <span class="filter-label">Lens</span>
+            <button class="chip lens-chip active" data-lens="all">All</button>
+            ${lenses
+              .map(
+                (l) =>
+                  `<button class="chip lens-chip" data-lens="${escapeHtml(l.slug)}">${escapeHtml(l.name)}</button>`
+              )
+              .join("")}
+          </div>
+        </div>
+
+        <div id="view-by-lens">
+          <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
+          ${lensSectionsHtml}
+        </div>
+
+        <div id="view-by-file" class="hidden">
+          <div class="codemap-list">
+            ${codeMapHtml}
+          </div>
         </div>
       </div>
 
       ${healthHtml}
 
       <footer>
-        Generated by <a href="https://beevibe.ai/cto/" style="color: var(--primary);">Beevibe AI CTO</a> · <code>adr principles init</code>. Re-run to refresh.
+        Generated by <a href="https://beevibe.ai/cto/" style="color: var(--primary);">Beevibe AI CTO</a> · <code>adr principles init</code>. Re-run to refresh. · <kbd>⌘K</kbd> to search.
       </footer>
     </main>
   </div>
+
+  <!-- Cmd-K palette overlay -->
+  <div id="cmdk-overlay" class="cmdk-overlay hidden">
+    <div class="cmdk-backdrop"></div>
+    <div class="cmdk-modal" role="dialog" aria-label="Search principles">
+      <div class="cmdk-input-row">
+        <span class="cmdk-prompt">⌘K</span>
+        <input id="cmdk-input" class="cmdk-input" type="text" placeholder="search rules, lenses, files…" autocomplete="off" spellcheck="false" />
+        <kbd class="cmdk-esc">esc</kbd>
+      </div>
+      <div id="cmdk-results" class="cmdk-results"></div>
+      <div class="cmdk-footer">
+        <span><kbd>↑↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> open</span>
+        <span><kbd>esc</kbd> close</span>
+      </div>
+    </div>
+  </div>
+
+  <script id="cmdk-index" type="application/json">${escapeHtml(JSON.stringify(cmdkIndex))}</script>
 
   <script>
     (function () {
@@ -1055,6 +1319,179 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
         document.getElementById("search").value = "";
         applyFilters();
       });
+
+      // ─── Brief ↔ Full mode toggle (persisted in localStorage) ───
+      const modeBrief = document.getElementById("mode-brief");
+      const modeFull = document.getElementById("mode-full");
+      const STORAGE_KEY = "adr_principles_view";
+
+      function setMode(mode) {
+        if (mode === "full") {
+          modeBrief.classList.add("hidden");
+          modeFull.classList.remove("hidden");
+        } else {
+          modeBrief.classList.remove("hidden");
+          modeFull.classList.add("hidden");
+        }
+        try { localStorage.setItem(STORAGE_KEY, mode); } catch {}
+      }
+      // Initial — respect persisted choice, else default to brief
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored === "full") setMode("full");
+      } catch {}
+
+      document.getElementById("see-all-btn")?.addEventListener("click", () => {
+        setMode("full");
+        setTimeout(() => modeFull.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      });
+      document.getElementById("back-to-brief-btn")?.addEventListener("click", () => {
+        setMode("brief");
+        setTimeout(() => modeBrief.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      });
+
+      // ─── Cmd-K palette ───
+      let cmdkIdx = [];
+      try {
+        cmdkIdx = JSON.parse(document.getElementById("cmdk-index").textContent || "[]");
+      } catch {}
+      const cmdkOverlay = document.getElementById("cmdk-overlay");
+      const cmdkInput = document.getElementById("cmdk-input");
+      const cmdkResults = document.getElementById("cmdk-results");
+      let activeIdx = 0;
+
+      function highlightMatch(text, q) {
+        if (!q) return text;
+        const i = text.toLowerCase().indexOf(q.toLowerCase());
+        if (i < 0) return text;
+        return text.slice(0, i) +
+          '<span class="cmdk-match">' + text.slice(i, i + q.length) + '</span>' +
+          text.slice(i + q.length);
+      }
+
+      function escAttr(s) {
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      }
+
+      function renderCmdk(q) {
+        const ql = q.toLowerCase().trim();
+        // Score: id > rule text > lens > cites. Threshold = at least
+        // one match. Top 20 results.
+        const scored = cmdkIdx
+          .map((entry) => {
+            const idMatch = entry.id.toLowerCase().includes(ql);
+            const ruleMatch = entry.rule.toLowerCase().includes(ql);
+            const lensMatch = entry.lensName.toLowerCase().includes(ql);
+            const citeMatch = entry.cites.some((c) => c.toLowerCase().includes(ql));
+            let score = 0;
+            if (idMatch) score += 100;
+            if (ruleMatch) score += 50;
+            if (lensMatch) score += 30;
+            if (citeMatch) score += 20;
+            return { entry, score };
+          })
+          .filter((x) => ql.length === 0 || x.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 20);
+
+        if (scored.length === 0) {
+          cmdkResults.innerHTML = '<div class="cmdk-empty">No matches for "' + escAttr(q) + '"</div>';
+          return;
+        }
+
+        cmdkResults.innerHTML = scored.map((s, i) => {
+          const e = s.entry;
+          const polClass = e.polarity === "do" ? "pol-do" : "pol-dont";
+          const polLabel = e.polarity === "do" ? "DO" : "DON'T";
+          return '<div class="cmdk-result' + (i === 0 ? " active" : "") + '" data-id="' + escAttr(e.id) + '" data-idx="' + i + '">'
+            + '<div class="cmdk-result-rule">' + highlightMatch(escAttr(e.rule), q) + '</div>'
+            + '<div class="cmdk-result-meta">'
+            + '<span class="' + polClass + '">' + polLabel + '</span>'
+            + '<span>·</span>'
+            + '<span>' + highlightMatch(escAttr(e.lensName), q) + '</span>'
+            + '<span>·</span>'
+            + '<span>' + escAttr(e.confidence || "medium") + '</span>'
+            + '</div>'
+            + '</div>';
+        }).join("");
+        activeIdx = 0;
+
+        // Attach click handlers
+        cmdkResults.querySelectorAll(".cmdk-result").forEach((r) => {
+          r.addEventListener("mouseenter", () => {
+            activeIdx = Number(r.dataset.idx);
+            cmdkResults.querySelectorAll(".cmdk-result").forEach((x, i) =>
+              x.classList.toggle("active", i === activeIdx)
+            );
+          });
+          r.addEventListener("click", () => jumpToPrinciple(r.dataset.id));
+        });
+      }
+
+      function jumpToPrinciple(id) {
+        closeCmdk();
+        // Brief mode might be active; switch to full so the target exists.
+        setMode("full");
+        setTimeout(() => {
+          const target = document.getElementById("p-" + id);
+          if (target) {
+            target.setAttribute("open", "open");
+            target.scrollIntoView({ behavior: "smooth", block: "center" });
+            // Visual flash to confirm landing.
+            target.style.transition = "box-shadow 200ms ease";
+            target.style.boxShadow = "0 0 0 2px #facc15, " + getComputedStyle(target).boxShadow;
+            setTimeout(() => { target.style.boxShadow = ""; }, 1200);
+          }
+        }, 80);
+      }
+
+      function openCmdk() {
+        cmdkOverlay.classList.remove("hidden");
+        cmdkInput.value = "";
+        renderCmdk("");
+        setTimeout(() => cmdkInput.focus(), 30);
+      }
+      function closeCmdk() {
+        cmdkOverlay.classList.add("hidden");
+      }
+
+      document.addEventListener("keydown", (e) => {
+        const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+        const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+        if (cmdKey && e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          if (cmdkOverlay.classList.contains("hidden")) openCmdk();
+          else closeCmdk();
+          return;
+        }
+        if (cmdkOverlay.classList.contains("hidden")) return;
+        if (e.key === "Escape") { e.preventDefault(); closeCmdk(); return; }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          const items = cmdkResults.querySelectorAll(".cmdk-result");
+          if (items.length === 0) return;
+          activeIdx = (activeIdx + 1) % items.length;
+          items.forEach((x, i) => x.classList.toggle("active", i === activeIdx));
+          items[activeIdx].scrollIntoView({ block: "nearest" });
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          const items = cmdkResults.querySelectorAll(".cmdk-result");
+          if (items.length === 0) return;
+          activeIdx = (activeIdx - 1 + items.length) % items.length;
+          items.forEach((x, i) => x.classList.toggle("active", i === activeIdx));
+          items[activeIdx].scrollIntoView({ block: "nearest" });
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const items = cmdkResults.querySelectorAll(".cmdk-result");
+          const active = items[activeIdx];
+          if (active) jumpToPrinciple(active.dataset.id);
+        }
+      });
+
+      cmdkInput?.addEventListener("input", (e) => renderCmdk(e.target.value));
+      cmdkOverlay.querySelector(".cmdk-backdrop")?.addEventListener("click", closeCmdk);
     })();
   </script>
 </body>
