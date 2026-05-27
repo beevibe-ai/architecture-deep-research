@@ -395,44 +395,60 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       max-width: 760px;
       margin: 0 0 24px;
     }
-    .stat-strip {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 10px;
-      max-width: 920px;
-      margin-top: 24px;
+    .hero-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 8px;
     }
-    .stat {
+
+    .part-divider {
+      padding: 56px 0 24px;
+      border-top: 1px solid var(--border);
       background: var(--bg-alt);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 12px 16px;
     }
-    .stat-value { font-size: 22px; font-weight: 800; }
-    .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .part-divider .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--primary);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .part-title {
+      font-size: clamp(24px, 3vw, 32px);
+      font-weight: 800;
+      margin: 0 0 6px;
+      letter-spacing: -0.015em;
+    }
 
     .filter-bar {
       position: sticky; top: 0; z-index: 10;
-      background: rgba(13, 17, 23, 0.92);
+      background: rgba(13, 17, 23, 0.95);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
-      padding: 14px 0;
+      padding: 12px 0;
     }
-    .filter-bar-inner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .filter-bar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1 1 100%; margin-top: 6px; }
+    .filter-bar-inner { display: flex; flex-direction: column; gap: 10px; }
+    .filter-row {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    }
     .filter-bar-label {
       font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
+      font-size: 10px;
       color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-right: 8px;
+      letter-spacing: 0.1em;
+      margin-right: 6px;
+      min-width: 70px;
     }
     .chip {
       background: var(--bg-alt);
       border: 1px solid var(--border);
       color: var(--fg);
-      padding: 6px 12px;
+      padding: 5px 11px;
       border-radius: 999px;
       font-size: 12px;
       cursor: pointer;
@@ -441,18 +457,40 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     }
     .chip:hover { border-color: var(--primary); }
     .chip.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
-    .search { flex: 1 1 200px; max-width: 320px; margin-left: auto; }
-    .search input {
-      width: 100%;
+    .search-input {
+      flex: 1 1 240px;
+      max-width: 360px;
       background: var(--bg-alt);
       border: 1px solid var(--border);
       color: var(--fg);
-      padding: 8px 12px;
+      padding: 6px 12px;
       border-radius: var(--radius);
       font-family: inherit;
-      font-size: 14px;
+      font-size: 13px;
     }
-    .search input:focus { outline: none; border-color: var(--primary); }
+    .search-input:focus { outline: none; border-color: var(--primary); }
+
+    .view-toggle {
+      margin-left: auto;
+      display: flex;
+      background: var(--bg-alt);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px;
+    }
+    .view-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      padding: 4px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      transition: all 160ms ease;
+    }
+    .view-btn:hover { color: var(--fg); }
+    .view-btn.active { background: var(--primary); color: var(--primary-fg); }
 
     .section { padding: 40px 0; border-bottom: 1px solid var(--border); }
     h2 { font-size: 22px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.01em; }
@@ -663,47 +701,70 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     <div class="shell">
       <div class="pill">Beevibe AI CTO · Principles report</div>
       <h1>${escapeHtml(identity || "Team principles")}</h1>
-      <div class="stat-strip">
-        <div class="stat"><div class="stat-value">${lenses.length}</div><div class="stat-label">lenses</div></div>
-        <div class="stat"><div class="stat-value">${principles.length}</div><div class="stat-label">principles</div></div>
-        <div class="stat"><div class="stat-value">${archIntent.length}</div><div class="stat-label">architectural decisions</div></div>
-        <div class="stat"><div class="stat-value">${philosophy.length}</div><div class="stat-label">philosophy items</div></div>
-        <div class="stat"><div class="stat-value">${nonGoals.length}</div><div class="stat-label">non-goals</div></div>
-        <div class="stat"><div class="stat-value">${totalCitations}</div><div class="stat-label">citations</div></div>
+      <div class="hero-meta">
+        ${lenses.length} lens${lenses.length === 1 ? "" : "es"}
+        · ${principles.length} principle${principles.length === 1 ? "" : "s"}
+        · ${archIntent.length} architectural decision${archIntent.length === 1 ? "" : "s"}
+        · ${nonGoals.length} non-goal${nonGoals.length === 1 ? "" : "s"}
       </div>
     </div>
   </div>
 
-  <div class="filter-bar">
-    <div class="shell filter-bar-inner">
-      <span class="filter-bar-label">Polarity</span>
-      <button class="chip polarity-chip active" data-polarity="all">All</button>
-      <button class="chip polarity-chip" data-polarity="do">DO</button>
-      <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
-      <span class="filter-bar-label">Confidence</span>
-      <button class="chip confidence-chip active" data-confidence="all">All</button>
-      <button class="chip confidence-chip" data-confidence="high">High</button>
-      <button class="chip confidence-chip" data-confidence="medium">Medium</button>
-      <button class="chip confidence-chip" data-confidence="low">Low</button>
-      <div class="filter-bar-row">
-        <span class="filter-bar-label">Lens</span>
-        <button class="chip lens-chip active" data-lens="all">All</button>
-        ${lensChipsHtml}
-        <div class="search">
-          <input type="text" id="search" placeholder="Search rules…" />
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- PART 1 — THE PORTRAIT (read-only, narrative) -->
 
   ${archHtml}
   ${philHtml}
   ${nonGoalsHtml}
 
-  <section class="section">
+  <!-- PART 2 — THE EXPLORER (filter chips apply from here down) -->
+
+  <div class="part-divider">
     <div class="shell">
-      <h2>Code map</h2>
-      <p class="section-sub">Files ranked by how many principles cite them. Click a path to open in your editor (vscode://).</p>
+      <div class="eyebrow">Part 2</div>
+      <h2 class="part-title">Explore the code-level rules</h2>
+      <p class="section-sub">${principles.length} review rules across ${lenses.length} lenses, grounded in your team's own file:line citations. Filter, search, or jump to a file.</p>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <div class="shell filter-bar-inner">
+      <div class="filter-row">
+        <span class="filter-bar-label">Polarity</span>
+        <button class="chip polarity-chip active" data-polarity="all">All</button>
+        <button class="chip polarity-chip" data-polarity="do">DO</button>
+        <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
+        <span class="filter-bar-label" style="margin-left:14px;">Confidence</span>
+        <button class="chip confidence-chip active" data-confidence="all">All</button>
+        <button class="chip confidence-chip" data-confidence="high">High</button>
+        <button class="chip confidence-chip" data-confidence="medium">Medium</button>
+        <button class="chip confidence-chip" data-confidence="low">Low</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-bar-label">Lens</span>
+        <button class="chip lens-chip active" data-lens="all">All</button>
+        ${lensChipsHtml}
+      </div>
+      <div class="filter-row">
+        <span class="filter-bar-label">Search</span>
+        <input type="text" id="search" class="search-input" placeholder="rule text or principle id…" />
+        <div class="view-toggle">
+          <button class="view-btn active" data-view="by-lens">By lens</button>
+          <button class="view-btn" data-view="by-file">By file</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="section" id="view-by-lens">
+    <div class="shell">
+      <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
+      ${lensesAccordionHtml}
+    </div>
+  </section>
+
+  <section class="section hidden" id="view-by-file">
+    <div class="shell">
+      <p class="section-sub">Files ranked by how many principles cite them. Click a file path to open in your editor (<code>vscode://</code>); click a lens tag to filter; click a principle id to jump to it.</p>
       <div class="codemap-wrapper">
         <table class="codemap">
           <thead>
@@ -714,15 +775,6 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
           </tbody>
         </table>
       </div>
-    </div>
-  </section>
-
-  <section class="section">
-    <div class="shell">
-      <h2>Lenses &amp; principles</h2>
-      <p class="section-sub">Click any rule to expand citations, examples, and stats.</p>
-      <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" onclick="document.querySelectorAll('.chip').forEach(c => { if (c.dataset.polarity === 'all' || c.dataset.confidence === 'all' || c.dataset.lens === 'all') c.click(); }); document.getElementById('search').value = ''; document.getElementById('search').dispatchEvent(new Event('input'));">Reset filters</button></div>
-      ${lensesAccordionHtml}
     </div>
   </section>
 
@@ -799,6 +851,33 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
       document.getElementById("search").addEventListener("input", (e) => {
         state.q = e.target.value;
+        applyFilters();
+      });
+
+      // View toggle — by lens (accordion) vs by file (code map). Only
+      // one view shows at a time so the eye has one place to look.
+      const viewByLens = document.getElementById("view-by-lens");
+      const viewByFile = document.getElementById("view-by-file");
+      document.querySelectorAll(".view-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".view-btn").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          const v = btn.dataset.view;
+          viewByLens.classList.toggle("hidden", v !== "by-lens");
+          viewByFile.classList.toggle("hidden", v !== "by-file");
+        });
+      });
+
+      // Reset filters
+      document.getElementById("reset-filters")?.addEventListener("click", () => {
+        state.polarity = "all";
+        state.confidence = "all";
+        state.lens = "all";
+        state.q = "";
+        document.querySelectorAll(".polarity-chip").forEach((c) => c.classList.toggle("active", c.dataset.polarity === "all"));
+        document.querySelectorAll(".confidence-chip").forEach((c) => c.classList.toggle("active", c.dataset.confidence === "all"));
+        document.querySelectorAll(".lens-chip").forEach((c) => c.classList.toggle("active", c.dataset.lens === "all"));
+        document.getElementById("search").value = "";
         applyFilters();
       });
 
