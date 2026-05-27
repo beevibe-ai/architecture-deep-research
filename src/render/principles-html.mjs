@@ -419,6 +419,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       padding: 14px 0;
     }
     .filter-bar-inner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .filter-bar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1 1 100%; margin-top: 6px; }
     .filter-bar-label {
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
@@ -607,6 +608,28 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     .badge-confirmed { background: rgba(58, 173, 164, 0.15); color: var(--accent); }
     .badge-stale { background: rgba(248, 81, 73, 0.15); color: var(--dont); }
 
+    .empty-state {
+      padding: 32px;
+      text-align: center;
+      background: var(--bg-alt);
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .link-button {
+      background: none;
+      border: none;
+      color: var(--primary);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: inherit;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .lens-tag { cursor: pointer; }
+    .lens-tag:hover { border-color: var(--accent); }
+
     .health-section .health-stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -653,18 +676,22 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
   <div class="filter-bar">
     <div class="shell filter-bar-inner">
-      <span class="filter-bar-label">Filter</span>
-      <button class="chip active" data-filter="all">All</button>
-      <button class="chip" data-filter="do">DO</button>
-      <button class="chip" data-filter="dont">DON'T</button>
-      <button class="chip" data-filter="high">High</button>
-      <button class="chip" data-filter="medium">Medium</button>
-      <button class="chip" data-filter="low">Low</button>
-      <span class="filter-bar-label" style="margin-left:16px;">Lens</span>
-      <button class="chip lens-chip active" data-lens="all">All</button>
-      ${lensChipsHtml}
-      <div class="search">
-        <input type="text" id="search" placeholder="Search rules…" />
+      <span class="filter-bar-label">Polarity</span>
+      <button class="chip polarity-chip active" data-polarity="all">All</button>
+      <button class="chip polarity-chip" data-polarity="do">DO</button>
+      <button class="chip polarity-chip" data-polarity="dont">DON'T</button>
+      <span class="filter-bar-label">Confidence</span>
+      <button class="chip confidence-chip active" data-confidence="all">All</button>
+      <button class="chip confidence-chip" data-confidence="high">High</button>
+      <button class="chip confidence-chip" data-confidence="medium">Medium</button>
+      <button class="chip confidence-chip" data-confidence="low">Low</button>
+      <div class="filter-bar-row">
+        <span class="filter-bar-label">Lens</span>
+        <button class="chip lens-chip active" data-lens="all">All</button>
+        ${lensChipsHtml}
+        <div class="search">
+          <input type="text" id="search" placeholder="Search rules…" />
+        </div>
       </div>
     </div>
   </div>
@@ -694,6 +721,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     <div class="shell">
       <h2>Lenses &amp; principles</h2>
       <p class="section-sub">Click any rule to expand citations, examples, and stats.</p>
+      <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" onclick="document.querySelectorAll('.chip').forEach(c => { if (c.dataset.polarity === 'all' || c.dataset.confidence === 'all' || c.dataset.lens === 'all') c.click(); }); document.getElementById('search').value = ''; document.getElementById('search').dispatchEvent(new Event('input'));">Reset filters</button></div>
       ${lensesAccordionHtml}
     </div>
   </section>
@@ -707,26 +735,40 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
   <script>
     (function () {
-      const state = { polarity: "all", lens: "all", q: "" };
+      // All four filters are independent and AND-ed together. Empty
+      // state (all/all/all + empty q) shows everything.
+      const state = { polarity: "all", confidence: "all", lens: "all", q: "" };
+
+      function bindChipGroup(selector, key, onChange) {
+        document.querySelectorAll(selector).forEach((btn) => {
+          btn.addEventListener("click", () => {
+            document.querySelectorAll(selector).forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            state[key] = btn.dataset[key];
+            onChange();
+          });
+        });
+      }
 
       function applyFilters() {
         const principles = document.querySelectorAll(".principle");
         const blocks = document.querySelectorAll(".lens-block");
         const rows = document.querySelectorAll(".codemap-row");
         const q = state.q.toLowerCase().trim();
+        let visibleCount = 0;
 
         principles.forEach((el) => {
           const polarity = el.dataset.polarity;
           const confidence = el.dataset.confidence;
+          const lensSlug = el.closest(".lens-block")?.dataset.lens || "";
           const text = el.textContent.toLowerCase();
           let show = true;
-          if (state.polarity === "do" && polarity !== "do") show = false;
-          if (state.polarity === "dont" && polarity !== "dont") show = false;
-          if (["high", "medium", "low"].includes(state.polarity)) {
-            if (confidence !== state.polarity) show = false;
-          }
+          if (state.polarity !== "all" && polarity !== state.polarity) show = false;
+          if (state.confidence !== "all" && confidence !== state.confidence) show = false;
+          if (state.lens !== "all" && lensSlug !== state.lens) show = false;
           if (q && !text.includes(q)) show = false;
           el.classList.toggle("hidden", !show);
+          if (show) visibleCount += 1;
         });
 
         blocks.forEach((block) => {
@@ -744,39 +786,41 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
           if (show && q) show = text.includes(q);
           row.classList.toggle("hidden", !show);
         });
+
+        // Empty-state surface so the user sees "no matches" instead of a
+        // silent blank screen when filters exclude everything.
+        const emptyState = document.getElementById("empty-state");
+        if (emptyState) emptyState.classList.toggle("hidden", visibleCount > 0);
       }
 
-      document.querySelectorAll("[data-filter]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll("[data-filter]").forEach((b) => b.classList.remove("active"));
-          btn.classList.add("active");
-          state.polarity = btn.dataset.filter;
-          applyFilters();
-        });
-      });
-      document.querySelectorAll("[data-lens]").forEach((btn) => {
-        if (btn.tagName !== "BUTTON") return;
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".lens-chip").forEach((b) => b.classList.remove("active"));
-          btn.classList.add("active");
-          state.lens = btn.dataset.lens;
-          applyFilters();
-        });
-      });
+      bindChipGroup(".polarity-chip", "polarity", applyFilters);
+      bindChipGroup(".confidence-chip", "confidence", applyFilters);
+      bindChipGroup(".lens-chip", "lens", applyFilters);
+
       document.getElementById("search").addEventListener("input", (e) => {
         state.q = e.target.value;
         applyFilters();
       });
 
-      // Make principle-tag clicks scroll smoothly + expand the principle
+      // Principle-tag in code map → scroll + expand
       document.querySelectorAll(".principle-tag").forEach((tag) => {
-        tag.addEventListener("click", (e) => {
+        tag.addEventListener("click", () => {
           const id = tag.dataset.principle;
           const target = document.getElementById("p-" + id);
           if (target) {
             target.setAttribute("open", "open");
             setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
           }
+        });
+      });
+
+      // Lens-tag in code map → set the lens filter to that lens
+      document.querySelectorAll(".lens-tag").forEach((tag) => {
+        tag.addEventListener("click", () => {
+          const slug = tag.dataset.lens;
+          if (!slug) return;
+          const chip = document.querySelector('.lens-chip[data-lens="' + slug + '"]');
+          if (chip) chip.click();
         });
       });
     })();
