@@ -29,6 +29,7 @@ import { extractRichComments } from "./comment-extractor.mjs";
 import { extractTestDescriptors } from "./test-descriptor-extractor.mjs";
 import { extractGitHubSignals } from "./github-signals.mjs";
 import { renderPrinciplesMarkdown } from "./render-markdown.mjs";
+import { renderPrinciplesHtml } from "../render/principles-html.mjs";
 
 // Build a progress reporter that writes to stderr (visible when run as
 // a CLI / piped through tee) AND optionally invokes an onProgress
@@ -450,9 +451,16 @@ async function discoverPrinciples({ flags = {}, onProgress } = {}) {
   const markdown = renderPrinciplesMarkdown(artifact);
   await writeFile(mdPath, markdown.endsWith("\n") ? markdown : `${markdown}\n`);
 
+  // Beautifully-rendered, interactive HTML report — leads with the
+  // product portrait, includes a code map, filters by lens/polarity/
+  // confidence, links each citation to vscode://. Sits next to the
+  // markdown for users who want the rich view.
+  const htmlPath = await renderPrinciplesHtml({ outDir });
+
   await appendEvent(outDir, "principles_emitted", {
     json_path: jsonPath,
-    md_path: mdPath
+    md_path: mdPath,
+    html_path: htmlPath
   });
 
   await appendEvent(outDir, "principles_completed", {
@@ -475,7 +483,8 @@ async function discoverPrinciples({ flags = {}, onProgress } = {}) {
     principles,
     interviewLog,
     jsonPath,
-    mdPath
+    mdPath,
+    htmlPath
   };
 }
 

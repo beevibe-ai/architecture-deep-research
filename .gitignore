@@ -11,9 +11,10 @@ dist/
 web/dist/
 
 # `.adr/principles.{json,md}` is checked in (the team's principles file);
-# per-run review artifacts and the regenerated health snapshot are not.
+# per-run review artifacts and the regenerated reports / health / stats are not.
 .adr/events.jsonl
 .adr/reviews/
 .adr/drift/
+.adr/principles.html
 .adr/principles-health.json
 .adr/principle-stats.json

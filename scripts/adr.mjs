@@ -228,12 +228,24 @@ async function main() {
 
   if (command === "principles") {
     const sub = inputPath || "init";
-    const validSubs = new Set(["init", "refresh", "incremental", "refine"]);
+    const validSubs = new Set(["init", "refresh", "incremental", "refine", "open"]);
     if (!validSubs.has(sub)) {
       console.error(
-        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`, \`refresh\`, \`incremental\`, or \`refine <id>\`.`
+        `Unknown principles subcommand: ${sub}. Try \`adr principles init\`, \`refresh\`, \`incremental\`, \`refine <id>\`, or \`open\`.`
       );
       process.exitCode = 1;
+      return;
+    }
+    if (sub === "open") {
+      // Re-render principles.html from disk (in case principle-stats /
+      // principles-health updated since last init/refresh) and open it.
+      const pathMod = (await import("node:path")).default;
+      const repoPath = pathMod.resolve(flags.repo || ".");
+      const outDir = pathMod.resolve(flags.out || pathMod.join(repoPath, ".adr"));
+      const { renderPrinciplesHtml } = await import("../src/render/principles-html.mjs");
+      const htmlPath = await renderPrinciplesHtml({ outDir });
+      await openInBrowser(htmlPath);
+      console.log(`Opened ${htmlPath} in your browser.`);
       return;
     }
     if (sub === "refine") {
@@ -263,6 +275,14 @@ async function main() {
         ...(sub === "incremental" ? { incremental: true } : {})
       }
     });
+    if (flags.open === true || flags.open === "true") {
+      try {
+        await openInBrowser(result.htmlPath);
+        console.log(`\nOpened ${result.htmlPath} in your browser.`);
+      } catch (error) {
+        console.error(`(Could not open browser: ${error.message})`);
+      }
+    }
     console.log("");
     if (result.noChanges) {
       console.log(
