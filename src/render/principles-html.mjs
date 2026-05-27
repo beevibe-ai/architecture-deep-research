@@ -151,23 +151,25 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
   const archHtml = archIntent.length
     ? `
     <section class="section">
-      <h2>Architectural intent</h2>
-      <p class="section-sub">Foundational decisions everything else hangs off of.</p>
-      <div class="card-grid">
-        ${archIntent
-          .map(
-            (item) => `
-        <div class="card arch-card">
-          <h3>${escapeHtml(item.name)}</h3>
-          ${item.why ? `<p>${escapeHtml(item.why)}</p>` : ""}
-          ${
-            item.evidence_cite?.length
-              ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
-              : ""
-          }
-        </div>`
-          )
-          .join("")}
+      <div class="shell">
+        <h2>Architectural intent</h2>
+        <p class="section-sub">Foundational decisions everything else hangs off of.</p>
+        <div class="card-grid">
+          ${archIntent
+            .map(
+              (item) => `
+          <div class="card arch-card">
+            <h3>${escapeHtml(item.name)}</h3>
+            ${item.why ? `<p>${escapeHtml(item.why)}</p>` : ""}
+            ${
+              item.evidence_cite?.length
+                ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
+                : ""
+            }
+          </div>`
+            )
+            .join("")}
+        </div>
       </div>
     </section>`
     : "";
@@ -175,46 +177,50 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
   const philHtml = philosophy.length
     ? `
     <section class="section">
-      <h2>Product philosophy</h2>
-      <p class="section-sub">Recurring design principles. The team's taste, not its tech stack.</p>
-      <ul class="philosophy-list">
-        ${philosophy
-          .map(
-            (item) => `
-        <li>
-          <strong>${escapeHtml(item.name)}</strong> — ${escapeHtml(item.statement)}
-          ${
-            item.evidence_cite?.length
-              ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
-              : ""
-          }
-        </li>`
-          )
-          .join("")}
-      </ul>
+      <div class="shell">
+        <h2>Product philosophy</h2>
+        <p class="section-sub">Recurring design principles. The team's taste, not its tech stack.</p>
+        <ul class="philosophy-list">
+          ${philosophy
+            .map(
+              (item) => `
+          <li>
+            <strong>${escapeHtml(item.name)}</strong> — ${escapeHtml(item.statement)}
+            ${
+              item.evidence_cite?.length
+                ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
+                : ""
+            }
+          </li>`
+            )
+            .join("")}
+        </ul>
+      </div>
     </section>`
     : "";
 
   const nonGoalsHtml = nonGoals.length
     ? `
     <section class="section">
-      <h2>Non-goals</h2>
-      <p class="section-sub">What the team explicitly chose NOT to do.</p>
-      <ul class="nongoal-list">
-        ${nonGoals
-          .map(
-            (item) => `
-        <li>
-          ${escapeHtml(item.statement)}
-          ${
-            item.evidence_cite?.length
-              ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
-              : ""
-          }
-        </li>`
-          )
-          .join("")}
-      </ul>
+      <div class="shell">
+        <h2>Non-goals</h2>
+        <p class="section-sub">What the team explicitly chose NOT to do.</p>
+        <ul class="nongoal-list">
+          ${nonGoals
+            .map(
+              (item) => `
+          <li>
+            ${escapeHtml(item.statement)}
+            ${
+              item.evidence_cite?.length
+                ? `<div class="citations">${renderCitations(item.evidence_cite, repoPath)}</div>`
+                : ""
+            }
+          </li>`
+            )
+            .join("")}
+        </ul>
+      </div>
     </section>`
     : "";
 
@@ -348,7 +354,12 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
       --radius: 8px;
     }
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+    html {
+      scroll-behavior: smooth;
+      /* leave room for the sticky filter bar so anchor links (jump-
+         to-principle from the code map) don't land under it */
+      scroll-padding-top: 180px;
+    }
     body {
       margin: 0; padding: 0;
       font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
