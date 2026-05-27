@@ -150,11 +150,11 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
   const archHtml = archIntent.length
     ? `
-    <section class="section">
-      <div class="shell">
+    <div class="portrait-block">
         <h2>Architectural intent</h2>
         <p class="section-sub">Foundational decisions everything else hangs off of.</p>
-        <div class="card-grid">
+        <div class="card-stack">
+
           ${archIntent
             .map(
               (item) => `
@@ -170,16 +170,14 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
             )
             .join("")}
         </div>
-      </div>
-    </section>`
+    </div>`
     : "";
 
   const philHtml = philosophy.length
     ? `
-    <section class="section">
-      <div class="shell">
+    <div class="portrait-block">
         <h2>Product philosophy</h2>
-        <p class="section-sub">Recurring design principles. The team's taste, not its tech stack.</p>
+        <p class="section-sub">Recurring design principles. The team's taste.</p>
         <ul class="philosophy-list">
           ${philosophy
             .map(
@@ -195,14 +193,12 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
             )
             .join("")}
         </ul>
-      </div>
-    </section>`
+    </div>`
     : "";
 
   const nonGoalsHtml = nonGoals.length
     ? `
-    <section class="section">
-      <div class="shell">
+    <div class="portrait-block">
         <h2>Non-goals</h2>
         <p class="section-sub">What the team explicitly chose NOT to do.</p>
         <ul class="nongoal-list">
@@ -220,8 +216,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
             )
             .join("")}
         </ul>
-      </div>
-    </section>`
+    </div>`
     : "";
 
   // Code map — files sorted by principle coverage, each annotated with
@@ -295,7 +290,7 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
         })
         .join("");
       return `
-        <section class="lens-block" data-lens="${escapeHtml(lens.slug)}">
+        <section class="lens-block" id="lens-${escapeHtml(lens.slug)}" data-lens="${escapeHtml(lens.slug)}">
           <header class="lens-header">
             <h3>${escapeHtml(lens.name)} <span class="lens-slug">${escapeHtml(lens.slug)}</span></h3>
             <p class="lens-rationale">${escapeHtml(lens.rationale || "")}</p>
@@ -516,6 +511,84 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     .section { padding: 36px 0; }
     .section + .section { padding-top: 12px; }
     .section.section-bordered { border-bottom: 1px solid var(--border); }
+
+    /* Portrait — side-by-side: arch intent on the left, philosophy +
+       non-goals on the right. Collapses to one column under ~900px. */
+    .portrait-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 36px;
+      align-items: start;
+    }
+    .portrait-block { margin-bottom: 32px; }
+    .portrait-block:last-child { margin-bottom: 0; }
+    .portrait-block h2 { font-size: 18px; margin: 0 0 4px; }
+    .portrait-block .section-sub { margin: 0 0 14px; font-size: 13px; }
+    .card-stack { display: flex; flex-direction: column; gap: 10px; }
+
+    /* Explorer — sticky lens nav on the left, principles on the right. */
+    .explorer-grid {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 32px;
+      align-items: start;
+    }
+    .lens-nav {
+      position: sticky;
+      top: 100px; /* below the sticky filter bar */
+      max-height: calc(100vh - 120px);
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .lens-nav .nav-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+    .lens-nav ul { list-style: none; padding: 0; margin: 0; }
+    .lens-nav li { margin: 0; }
+    .lens-nav a {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      transition: all 120ms ease;
+      text-decoration: none;
+    }
+    .lens-nav a:hover {
+      background: var(--bg-alt);
+      color: var(--fg);
+      text-decoration: none;
+    }
+    .lens-nav a.active {
+      background: var(--bg-alt);
+      color: var(--primary);
+      border-left: 2px solid var(--primary);
+      padding-left: 8px;
+    }
+    .nav-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-count {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+    .explorer-content { min-width: 0; }
+
+    @media (max-width: 900px) {
+      .portrait-grid { grid-template-columns: 1fr; gap: 24px; }
+      .explorer-grid { grid-template-columns: 1fr; }
+      .lens-nav { position: static; max-height: none; overflow: visible; margin-bottom: 16px; }
+      .lens-nav ul { display: flex; flex-wrap: wrap; gap: 4px; }
+      .lens-nav a { padding: 4px 10px; background: var(--bg-alt); border-radius: 999px; }
+    }
     h2 { font-size: 22px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.01em; }
     .section-sub { color: var(--muted); margin: 0 0 20px; }
 
@@ -735,9 +808,19 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
 
   <!-- PART 1 — THE PORTRAIT (read-only, narrative) -->
 
-  ${archHtml}
-  ${philHtml}
-  ${nonGoalsHtml}
+  <section class="section">
+    <div class="shell">
+      <div class="portrait-grid">
+        <div class="portrait-left">
+          ${archHtml}
+        </div>
+        <div class="portrait-right">
+          ${philHtml}
+          ${nonGoalsHtml}
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- PART 2 — THE EXPLORER (filter chips apply from here down) -->
 
@@ -777,25 +860,45 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
     </div>
   </div>
 
-  <section class="section" id="view-by-lens">
-    <div class="shell">
-      <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
-      ${lensesAccordionHtml}
-    </div>
-  </section>
+  <section class="section">
+    <div class="shell explorer-grid">
+      <aside class="lens-nav">
+        <div class="nav-label">Jump to lens</div>
+        <ul>
+          ${lenses
+            .map((lens) => {
+              const count = (principlesByLens.get(lens.slug) || []).length;
+              return `
+          <li>
+            <a href="#lens-${escapeHtml(lens.slug)}" data-lens-anchor="${escapeHtml(lens.slug)}">
+              <span class="nav-name">${escapeHtml(lens.name)}</span>
+              <span class="nav-count">${count}</span>
+            </a>
+          </li>`;
+            })
+            .join("")}
+        </ul>
+      </aside>
 
-  <section class="section hidden" id="view-by-file">
-    <div class="shell">
-      <p class="section-sub">Files ranked by how many principles cite them. Click a file path to open in your editor; click a lens tag to filter to it; click a principle id to jump to its rule.</p>
-      <div class="codemap-wrapper">
-        <table class="codemap">
-          <thead>
-            <tr><th>File</th><th>Lenses</th><th>Principles</th></tr>
-          </thead>
-          <tbody>
-            ${codeMapRowsHtml}
-          </tbody>
-        </table>
+      <div class="explorer-content">
+        <div id="view-by-lens">
+          <div id="empty-state" class="empty-state hidden">No principles match the current filters. <button class="link-button" id="reset-filters">Reset filters</button></div>
+          ${lensesAccordionHtml}
+        </div>
+
+        <div id="view-by-file" class="hidden">
+          <p class="section-sub">Files ranked by how many principles cite them. Click a file path to open in your editor; click a lens tag to filter to it; click a principle id to jump to its rule.</p>
+          <div class="codemap-wrapper">
+            <table class="codemap">
+              <thead>
+                <tr><th>File</th><th>Lenses</th><th>Principles</th></tr>
+              </thead>
+              <tbody>
+                ${codeMapRowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -889,6 +992,28 @@ function renderPrinciplesHtmlString({ artifact, stats, health, repoPath }) {
           viewByFile.classList.toggle("hidden", v !== "by-file");
         });
       });
+
+      // Lens-nav active highlight — track which lens block is in view
+      // and highlight the matching sidebar link. Uses IntersectionObserver.
+      const navLinks = document.querySelectorAll("[data-lens-anchor]");
+      const blockToLink = new Map();
+      navLinks.forEach((a) => blockToLink.set(a.dataset.lensAnchor, a));
+      const lensObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            const slug = entry.target.dataset.lens;
+            if (!slug) return;
+            const link = blockToLink.get(slug);
+            if (!link) return;
+            if (entry.isIntersecting) {
+              navLinks.forEach((l) => l.classList.remove("active"));
+              link.classList.add("active");
+            }
+          });
+        },
+        { rootMargin: "-30% 0px -60% 0px", threshold: 0 }
+      );
+      document.querySelectorAll(".lens-block").forEach((b) => lensObserver.observe(b));
 
       // Reset filters
       document.getElementById("reset-filters")?.addEventListener("click", () => {
