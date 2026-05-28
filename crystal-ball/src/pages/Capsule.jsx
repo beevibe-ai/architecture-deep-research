@@ -1,24 +1,51 @@
 import { Link, useParams } from "react-router-dom";
-import { useMemo, useState } from "react";
-import { loadCapsule } from "../lib/store.js";
+import { useEffect, useState } from "react";
+import { loadCapsule, saveCapsule } from "../lib/store.js";
 import { CrystalStage } from "../components/CrystalCover.jsx";
 import Timeline from "../components/Timeline.jsx";
 import VisitorChat from "../components/VisitorChat.jsx";
 
 export default function CapsuleView() {
   const { id } = useParams();
-  const capsule = useMemo(() => loadCapsule(id), [id]);
+  const [capsule, setCapsule] = useState(() => loadCapsule(id));
+  const [status, setStatus] = useState(capsule ? "ok" : "loading");
   const [showTimeline, setShowTimeline] = useState(false);
+
+  useEffect(() => {
+    if (capsule) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/capsules/${id}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        saveCapsule(data);
+        setCapsule(data);
+        setStatus("ok");
+      } catch {
+        if (!cancelled) setStatus("missing");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, capsule]);
 
   if (!capsule) {
     return (
       <div className="cb-shell cb-capsule">
         <CrystalStage />
         <div className="cb-overlay cb-center cb-not-found">
-          <h1 className="cb-headline-sm">Not found here.</h1>
+          <h1 className="cb-headline-sm">
+            {status === "loading" ? "Fetching capsule…" : "Not found."}
+          </h1>
           <p className="cb-lede">
-            Capsule <code>{id}</code> isn't in this browser. v0 stores capsules
-            client-side only.
+            {status === "loading" ? (
+              <>looking up <code>{id}</code> on the server.</>
+            ) : (
+              <>Capsule <code>{id}</code> isn't on this server or in this browser.</>
+            )}
           </p>
           <Link to="/" className="cb-cta cb-cta-ghost">← back</Link>
         </div>

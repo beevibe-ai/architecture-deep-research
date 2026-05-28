@@ -1,22 +1,123 @@
-// Minimal stateless API server for Crystal Ball v0.
+// Stateless Anthropic proxy + capsule storage for Crystal Ball v0.
 //
-// Only endpoint: POST /api/chat
-//   body: { capsule, history: [{role, text}] }
-//   reply: { reply: string }
+// Endpoints
+//   POST /api/capsules           — body: raw .jsonl OR { capsule } JSON.
+//                                  Returns { id, url, capsule }.
+//   GET  /api/capsules/:id       — returns the stored capsule JSON.
+//   POST /api/chat               — body: { capsule, history }. Visitor chat,
+//                                  stance-inheritance mode.
+//   GET  /api/health             — { ok, hasKey, storage }.
 //
-// The model is instructed to answer as a continuation of the publisher's
-// reasoning — i.e. stance inheritance, not neutral narration. Capsule events
-// are flattened into the system prompt; visitor history becomes a normal
-// user/assistant exchange.
+// Persistence: files under crystal-ball/.capsules/<id>.json (gitignored).
+// No accounts, no auth, no expiration — v0 demo only.
 
 import http from "node:http";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
+import { parseFile } from "./src/lib/parser.js";
+import { isCapsule } from "./src/lib/schema.js";
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const STORE_DIR = path.join(HERE, ".capsules");
 const PORT = Number(process.env.PORT || 5274);
+const VIEWER_URL = (process.env.CRYSTAL_VIEWER_URL || "http://localhost:5273").replace(/\/$/, "");
 const MODEL = process.env.CRYSTAL_BALL_MODEL || "claude-sonnet-4-5";
 const MAX_TOKENS = Number(process.env.CRYSTAL_BALL_MAX_TOKENS || 1024);
+const MAX_BODY = 10 * 1024 * 1024; // 10 MB
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+await fs.mkdir(STORE_DIR, { recursive: true });
+
+// -------- capsule storage --------------------------------------------------
+
+async function saveCapsule(capsule) {
+  const file = path.join(STORE_DIR, `${capsule.id}.json`);
+  await fs.writeFile(file, JSON.stringify(capsule, null, 2), "utf8");
+}
+
+async function loadCapsule(id) {
+  if (!/^[a-z0-9]{4,32}$/i.test(id)) return null;
+  try {
+    const text = await fs.readFile(path.join(STORE_DIR, `${id}.json`), "utf8");
+    return JSON.parse(text);
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+// -------- handlers ---------------------------------------------------------
+
+async function handleCreateCapsule(req, res) {
+  const ct = (req.headers["content-type"] || "").toLowerCase();
+  const raw = await readBody(req);
+
+  let capsule;
+  let warnings = [];
+  try {
+    if (ct.includes("application/json")) {
+      const body = JSON.parse(raw || "{}");
+      if (body.capsule && isCapsule(body.capsule)) {
+        capsule = body.capsule;
+      } else if (typeof body.rawJsonl === "string") {
+        ({ capsule, warnings } = parseFile(body.rawJsonl, body.filename || ""));
+      } else if (typeof body.text === "string") {
+        ({ capsule, warnings } = parseFile(body.text, body.filename || ""));
+      } else {
+        return reply(res, 400, "expected { capsule } or { rawJsonl } in JSON body");
+      }
+    } else {
+      // text/plain, application/x-jsonl, application/jsonl, etc.
+      ({ capsule, warnings } = parseFile(raw, ""));
+    }
+  } catch (err) {
+    return reply(res, 400, `parse failed: ${err.message || err}`);
+  }
+
+  await saveCapsule(capsule);
+  const url = `${VIEWER_URL}/c/${capsule.id}`;
+  return replyJson(res, 200, { id: capsule.id, url, capsule, warnings });
+}
+
+async function handleGetCapsule(res, id) {
+  const capsule = await loadCapsule(id);
+  if (!capsule) return reply(res, 404, "capsule not found");
+  return replyJson(res, 200, capsule);
+}
+
+async function handleChat(req, res) {
+  const body = JSON.parse((await readBody(req)) || "null");
+  if (!body?.capsule || !Array.isArray(body?.history)) {
+    return reply(res, 400, "bad request");
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return reply(res, 500, "server is missing ANTHROPIC_API_KEY");
+  }
+  try {
+    const messages = body.history.map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.text || "",
+    }));
+    const result = await client.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      system: buildSystem(body.capsule),
+      messages,
+    });
+    const reply_ = (result.content || [])
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    return replyJson(res, 200, { reply: reply_ });
+  } catch (err) {
+    return reply(res, 500, `upstream error: ${err.message || err}`);
+  }
+}
+
+// -------- system prompt (stance inheritance) -------------------------------
 
 function flattenCapsule(capsule) {
   const lines = [];
@@ -38,7 +139,6 @@ function flattenCapsule(capsule) {
       lines.push(`[thinking] ${e.content.slice(0, 400)}`);
     }
   }
-  // Hard cap so we don't blow context. Tail-biased: recent events matter more.
   const joined = lines.join("\n");
   return joined.length > 60000 ? "…[earlier omitted]\n" + joined.slice(-60000) : joined;
 }
@@ -78,86 +178,78 @@ function buildSystem(capsule) {
   ].join("\n");
 }
 
-async function handleChat(req, res) {
-  const body = await readJson(req);
-  if (!body?.capsule || !Array.isArray(body?.history)) {
-    res.writeHead(400, { "content-type": "text/plain" });
-    res.end("bad request");
-    return;
-  }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.writeHead(500, { "content-type": "text/plain" });
-    res.end("server is missing ANTHROPIC_API_KEY");
-    return;
-  }
-  try {
-    const messages = body.history.map((m) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.text || "",
-    }));
-    const result = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: buildSystem(body.capsule),
-      messages,
-    });
-    const reply = (result.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ reply }));
-  } catch (err) {
-    res.writeHead(500, { "content-type": "text/plain" });
-    res.end(`upstream error: ${err.message || err}`);
-  }
-}
+// -------- helpers ----------------------------------------------------------
 
-function readJson(req) {
+function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (chunk) => (data += chunk));
-    req.on("end", () => {
-      try {
-        resolve(data ? JSON.parse(data) : null);
-      } catch (e) {
-        reject(e);
+    let total = 0;
+    req.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > MAX_BODY) {
+        reject(new Error("body too large"));
+        req.destroy();
+        return;
       }
+      data += chunk;
     });
+    req.on("end", () => resolve(data));
     req.on("error", reject);
   });
 }
 
+function reply(res, status, text) {
+  res.writeHead(status, { "content-type": "text/plain" });
+  res.end(text);
+}
+function replyJson(res, status, obj) {
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(JSON.stringify(obj));
+}
+
+// -------- router -----------------------------------------------------------
+
 const server = http.createServer(async (req, res) => {
+  res.setHeader("access-control-allow-origin", "*");
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
       "access-control-allow-headers": "content-type",
     });
     res.end();
     return;
   }
-  res.setHeader("access-control-allow-origin", "*");
-
-  if (req.method === "POST" && req.url === "/api/chat") {
-    await handleChat(req, res);
-    return;
+  try {
+    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (req.method === "GET" && url.pathname === "/api/health") {
+      return replyJson(res, 200, {
+        ok: true,
+        hasKey: !!process.env.ANTHROPIC_API_KEY,
+        storage: STORE_DIR,
+        viewerUrl: VIEWER_URL,
+      });
+    }
+    if (req.method === "POST" && url.pathname === "/api/capsules") {
+      return await handleCreateCapsule(req, res);
+    }
+    const get = url.pathname.match(/^\/api\/capsules\/([a-z0-9]{4,32})$/i);
+    if (req.method === "GET" && get) {
+      return await handleGetCapsule(res, get[1]);
+    }
+    if (req.method === "POST" && url.pathname === "/api/chat") {
+      return await handleChat(req, res);
+    }
+    return reply(res, 404, "not found");
+  } catch (err) {
+    return reply(res, 500, `server error: ${err.message || err}`);
   }
-  if (req.method === "GET" && req.url === "/api/health") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, hasKey: !!process.env.ANTHROPIC_API_KEY }));
-    return;
-  }
-  res.writeHead(404, { "content-type": "text/plain" });
-  res.end("not found");
 });
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`crystal-ball server on http://127.0.0.1:${PORT}`);
+  console.log(`  storage:  ${STORE_DIR}`);
+  console.log(`  viewer:   ${VIEWER_URL}`);
   if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn(
-      "WARN: ANTHROPIC_API_KEY not set — /api/chat will return 500 until it is."
-    );
+    console.warn("WARN: ANTHROPIC_API_KEY not set — /api/chat returns 500.");
   }
 });

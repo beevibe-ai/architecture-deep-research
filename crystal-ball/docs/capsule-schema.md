@@ -66,10 +66,29 @@ at, not as a neutral narrator. This is a v1 choice; the alternative ("neutral
 narrator") is reserved as a future toggle once we see how publishers feel
 about their capsule "speaking for them".
 
+## Persistence
+
+The server stores capsules on the filesystem at
+`crystal-ball/.capsules/<id>.json` (gitignored). The browser also caches a
+copy in `localStorage` for instant loads. The viewer hydrates from
+localStorage first, then falls back to `GET /api/capsules/:id` for capsules
+that came from someone else's publish.
+
+## Publishing surface
+
+Two clients call `POST /api/capsules`:
+
+1. The `/crystal:publish` skill — sends the raw `.jsonl` of the current
+   Claude Code session (content-type `application/x-jsonl`).
+2. The web drag-drop importer — sends a pre-parsed capsule
+   (`{ "capsule": {...} }`).
+
+Both paths hit the same parser and produce the same shape.
+
 ## What's NOT in v0.1
 
 - No incremental updates (capsule is immutable; republish for v2)
 - No crystal-to-crystal interaction
-- No accounts / auth
+- No accounts / auth / team scoping
 - No automated redaction (publisher is responsible for what they upload)
-- No persistence beyond browser localStorage (server stores nothing)
+- No hosted deployment — server runs on the publisher's machine

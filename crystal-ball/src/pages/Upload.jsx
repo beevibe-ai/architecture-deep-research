@@ -14,6 +14,25 @@ export default function Upload() {
     setRecent(listCapsules().slice(0, 4));
   }, []);
 
+  async function publish(capsule) {
+    // Save locally so the user sees it instantly; try to mirror to the server
+    // so the share link is usable. Server failure is non-fatal in v0.
+    saveCapsule(capsule);
+    try {
+      const res = await fetch("/api/capsules", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capsule }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.capsule) saveCapsule(data.capsule);
+      }
+    } catch {
+      // server may be down — capsule still works locally
+    }
+  }
+
   const handleFiles = useCallback(
     async (files) => {
       setError("");
@@ -23,7 +42,7 @@ export default function Upload() {
         const text = await file.text();
         const { capsule, warnings } = parseFile(text, file.name);
         if (warnings.length) console.warn("[capsule warnings]", warnings);
-        saveCapsule(capsule);
+        await publish(capsule);
         navigate(`/c/${capsule.id}`);
       } catch (e) {
         setError(e.message || String(e));
@@ -39,7 +58,7 @@ export default function Upload() {
       const text = await res.text();
       const { capsule } = parseFile(text, "sample-session.jsonl");
       capsule.title = "Debugging a payment retry double-charge";
-      saveCapsule(capsule);
+      await publish(capsule);
       navigate(`/c/${capsule.id}`);
     } catch (e) {
       setError(e.message || String(e));

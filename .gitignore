@@ -18,3 +18,7 @@ web/dist/
 .adr/principles.html
 .adr/principles-health.json
 .adr/principle-stats.json
+
+# Crystal Ball — server-side capsule store (per-machine; not version controlled)
+crystal-ball/.capsules/
+crystal-ball/dist/
