@@ -1,4 +1,4 @@
-import { emptyCapsule, isCapsule } from "./schema.js";
+import { emptyCapsule, isCapsule, textOfContent } from "./schema.js";
 
 // Accept either:
 //   1) A Claude Code session .jsonl (one JSON event per line)
@@ -24,12 +24,16 @@ export function parseFile(text, filename = "") {
 
 function parseClaudeCodeJsonl(text, filename) {
   const warnings = [];
-  const lines = text.split("\n").filter((l) => l.trim());
+  const lines = text.split("\n");
   const rawEvents = [];
-  for (const [i, line] of lines.entries()) {
+  // Iterate with the original line number so warnings point at the source file,
+  // not at the post-filter index.
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
     try {
       rawEvents.push(JSON.parse(line));
-    } catch (err) {
+    } catch {
       warnings.push(`Line ${i + 1}: not valid JSON, skipped.`);
     }
   }
@@ -70,7 +74,7 @@ function parseClaudeCodeJsonl(text, filename) {
             events.push({
               type: "tool_use",
               ts,
-              name: block.name,
+              name: block.name || "unknown",
               input: block.input || {},
               result: null,
               ok: null,
@@ -82,12 +86,19 @@ function parseClaudeCodeJsonl(text, filename) {
     } else if (type === "tool_result" || raw.toolUseResult) {
       const result = raw.toolUseResult || raw.content || raw.result;
       const useId = raw.tool_use_id || raw.toolUseId;
-      const last = [...events].reverse().find(
-        (e) => e.type === "tool_use" && (!useId || e._toolUseId === useId)
-      );
-      if (last) {
-        last.result = summarizeToolResult(result);
-        last.ok = !raw.is_error && !raw.error;
+      // Attach to the FIRST unresolved tool_use (FIFO). Real Claude Code emits
+      // tool_results in the same order as their tool_uses, so picking the
+      // oldest pending call is correct. Require id match when one was provided.
+      let match = null;
+      for (const e of events) {
+        if (e.type !== "tool_use" || e.result !== null) continue;
+        if (useId && e._toolUseId !== useId) continue;
+        match = e;
+        break;
+      }
+      if (match) {
+        match.result = summarizeToolResult(result);
+        match.ok = !raw.is_error && !raw.error;
       } else {
         events.push({
           type: "tool_use",
@@ -95,7 +106,7 @@ function parseClaudeCodeJsonl(text, filename) {
           name: "unknown",
           input: {},
           result: summarizeToolResult(result),
-          ok: !raw.is_error,
+          ok: !raw.is_error && !raw.error,
         });
       }
     } else if (type === "file_change" || raw.path) {
@@ -115,23 +126,31 @@ function parseClaudeCodeJsonl(text, filename) {
     }
   }
 
-  // Harvest files touched via tool_use too (Edit/Write)
+  // Single pass for metadata counts + file harvest. Replaces 4 filter() scans
+  // and a second loop over events.
+  let messageCount = 0;
+  let toolCallCount = 0;
+  let fileChangeCount = 0;
+  let abandonedCount = 0;
   for (const e of events) {
-    if (e.type === "tool_use" && e.input?.file_path) {
-      filesTouched.add(e.input.file_path);
+    if (e.type === "message") {
+      messageCount++;
+    } else if (e.type === "tool_use") {
+      toolCallCount++;
+      if (e.ok === false) abandonedCount++;
+      if (/Edit|Write/i.test(e.name)) fileChangeCount++;
+      if (e.input?.file_path) filesTouched.add(e.input.file_path);
+    } else if (e.type === "file_change") {
+      fileChangeCount++;
     }
   }
 
   capsule.events = events;
   capsule.metadata.model = model;
-  capsule.metadata.messageCount = events.filter((e) => e.type === "message").length;
-  capsule.metadata.toolCallCount = events.filter((e) => e.type === "tool_use").length;
-  capsule.metadata.fileChangeCount = events.filter(
-    (e) => e.type === "file_change" || (e.type === "tool_use" && /Edit|Write/i.test(e.name))
-  ).length;
-  capsule.metadata.abandonedCount = events.filter(
-    (e) => e.type === "tool_use" && e.ok === false
-  ).length;
+  capsule.metadata.messageCount = messageCount;
+  capsule.metadata.toolCallCount = toolCallCount;
+  capsule.metadata.fileChangeCount = fileChangeCount;
+  capsule.metadata.abandonedCount = abandonedCount;
   capsule.metadata.durationMs =
     firstTs && lastTs ? new Date(lastTs) - new Date(firstTs) : 0;
   capsule.metadata.outcome = guessOutcome(events);
@@ -164,17 +183,10 @@ function truncate(s, n) {
 }
 
 function guessTitle(rawEvents, filename) {
-  // First user message, first line, capped
   for (const r of rawEvents) {
     const msg = r.message || (r.type === "message" ? r : null);
     if (msg?.role === "user") {
-      const content = msg.content;
-      const text =
-        typeof content === "string"
-          ? content
-          : Array.isArray(content)
-          ? content.find((c) => c.type === "text")?.text || ""
-          : "";
+      const text = textOfContent(msg.content);
       const firstLine = text.split("\n").find((l) => l.trim());
       if (firstLine) return firstLine.slice(0, 80);
     }
@@ -186,7 +198,7 @@ function guessOutcome(events) {
   const last = events[events.length - 1];
   if (!last) return "in-progress";
   if (last.type === "message" && last.role === "assistant") {
-    const text = textOf(last);
+    const text = textOfContent(last.content);
     if (/\b(done|fixed|resolved|works|shipped|merged)\b/i.test(text)) return "resolved";
     if (/\b(stuck|gave up|abandon|blocked)\b/i.test(text)) return "abandoned";
   }
@@ -196,7 +208,7 @@ function guessOutcome(events) {
 function guessTopics(events) {
   const text = events
     .filter((e) => e.type === "message")
-    .map(textOf)
+    .map((e) => textOfContent(e.content))
     .join(" ")
     .toLowerCase();
   const topics = [];
@@ -213,14 +225,6 @@ function guessTopics(events) {
   return topics.slice(0, 3);
 }
 
-function textOf(event) {
-  if (event.type !== "message") return "";
-  if (typeof event.content === "string") return event.content;
-  if (Array.isArray(event.content))
-    return event.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-  return "";
-}
-
 function autoSummary(capsule) {
   const { messageCount, toolCallCount, fileChangeCount, outcome, topics } =
     capsule.metadata;
@@ -228,6 +232,8 @@ function autoSummary(capsule) {
   return `${messageCount} messages, ${toolCallCount} tool calls, ${fileChangeCount} file edits${topicPart}. Outcome: ${outcome}.`;
 }
 
+// Client-side seed id. Server always overwrites this on persist — never trust
+// it for filesystem paths.
 function makeId() {
   return Math.random().toString(36).slice(2, 10);
 }

@@ -1,15 +1,8 @@
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-}
+import { textOfContent } from "../lib/schema.js";
 
 function MessageCard({ event }) {
   const isUser = event.role === "user";
-  const text = textOf(event.content);
+  const text = textOfContent(event.content);
   return (
     <div className={`cb-event cb-message ${isUser ? "cb-user" : "cb-assistant"}`}>
       <div className="cb-role">{isUser ? "user" : "assistant"}</div>

@@ -14,10 +14,11 @@
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import { parseFile } from "./src/lib/parser.js";
-import { isCapsule } from "./src/lib/schema.js";
+import { ID_RE, isCapsule, textOfContent } from "./src/lib/schema.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STORE_DIR = path.join(HERE, ".capsules");
@@ -33,13 +34,24 @@ await fs.mkdir(STORE_DIR, { recursive: true });
 
 // -------- capsule storage --------------------------------------------------
 
+// 48-bit hex id — large enough that random collision is negligible at v0
+// scale, satisfies ID_RE (4..32 alphanumeric).
+function newId() {
+  return crypto.randomBytes(6).toString("hex");
+}
+
 async function saveCapsule(capsule) {
+  // Defensive: the only path that calls this should have already set a
+  // server-issued id. Reject otherwise so a malformed call can't traverse.
+  if (!ID_RE.test(capsule.id || "")) {
+    throw new Error("capsule.id missing or not server-issued");
+  }
   const file = path.join(STORE_DIR, `${capsule.id}.json`);
   await fs.writeFile(file, JSON.stringify(capsule, null, 2), "utf8");
 }
 
 async function loadCapsule(id) {
-  if (!/^[a-z0-9]{4,32}$/i.test(id)) return null;
+  if (!ID_RE.test(id)) return null;
   try {
     const text = await fs.readFile(path.join(STORE_DIR, `${id}.json`), "utf8");
     return JSON.parse(text);
@@ -51,14 +63,17 @@ async function loadCapsule(id) {
 
 // -------- handlers ---------------------------------------------------------
 
+// Allowlist of content-types that carry a raw .jsonl session body.
+const JSONL_CT = ["application/x-jsonl", "application/jsonl", "application/x-ndjson", "text/plain"];
+
 async function handleCreateCapsule(req, res) {
-  const ct = (req.headers["content-type"] || "").toLowerCase();
+  const ct = (req.headers["content-type"] || "").toLowerCase().split(";")[0].trim();
   const raw = await readBody(req);
 
   let capsule;
   let warnings = [];
   try {
-    if (ct.includes("application/json")) {
+    if (ct === "application/json") {
       const body = JSON.parse(raw || "{}");
       if (body.capsule && isCapsule(body.capsule)) {
         capsule = body.capsule;
@@ -69,13 +84,23 @@ async function handleCreateCapsule(req, res) {
       } else {
         return reply(res, 400, "expected { capsule } or { rawJsonl } in JSON body");
       }
-    } else {
-      // text/plain, application/x-jsonl, application/jsonl, etc.
+    } else if (JSONL_CT.includes(ct)) {
       ({ capsule, warnings } = parseFile(raw, ""));
+    } else {
+      return reply(
+        res,
+        415,
+        `unsupported content-type: ${ct || "(none)"}. Use application/json with { capsule } / { rawJsonl }, or application/x-jsonl for raw session text.`
+      );
     }
   } catch (err) {
     return reply(res, 400, `parse failed: ${err.message || err}`);
   }
+
+  // Server owns id assignment — never trust client-supplied ids for the
+  // filesystem path. Closes a path-traversal hole and avoids cross-publisher
+  // id collisions from clients that share a tiny id space.
+  capsule.id = newId();
 
   await saveCapsule(capsule);
   const url = `${VIEWER_URL}/c/${capsule.id}`;
@@ -123,7 +148,7 @@ function flattenCapsule(capsule) {
   const lines = [];
   for (const e of capsule.events || []) {
     if (e.type === "message") {
-      const text = textOf(e.content);
+      const text = textOfContent(e.content);
       if (!text) continue;
       lines.push(`[${e.role}] ${text}`);
     } else if (e.type === "tool_use") {
@@ -136,17 +161,12 @@ function flattenCapsule(capsule) {
     } else if (e.type === "file_change") {
       lines.push(`[edit] ${e.path}\n${(e.diff || "").slice(0, 600)}`);
     } else if (e.type === "thinking") {
-      lines.push(`[thinking] ${e.content.slice(0, 400)}`);
+      const thought = String(e.content || "");
+      if (thought) lines.push(`[thinking] ${thought.slice(0, 400)}`);
     }
   }
   const joined = lines.join("\n");
   return joined.length > 60000 ? "…[earlier omitted]\n" + joined.slice(-60000) : joined;
-}
-
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
 }
 
 function buildSystem(capsule) {

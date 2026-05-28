@@ -11,6 +11,7 @@ export default function VisitorChat({ capsule }) {
   async function send() {
     const q = input.trim();
     if (!q || busy) return;
+    const prior = messages;
     setInput("");
     setError("");
     const next = [...messages, { role: "user", text: q }];
@@ -32,6 +33,11 @@ export default function VisitorChat({ capsule }) {
       const data = await res.json();
       setMessages((m) => [...m, { role: "assistant", text: data.reply || "" }]);
     } catch (e) {
+      // Rollback the optimistic user bubble so the visitor doesn't see an
+      // orphan question above the error. Restore the input so they can edit
+      // and retry without retyping.
+      setMessages(prior);
+      setInput(q);
       setError(e.message || String(e));
     } finally {
       setBusy(false);

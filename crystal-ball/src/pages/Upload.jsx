@@ -15,9 +15,10 @@ export default function Upload() {
   }, []);
 
   async function publish(capsule) {
-    // Save locally so the user sees it instantly; try to mirror to the server
-    // so the share link is usable. Server failure is non-fatal in v0.
-    saveCapsule(capsule);
+    // Try the server first so we save the canonical (server-id'd) capsule.
+    // If the server is down, fall back to the client's seed id — capsule
+    // still works locally and the share link will just 404 elsewhere.
+    let canonical = capsule;
     try {
       const res = await fetch("/api/capsules", {
         method: "POST",
@@ -26,11 +27,13 @@ export default function Upload() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data?.capsule) saveCapsule(data.capsule);
+        if (data?.capsule) canonical = data.capsule;
       }
     } catch {
-      // server may be down — capsule still works locally
+      // server unreachable — keep client capsule
     }
+    saveCapsule(canonical);
+    return canonical;
   }
 
   const handleFiles = useCallback(
@@ -42,8 +45,8 @@ export default function Upload() {
         const text = await file.text();
         const { capsule, warnings } = parseFile(text, file.name);
         if (warnings.length) console.warn("[capsule warnings]", warnings);
-        await publish(capsule);
-        navigate(`/c/${capsule.id}`);
+        const published = await publish(capsule);
+        navigate(`/c/${published.id}`);
       } catch (e) {
         setError(e.message || String(e));
       }
@@ -58,8 +61,8 @@ export default function Upload() {
       const text = await res.text();
       const { capsule } = parseFile(text, "sample-session.jsonl");
       capsule.title = "Debugging a payment retry double-charge";
-      await publish(capsule);
-      navigate(`/c/${capsule.id}`);
+      const published = await publish(capsule);
+      navigate(`/c/${published.id}`);
     } catch (e) {
       setError(e.message || String(e));
     }
