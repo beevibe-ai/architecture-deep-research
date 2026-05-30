@@ -4,6 +4,9 @@
   "description": "Beevibe AI CTO — the decision layer your coding agents are missing. Flagship feature: ADR (Architecture Deep Research). Coming next: adr drift, adr review, adr guard.",
   "license": "Apache-2.0",
   "author": "Beevibe",
+  "publishConfig": {
+    "access": "public"
+  },
   "homepage": "https://github.com/beevibe-ai/beevibe-cto",
   "repository": {
     "type": "git",
