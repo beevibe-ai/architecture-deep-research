@@ -1,14 +1,21 @@
 # Beevibe AI CTO
-<img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/4f8dd109-71de-4cfa-b957-b609bf50591a" />
-<img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/d3f2f4ce-7c00-4d21-8a7e-824e871e5138" />
-<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/f07a64e7-563b-47a2-bba1-399215358f85" />
-<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/12b8a8a5-850c-4e4d-81c1-12b5bd7525d9" />
-<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/cec470bb-0411-45a1-b6e7-6029d82bcb33" />
-<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/f9ca2f06-4ebe-48f9-96f0-852b0632b149" />
-<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/a09f45bd-9761-441c-83dd-1eb11c29f414" />
-
 
 **The decision layer your coding agents are missing.**
+
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/4f8dd109-71de-4cfa-b957-b609bf50591a" width="100%" />
+
+<details>
+<summary><b>More screenshots</b></summary>
+<br>
+
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/d3f2f4ce-7c00-4d21-8a7e-824e871e5138" width="100%" />
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/f07a64e7-563b-47a2-bba1-399215358f85" width="100%" />
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/12b8a8a5-850c-4e4d-81c1-12b5bd7525d9" width="100%" />
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/cec470bb-0411-45a1-b6e7-6029d82bcb33" width="100%" />
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/f9ca2f06-4ebe-48f9-96f0-852b0632b149" width="100%" />
+<img alt="Beevibe AI CTO" src="https://github.com/user-attachments/assets/a09f45bd-9761-441c-83dd-1eb11c29f414" width="100%" />
+
+</details>
 
 The full loop, from architecture decision through PR review to drift detection:
 
