@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/drift-report.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/drift-report.schema.json",
   "title": "Beevibe ADR Drift Report",
   "description": "Output of `adr drift` — full-repo scan against `.adr/principles.json`. Lists violations of team principles found anywhere in the codebase (not just in a diff).",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/research-plan.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/research-plan.schema.json",
   "title": "Beevibe Architecture Deep Research Plan",
   "type": "object",
   "required": ["version", "architecture", "max_parallel_research_agents", "tasks"],

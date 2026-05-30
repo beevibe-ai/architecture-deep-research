@@ -17,11 +17,11 @@
       "category": "agent-orchestration",
       "source": {
         "source": "git-subdir",
-        "url": "https://github.com/beevibe-ai/architecture-deep-research.git",
+        "url": "https://github.com/beevibe-ai/beevibe-cto.git",
         "path": "plugin",
         "ref": "main"
       },
-      "homepage": "https://github.com/beevibe-ai/architecture-deep-research"
+      "homepage": "https://github.com/beevibe-ai/beevibe-cto"
     }
   ]
 }

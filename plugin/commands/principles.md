@@ -9,7 +9,7 @@ Use when the user wants the bot to learn their team's conventions so PR review c
 ## Step 1 — Check the environment
 
 ```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
+npx -y --package=github:beevibe-ai/beevibe-cto adr-doctor
 ```
 
 `adr principles` only needs an LLM provider (no web search). If that one is missing, invoke `/adr:doctor`.

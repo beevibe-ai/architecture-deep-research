@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/citation-audit.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/citation-audit.schema.json",
   "title": "Beevibe Architecture Deep Research Citation Audit",
   "type": "object",
   "required": ["version", "total_citations", "verified_count", "unsupported_count", "items"],

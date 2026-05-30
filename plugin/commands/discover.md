@@ -17,7 +17,7 @@ Capture as `<DECISION>`.
 ## Step 2 — Check the environment
 
 ```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
+npx -y --package=github:beevibe-ai/beevibe-cto adr-doctor
 ```
 
 `adr discover` only needs an LLM provider (no web search). If that one is missing, invoke `/adr:doctor` to set it up.

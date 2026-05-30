@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/follow-up-questions.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/follow-up-questions.schema.json",
   "title": "Architecture Deep Research — Where to Dig Deeper",
   "description": "Research threads to deepen evidence on the highest-spread axes from this run. Each entry names a high-spread axis, the next research dig framed as a question, and a pre-filled `adr deep-research` command the user can paste to chase it.",
   "type": "object",

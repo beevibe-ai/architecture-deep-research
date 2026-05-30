@@ -10,7 +10,7 @@
 //
 // Or, for a local checkout:
 //   { "mcpServers": { "adr": { "command": "node",
-//       "args": ["/abs/path/to/architecture-deep-research/scripts/adr-mcp.mjs"] } } }
+//       "args": ["/abs/path/to/beevibe-cto/scripts/adr-mcp.mjs"] } } }
 
 import path from "node:path";
 import { readFile } from "node:fs/promises";

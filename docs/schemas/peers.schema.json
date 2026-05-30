@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/peers.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/peers.schema.json",
   "title": "Beevibe Architecture Deep Research Peer Products",
   "description": "Similar / comparable products the discover stage identified. The deep-research stage picks up this file when present and adds one research task per peer that targets how that peer handles the specific decision aspect. Evidence flows into the candidate pool with source_type derived from the peer's domain (mature_oss when GitHub, engineering_writeup when their blog).",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/decision-context.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/decision-context.schema.json",
   "title": "Beevibe Architecture Deep Research Decision Context",
   "description": "Context notes extracted from the PRD + any pre-built profile tags. These are ANNOTATIONS on the option space, NEVER filters. They are shown alongside the ranked options to help the reader weigh tradeoffs; ADR does not drop any candidate based on them.",
   "type": "object",

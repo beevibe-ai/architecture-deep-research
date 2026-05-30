@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/principles.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/principles.schema.json",
   "title": "Beevibe Team Principles",
   "description": "Repo-wide team principles discovered by `adr principles init` and confirmed via interactive interview. Consumed by `adr review` (PR-time check) and `adr guard` (write-time hook).",
   "type": "object",

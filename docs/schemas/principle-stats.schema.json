@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/principle-stats.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/principle-stats.schema.json",
   "title": "Beevibe ADR Principle Usage Stats",
   "description": "Per-principle accept/edit/skip counts across all `adr review` runs. Persisted next to principles.json. Feeds the confidence auto-evolution loop (roadmap #5) and lets dashboards surface dead-letter principles users always skip.",
   "type": "object",
