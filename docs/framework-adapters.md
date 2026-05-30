@@ -112,8 +112,8 @@ await runLangGraphDeepResearch({
 To use the same LangChain provider with the kernel directly (no graph):
 
 ```js
-import { deepResearch, setLlmJsonProvider } from "@beevibe/architecture-deep-research";
-import { createLangChainJsonProvider } from "@beevibe/architecture-deep-research/adapters/langgraph-llm";
+import { deepResearch, setLlmJsonProvider } from "@beevibe/beevibe-cto";
+import { createLangChainJsonProvider } from "@beevibe/beevibe-cto/adapters/langgraph-llm";
 
 setLlmJsonProvider(createLangChainJsonProvider({ model: "anthropic:claude-3-5-sonnet-latest" }), {
   label: "langchain:anthropic"
@@ -198,8 +198,8 @@ await runAdkDeepResearch({
 Or use the JSON provider directly with the kernel's `deepResearch`:
 
 ```js
-import { deepResearch, setLlmJsonProvider } from "@beevibe/architecture-deep-research";
-import { createAdkJsonProvider } from "@beevibe/architecture-deep-research/adapters/google-adk-deep-research";
+import { deepResearch, setLlmJsonProvider } from "@beevibe/beevibe-cto";
+import { createAdkJsonProvider } from "@beevibe/beevibe-cto/adapters/google-adk-deep-research";
 
 setLlmJsonProvider(createAdkJsonProvider({ model: "gemini-2.5-pro" }), {
   label: "adk-gemini:pro"

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/review-violations.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/review-violations.schema.json",
   "title": "Beevibe ADR Review Violations",
   "description": "Output of `adr review` — violations of `adr principles init` rules surfaced in a diff. Consumed by `gh pr review` (post inline comments) and by Claude Code slash commands (interactive walkthrough).",
   "type": "object",

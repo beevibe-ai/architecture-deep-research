@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/evidence.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/evidence.schema.json",
   "title": "Beevibe Architecture Deep Research Evidence Items",
   "type": "array",
   "items": {

@@ -1,6 +1,6 @@
 # Self-discover example
 
-This example runs the `adr discover` stage against the architecture-deep-research repo itself. It is the simplest way to see what the new discover stage produces.
+This example runs the `adr discover` stage against the beevibe-cto repo itself. It is the simplest way to see what the new discover stage produces.
 
 ## Why this exists
 
@@ -20,7 +20,7 @@ No web-search provider is needed — discover does not hit the internet.
 
 ## Run it
 
-From the root of the architecture-deep-research repo:
+From the root of the beevibe-cto repo:
 
 ```bash
 npm run adr -- discover \

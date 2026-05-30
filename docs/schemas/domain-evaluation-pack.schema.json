@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/domain-evaluation-pack.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/domain-evaluation-pack.schema.json",
   "title": "Beevibe Architecture Deep Research Domain Evaluation Pack",
   "type": "object",
   "required": ["version", "suite", "target_topologies", "metrics", "test_cases"],

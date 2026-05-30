@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/principles-health.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/principles-health.schema.json",
   "title": "Beevibe ADR Principles Health Snapshot",
   "description": "Output of the cite-rot check that runs on every `adr review`. Captures which principle citations have rotted since `adr principles init` last ran — the cheapest evolvability signal. Read by future slash commands and dashboards to flag staleness without re-running discovery.",
   "type": "object",

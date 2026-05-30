@@ -95,5 +95,5 @@ If the user says "go ahead and implement," read `<out_dir>/execution-handoff.jso
 ## Notes for Claude
 
 - The MCP tool name is `adr_deep_research`. Call it through the MCP host's tool-call mechanism — do not try to spawn a subprocess.
-- The skill assumes the `adr` MCP server is registered in the user's Claude Code config. If it isn't, point them at `examples/claude-code-skill/.mcp.json` in the architecture-deep-research repo.
+- The skill assumes the `adr` MCP server is registered in the user's Claude Code config. If it isn't, point them at `examples/claude-code-skill/.mcp.json` in the beevibe-cto repo.
 - For quick scans without the full deep-research run, use `adr_discover` instead. It returns only the draft PRD and skips the live-research loop.

@@ -1023,7 +1023,7 @@ async function openUrl(url, flags) {
 
   const response = await fetch(url, {
     headers: {
-      "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)"
+      "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/beevibe-cto)"
     },
     signal: AbortSignal.timeout(Number(flags["fetch-timeout-ms"] || 20_000))
   });
@@ -1091,7 +1091,7 @@ const FAILURE_MODE_KEYWORDS = [
 async function githubApi(pathSuffix, flags) {
   const headers = {
     accept: "application/vnd.github+json",
-    "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)",
+    "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/beevibe-cto)",
     "x-github-api-version": "2022-11-28"
   };
   if (process.env.GITHUB_TOKEN) {
@@ -1273,7 +1273,7 @@ async function fetchArxivAbstract(url, flags) {
       `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(id)}`,
       {
         headers: {
-          "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)"
+          "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/beevibe-cto)"
         },
         signal: AbortSignal.timeout(Number(flags["fetch-timeout-ms"] || 20_000))
       }
@@ -1323,7 +1323,7 @@ async function fetchPdfText(url, flags) {
   try {
     const response = await fetch(pdfUrl, {
       headers: {
-        "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/architecture-deep-research)"
+        "user-agent": "Beevibe-ADR/0.2 (+https://github.com/beevibe-ai/beevibe-cto)"
       },
       signal: AbortSignal.timeout(Number(flags["fetch-timeout-ms"] || 20_000))
     });

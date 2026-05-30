@@ -33,7 +33,7 @@ Capture as `<INCLUDE_PEERS>` (boolean). If yes, you'll pass `--include-peers` on
 ## Step 2 — Confirm the env is ready
 
 ```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
+npx -y --package=github:beevibe-ai/beevibe-cto adr-doctor
 ```
 
 If NOT READY, invoke `/adr:doctor` and wait. Do not proceed with a broken env.
@@ -52,7 +52,7 @@ touch .adr-runs/<SLUG>/events.jsonl
 Use the Bash tool with `run_in_background: true`. **Capture the returned task id** — you'll need it to know when the run finishes.
 
 ```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr \
+npx -y --package=github:beevibe-ai/beevibe-cto adr \
   deep-research --discover-first \
   --repo . \
   --domain "<DOMAIN>" \

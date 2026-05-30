@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/critique.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/critique.schema.json",
   "title": "Beevibe Architecture Deep Research Critique",
   "type": "object",
   "required": ["version", "issues", "summary", "high_severity_count", "recommend_human_review"],

@@ -9,7 +9,7 @@ description: Set up ADR for first-time use. Audits what's already configured, th
 ## Step 1 — Audit what's already there
 
 ```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor
+npx -y --package=github:beevibe-ai/beevibe-cto adr-doctor
 ```
 
 Read the output:
@@ -145,7 +145,7 @@ Don't bring this up unless the user asks about it. Default `gpt-4.1-mini` is fin
 ## Step 3 — Write the keys in one bash call
 
 ```bash
-npx -y --package=github:beevibe-ai/architecture-deep-research adr-doctor set --json '{
+npx -y --package=github:beevibe-ai/beevibe-cto adr-doctor set --json '{
   "BRAVE_SEARCH_API_KEY": "<paste-from-step-2>",
   "ADR_OPENAI_API_KEY":   "<paste-from-step-2>",
   "GITHUB_TOKEN":         "<paste-from-step-2>"

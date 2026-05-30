@@ -36,7 +36,7 @@ Three ways in. All share the same kernel.
 ### Claude Code plugin — recommended
 
 ```bash
-claude plugin marketplace add beevibe-ai/architecture-deep-research
+claude plugin marketplace add beevibe-ai/beevibe-cto
 claude plugin install adr
 ```
 
@@ -54,7 +54,7 @@ Then in any Claude Code session:
 ### MCP server — Cursor, Codex, any MCP host
 
 ```bash
-npm install -g github:beevibe-ai/architecture-deep-research
+npm install -g github:beevibe-ai/beevibe-cto
 adr-doctor setup
 ```
 
@@ -69,7 +69,7 @@ Five tools become available: `adr_discover`, `adr_deep_research`, `adr_read_hand
 ### CLI — terminal, CI, GitHub Action
 
 ```bash
-npm install -g github:beevibe-ai/architecture-deep-research
+npm install -g github:beevibe-ai/beevibe-cto
 adr-doctor                       # audit env, exit non-zero if anything missing
 ```
 
@@ -229,7 +229,7 @@ Open-source core under Apache-2.0. The commercial Beevibe surface layers curated
 ## Learn more
 
 - **[See an example report](https://beevibe.ai/cto/example-report/)** — real run on a Beevibe decision, rendered the same way `adr open` would render yours.
-- [ADR introduction](https://beevibe.ai/blog/03-architecture-deep-research/) — the layer before the coding agent.
+- [ADR introduction](https://beevibe.ai/blog/03-beevibe-cto/) — the layer before the coding agent.
 - [Questions teams keep asking](https://beevibe.ai/blog/04-adr-questions/) — Q&A on the design.
 - [The dogfooding journey](https://beevibe.ai/blog/06-after-dogfooding/) — what made us pivot from a decision engine to a research-report engine.
 - [docs/](./docs/) — framework adapters, web UI, schemas, mesh integration, full flag reference.

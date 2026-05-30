@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/discovered-constraints.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/discovered-constraints.schema.json",
   "title": "Beevibe Architecture Deep Research Discovered Constraints",
   "type": "object",
   "required": [

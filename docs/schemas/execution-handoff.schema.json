@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/beevibe-ai/architecture-deep-research/schemas/execution-handoff.schema.json",
+  "$id": "https://github.com/beevibe-ai/beevibe-cto/schemas/execution-handoff.schema.json",
   "title": "Architecture Deep Research — Execution Handoff",
   "description": "Generated on-demand by `adr handoff <out_dir> --option <candidate-name>`. Scopes the research-report's chosen candidate into an implementation contract for a downstream coding agent or human operator.",
   "type": "object",

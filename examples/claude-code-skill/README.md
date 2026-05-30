@@ -12,7 +12,7 @@ A single-slash entry into the full Architecture Deep Research loop. Type `/adr` 
 1. Install the `adr-mcp` bin globally:
 
 ```bash
-npm install -g github:beevibe-ai/architecture-deep-research
+npm install -g github:beevibe-ai/beevibe-cto
 ```
 
    This installs `adr`, `adr-mcp`, and `adr-doctor` straight from the GitHub repo — no npm account required.

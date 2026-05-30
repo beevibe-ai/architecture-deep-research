@@ -11,7 +11,7 @@ The adapter in `adapters/beevibe.mjs` exposes:
 ## Architect Agent
 
 ```js
-import { createBeevibeArchitectAgentConfig } from "@beevibe/architecture-deep-research/adapters/beevibe";
+import { createBeevibeArchitectAgentConfig } from "@beevibe/beevibe-cto/adapters/beevibe";
 
 const architect = createBeevibeArchitectAgentConfig({
   name: "Architect",
@@ -35,7 +35,7 @@ No new Beevibe domain type is required.
 After a live ADR run:
 
 ```js
-import { createBeevibeMeshHandoff } from "@beevibe/architecture-deep-research/adapters/beevibe";
+import { createBeevibeMeshHandoff } from "@beevibe/beevibe-cto/adapters/beevibe";
 
 const handoff = await createBeevibeMeshHandoff({
   outDir: ".adr-runs/logistics-contract-mesh"
