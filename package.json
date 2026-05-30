@@ -57,6 +57,9 @@
     "adr:mcp": "node scripts/adr-mcp.mjs",
     "web:dev": "vite --config web/vite.config.js",
     "web:build": "vite build --config web/vite.config.js",
+    "crystal:dev": "vite --config crystal-ball/vite.config.js",
+    "crystal:build": "vite build --config crystal-ball/vite.config.js",
+    "crystal:server": "node crystal-ball/server.mjs",
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:replay": "node scripts/kernel-regression-tests.mjs",
     "benchmark:live": "node scripts/benchmark.mjs --strict",
@@ -107,7 +110,11 @@
     "vite": "^8.0.14"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "ajv": "^8.20.0"
+    "@react-three/drei": "^9.114.0",
+    "@react-three/fiber": "^8.17.10",
+    "ajv": "^8.20.0",
+    "three": "^0.169.0"
   }
 }

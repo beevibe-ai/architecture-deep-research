@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "beevibe",
-  "description": "Beevibe Claude Code plugins. Currently: Architecture Deep Research (live, evidence-only research for system-design decisions).",
+  "description": "Beevibe Claude Code plugins. Currently: Architecture Deep Research and Crystal Ball.",
   "owner": {
     "name": "Beevibe",
     "email": "hello@beevibe.ai",
@@ -22,6 +22,21 @@
         "ref": "main"
       },
       "homepage": "https://github.com/beevibe-ai/beevibe-cto"
+    },
+    {
+      "name": "crystal",
+      "description": "Crystal Ball — publish your current Claude Code session as a queryable capsule. Visitors get a share URL; the capsule answers in your voice, with the full session as context. Use when the user says \"share this session\", \"publish this as a crystal\", or invokes /crystal:publish.",
+      "author": {
+        "name": "Beevibe"
+      },
+      "category": "collaboration",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/beevibe-ai/beevibe-cto.git",
+        "path": "crystal-ball/plugin",
+        "ref": "main"
+      },
+      "homepage": "https://github.com/beevibe-ai/beevibe-cto/tree/main/crystal-ball"
     }
   ]
 }
