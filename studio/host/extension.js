@@ -141,10 +141,14 @@ function readSpec(ir) {
   if (!fs.existsSync(p)) return ir.emptySpec();
   try {
     const disk = JSON.parse(fs.readFileSync(p, "utf8"));
-    // Tolerate a research-produced spec that has no topology yet.
-    if (!disk.topology) disk.topology = { nodes: [], edges: [] };
-    if (!disk.constraints) disk.constraints = ir.defaultConstraints();
-    return disk;
+    // Migrate any legacy shape (0.1.0 research spec, 0.2.0 studio MVP) up to the
+    // current multi-view IR. Persist the upgrade so it happens once.
+    const { spec, changed, from } = ir.migrate(disk);
+    if (changed) {
+      writeSpec(spec);
+      vscode.window.showInformationMessage(`Upgraded design spec ${from} → ${spec.version}.`);
+    }
+    return spec;
   } catch (err) {
     vscode.window.showWarningMessage(`Could not parse spec, starting fresh: ${err.message}`);
     return ir.emptySpec();

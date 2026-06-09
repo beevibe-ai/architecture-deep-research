@@ -82,7 +82,7 @@ function systemPrompt() {
 }
 
 function topologySummary(spec) {
-  const t = spec.topology;
+  const t = spec.views.architecture;
   const nodes = t.nodes.map((n) => `${n.label} (${n.kind}, id=${n.id})`).join(", ") || "none";
   const edges =
     t.edges
@@ -151,8 +151,8 @@ export async function runAssistant({ userText, spec, model, apiKey }) {
         const sum = topologySummary(working);
         resultPayload = {
           ok: true,
-          nodes: working.topology.nodes.length,
-          edges: working.topology.edges.length,
+          nodes: working.views.architecture.nodes.length,
+          edges: working.views.architecture.edges.length,
           violations: sum.violations,
         };
       } catch (err) {

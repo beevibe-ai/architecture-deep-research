@@ -1,84 +1,168 @@
 // The lint engine. This is what makes the canvas more than boxes-and-arrows:
 // the design carries machine-checkable constraints, and every edit is checked
-// against them live. A violating edge lights up; the assistant can explain it.
+// against them live across all three views. A violating element lights up; the
+// assistant sees the same violations and can explain or fix them.
 //
-// Rules are intentionally small and structural. They run in the webview (for
-// instant feedback as you draw) and in the host (so the assistant sees the same
-// violations the user does).
+// Each constraint declares a `view`. A violation references an element with a
+// generic { view, nodeId?, edgeId? } so every canvas highlights uniformly:
+//   architecture → nodeId=component, edgeId=wire
+//   data_model   → nodeId=entity,    edgeId=relation
+//   flows        → nodeId=step,      edgeId=transition
 
-const KIND_OF = (topology, id) => {
-  const n = topology.nodes.find((x) => x.id === id);
-  return n ? n.kind : null;
-};
+const archLabel = (spec, id) => (spec.views.architecture.nodes.find((n) => n.id === id) || {}).label || id;
+const entityName = (spec, id) => (spec.views.data_model.entities.find((e) => e.id === id) || {}).name || id;
 
-const NODE_LABEL = (topology, id) => {
-  const n = topology.nodes.find((x) => x.id === id);
-  return n ? n.label : id;
-};
-
-// Returns { violations: [{ constraintId, message, edgeId?, nodeId? }] }.
+// Returns { violations: [{ constraintId, view, message, nodeId?, edgeId? }] }.
 export function lint(spec) {
-  const topology = spec.topology || { nodes: [], edges: [] };
-  const constraints = spec.constraints || [];
   const violations = [];
-
-  for (const c of constraints) {
-    switch (c.rule) {
-      case "forbid_edge":
-        for (const e of topology.edges) {
-          if (KIND_OF(topology, e.from) === c.from_kind && KIND_OF(topology, e.to) === c.to_kind) {
-            violations.push({
-              constraintId: c.id,
-              edgeId: e.id,
-              message:
-                c.message ||
-                `${NODE_LABEL(topology, e.from)} → ${NODE_LABEL(topology, e.to)} is forbidden.`,
-            });
-          }
-        }
-        break;
-
-      case "edge_requires_protocol":
-        for (const e of topology.edges) {
-          if (!e.protocol) {
-            violations.push({
-              constraintId: c.id,
-              edgeId: e.id,
-              message:
-                c.message ||
-                `${NODE_LABEL(topology, e.from)} → ${NODE_LABEL(topology, e.to)} has no protocol.`,
-            });
-          }
-        }
-        break;
-
-      case "require_node_kind":
-        // A design of this shape must contain at least one node of a kind.
-        if (!topology.nodes.some((n) => n.kind === c.kind)) {
-          violations.push({
-            constraintId: c.id,
-            message: c.message || `Design must include at least one ${c.kind}.`,
-          });
-        }
-        break;
-
-      default:
-        // Unknown rule types are ignored, not fatal — constraints evolve.
-        break;
-    }
+  for (const c of spec.constraints || []) {
+    const view = c.view || "architecture";
+    if (view === "architecture") lintArchitecture(spec, c, violations);
+    else if (view === "data_model") lintDataModel(spec, c, violations);
+    else if (view === "flows") lintFlows(spec, c, violations);
+    else if (view === "cross") lintCross(spec, c, violations);
   }
-
+  // Cross-ref integrity always runs, even without an explicit constraint.
+  checkCrossRefs(spec, violations);
   return { violations };
 }
 
-// Convenience: which edge/node ids are currently in violation (for highlighting).
+function lintArchitecture(spec, c, out) {
+  const { nodes, edges } = spec.views.architecture;
+  const kindOf = (id) => (nodes.find((n) => n.id === id) || {}).kind || null;
+  switch (c.rule) {
+    case "forbid_edge":
+      for (const e of edges)
+        if (kindOf(e.from) === c.from_kind && kindOf(e.to) === c.to_kind)
+          out.push({
+            constraintId: c.id,
+            view: "architecture",
+            edgeId: e.id,
+            message: c.message || `${archLabel(spec, e.from)} → ${archLabel(spec, e.to)} is forbidden.`,
+          });
+      break;
+    case "edge_requires_protocol":
+      for (const e of edges)
+        if (!e.protocol)
+          out.push({
+            constraintId: c.id,
+            view: "architecture",
+            edgeId: e.id,
+            message: c.message || `${archLabel(spec, e.from)} → ${archLabel(spec, e.to)} has no protocol.`,
+          });
+      break;
+    case "require_node_kind":
+      if (!nodes.some((n) => n.kind === c.kind))
+        out.push({ constraintId: c.id, view: "architecture", message: c.message || `Design must include a ${c.kind}.` });
+      break;
+    default:
+      break;
+  }
+}
+
+function lintDataModel(spec, c, out) {
+  const { entities, relations } = spec.views.data_model;
+  const hasEntity = (id) => entities.some((e) => e.id === id);
+  switch (c.rule) {
+    case "entity_requires_pk":
+      for (const e of entities)
+        if (!e.fields.some((f) => f.pk))
+          out.push({
+            constraintId: c.id,
+            view: "data_model",
+            nodeId: e.id,
+            message: c.message || `Entity "${e.name}" has no primary key.`,
+          });
+      break;
+    case "fk_references_existing_entity":
+      for (const e of entities)
+        for (const f of e.fields)
+          if (f.fk && !hasEntity(f.fk.entity))
+            out.push({
+              constraintId: c.id,
+              view: "data_model",
+              nodeId: e.id,
+              message: c.message || `"${e.name}.${f.name}" references a missing entity.`,
+            });
+      break;
+    case "relation_endpoints_exist":
+      for (const r of relations)
+        if (!hasEntity(r.from) || !hasEntity(r.to))
+          out.push({
+            constraintId: c.id,
+            view: "data_model",
+            edgeId: r.id,
+            message: c.message || `A relation points at a missing entity.`,
+          });
+      break;
+    default:
+      break;
+  }
+}
+
+function lintFlows(spec, c, out) {
+  for (const flow of spec.views.flows) {
+    const outgoing = (id) => flow.transitions.filter((t) => t.from === id);
+    const incoming = (id) => flow.transitions.filter((t) => t.to === id);
+    switch (c.rule) {
+      case "flow_has_single_start": {
+        const starts = flow.nodes.filter((n) => n.type === "start");
+        if (starts.length !== 1)
+          out.push({ constraintId: c.id, view: "flows", message: c.message || `Flow "${flow.name}" must have exactly one start (has ${starts.length}).` });
+        break;
+      }
+      case "flow_reaches_end":
+        if (flow.nodes.length && !flow.nodes.some((n) => n.type === "end"))
+          out.push({ constraintId: c.id, view: "flows", message: c.message || `Flow "${flow.name}" has no end.` });
+        break;
+      case "decision_has_two_plus_branches":
+        for (const n of flow.nodes)
+          if (n.type === "decision" && outgoing(n.id).length < 2)
+            out.push({ constraintId: c.id, view: "flows", nodeId: n.id, message: c.message || `Decision "${n.label}" needs at least two branches.` });
+        break;
+      case "no_orphan_step":
+        for (const n of flow.nodes)
+          if (n.type !== "start" && incoming(n.id).length === 0 && outgoing(n.id).length === 0)
+            out.push({ constraintId: c.id, view: "flows", nodeId: n.id, message: c.message || `Step "${n.label}" is disconnected.` });
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+function lintCross(spec, c, out) {
+  // Reserved for user-authored cross-view rules; integrity check below always runs.
+}
+
+// Referential integrity for cross_refs — a dangling reference is always a bug.
+function checkCrossRefs(spec, out) {
+  const exists = (end) => {
+    if (end.view === "architecture") return spec.views.architecture.nodes.some((n) => n.id === end.ref);
+    if (end.view === "data_model") return spec.views.data_model.entities.some((e) => e.id === end.ref);
+    if (end.view === "flows") return spec.views.flows.some((f) => f.nodes.some((s) => s.id === end.ref));
+    return false;
+  };
+  for (const x of spec.cross_refs || [])
+    if (!exists(x.from) || !exists(x.to))
+      out.push({ constraintId: "cross_ref_targets_exist", view: x.from.view, message: `A cross-reference points at a missing element.` });
+}
+
+// View-keyed highlight index. Returns:
+//   { byView: { architecture: {nodes:Set, edges:Set}, data_model: {...}, flows: {...} },
+//     violations, total }
 export function violationIndex(spec) {
   const { violations } = lint(spec);
-  const edges = new Set();
-  const nodes = new Set();
+  const byView = {
+    architecture: { nodes: new Set(), edges: new Set() },
+    data_model: { nodes: new Set(), edges: new Set() },
+    flows: { nodes: new Set(), edges: new Set() },
+  };
   for (const v of violations) {
-    if (v.edgeId) edges.add(v.edgeId);
-    if (v.nodeId) nodes.add(v.nodeId);
+    const bucket = byView[v.view];
+    if (!bucket) continue;
+    if (v.nodeId) bucket.nodes.add(v.nodeId);
+    if (v.edgeId) bucket.edges.add(v.edgeId);
   }
-  return { edges, nodes, violations };
+  return { byView, violations, total: violations.length };
 }

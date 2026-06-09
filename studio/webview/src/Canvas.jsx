@@ -45,7 +45,9 @@ function ArchNode({ data, selected }) {
 const nodeTypes = { arch: ArchNode };
 
 export default function Canvas({ spec, commit, violations }) {
-  const vIndex = useMemo(() => violationIndex(spec), [spec]);
+  const vIndex = useMemo(() => violationIndex(spec).byView.architecture, [spec]);
+  const archNodes = spec.views.architecture.nodes;
+  const archEdges = spec.views.architecture.edges;
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -56,7 +58,7 @@ export default function Canvas({ spec, commit, violations }) {
   // chat edit, file reload). The spec is the single source of truth.
   useEffect(() => {
     setRfNodes(
-      spec.topology.nodes.map((n) => ({
+      archNodes.map((n) => ({
         id: n.id,
         type: "arch",
         position: n.position || { x: 0, y: 0 },
@@ -65,7 +67,7 @@ export default function Canvas({ spec, commit, violations }) {
       }))
     );
     setRfEdges(
-      spec.topology.edges.map((e) => ({
+      archEdges.map((e) => ({
         id: e.id,
         source: e.from,
         target: e.to,
@@ -73,13 +75,14 @@ export default function Canvas({ spec, commit, violations }) {
         className: vIndex.edges.has(e.id) ? "edge-bad" : "edge-ok",
       }))
     );
-  }, [spec, vIndex, selectedId, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, archNodes, archEdges, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) =>
       commit(
         applyMutation(spec, {
           op: "connect",
+          view: "architecture",
           from: c.source,
           to: c.target,
           kind: "calls",
@@ -91,14 +94,14 @@ export default function Canvas({ spec, commit, violations }) {
 
   const onNodeDragStop = useCallback(
     (_e, node) =>
-      commit(applyMutation(spec, { op: "update_node", id: node.id, position: node.position })),
+      commit(applyMutation(spec, { op: "update_node", view: "architecture", id: node.id, position: node.position })),
     [spec, commit]
   );
 
   const onNodesDelete = useCallback(
     (deleted) => {
       let s = spec;
-      for (const d of deleted) s = applyMutation(s, { op: "remove_node", ref: d.id });
+      for (const d of deleted) s = applyMutation(s, { op: "remove_node", view: "architecture", ref: d.id });
       setSelectedId(null);
       commit(s);
     },
@@ -108,7 +111,7 @@ export default function Canvas({ spec, commit, violations }) {
   const onEdgesDelete = useCallback(
     (deleted) => {
       let s = spec;
-      for (const d of deleted) s = applyMutation(s, { op: "disconnect", id: d.id });
+      for (const d of deleted) s = applyMutation(s, { op: "disconnect", view: "architecture", id: d.id });
       commit(s);
     },
     [spec, commit]
@@ -120,7 +123,7 @@ export default function Canvas({ spec, commit, violations }) {
       const kind = event.dataTransfer.getData("application/adr-kind");
       if (!kind) return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      commit(applyMutation(spec, { op: "add_node", kind, position }));
+      commit(applyMutation(spec, { op: "add_node", view: "architecture", kind, position }));
     },
     [spec, commit, screenToFlowPosition]
   );
@@ -130,10 +133,10 @@ export default function Canvas({ spec, commit, violations }) {
     event.dataTransfer.dropEffect = "move";
   }, []);
 
-  const selectedNode = spec.topology.nodes.find((n) => n.id === selectedId) || null;
+  const selectedNode = archNodes.find((n) => n.id === selectedId) || null;
 
   const updateSelected = (patch) =>
-    commit(applyMutation(spec, { op: "update_node", id: selectedId, ...patch }));
+    commit(applyMutation(spec, { op: "update_node", view: "architecture", id: selectedId, ...patch }));
 
   return (
     <div className="canvas-wrap" ref={wrapRef} onDrop={onDrop} onDragOver={onDragOver}>
@@ -156,7 +159,7 @@ export default function Canvas({ spec, commit, violations }) {
         <Controls />
       </ReactFlow>
 
-      {spec.topology.nodes.length === 0 && (
+      {archNodes.length === 0 && (
         <div className="empty-hint">
           Drag a component from the left, or ask the assistant to sketch one.
         </div>
