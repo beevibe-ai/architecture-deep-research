@@ -4,11 +4,19 @@
   "description": "Drag-and-drop system architecture canvas with an AI design assistant. Designs compile to architecture.spec.json for coding agents.",
   "version": "0.1.0",
   "publisher": "beevibe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/beevibe-ai/architecture-deep-research"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": ["Visualization", "Other"],
   "main": "./host/extension.js",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.32.1"
+  },
   "activationEvents": [],
   "contributes": {
     "commands": [

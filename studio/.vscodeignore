@@ -1,0 +1,8 @@
+# Keep the package small: ship the built webview (dist/), the host, and the
+# shared IR — drop everything used only to build or test.
+webview/**
+.vscode/**
+.gitignore
+**/*.test.mjs
+**/*.map
+.DS_Store
