@@ -43,6 +43,7 @@ const CROSS_CUTTING_OPS = new Set([
   "add_cross_ref",
   "remove_cross_ref",
   "scaffold_subsystem",
+  "scaffold_runtime",
   "set_plan_section",
   "realize",
 ]);
@@ -127,7 +128,7 @@ export function __resetIds(n = 0) {
 // vector_db, semantic_gateway, …) — which fills category/plane/coarse-kind/tech —
 // or from a bare legacy `kind`. Catalog-driven is the norm; bare kind stays for
 // back-compat and tests.
-export function makeNode({ kind, type, category, plane, label, tech, context = "", notes = "", ports, position }) {
+export function makeNode({ kind, type, category, plane, label, tech, context = "", notes = "", ports, parent = null, position }) {
   const def = type ? nodeDefaults(type) : {};
   const resolvedKind = kind || def.kind || "service";
   return {
@@ -141,6 +142,7 @@ export function makeNode({ kind, type, category, plane, label, tech, context = "
     context,
     notes,
     ports: ports || [],
+    parent, // containment: nested inside another component (e.g. an agent_runtime)
     position: position || { x: 0, y: 0 },
   };
 }
@@ -287,7 +289,7 @@ function architectureReducer(next, m) {
     case "update_node": {
       const node = resolve(next, "architecture", m.id || m.ref);
       if (!node) throw new Error(`update_node: no node "${m.id || m.ref}"`);
-      for (const f of ["label", "tech", "context", "notes", "plane", "type", "category", "ports"]) if (m[f] !== undefined) node[f] = m[f];
+      for (const f of ["label", "tech", "context", "notes", "plane", "type", "category", "ports", "parent"]) if (m[f] !== undefined) node[f] = m[f];
       if (m.position) node.position = m.position;
       break;
     }
@@ -306,9 +308,16 @@ function architectureReducer(next, m) {
     case "remove_node": {
       const node = resolve(next, "architecture", m.id || m.ref);
       if (!node) break; // idempotent
-      t.nodes = t.nodes.filter((n) => n.id !== node.id);
-      t.edges = t.edges.filter((e) => e.from !== node.id && e.to !== node.id);
-      pruneCrossRefs(next, "architecture", node.id);
+      // Cascade: removing a container (e.g. an agent_runtime) drops its internals.
+      const doomed = new Set([node.id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const x of t.nodes) if (x.parent && doomed.has(x.parent) && !doomed.has(x.id)) { doomed.add(x.id); grew = true; }
+      }
+      t.nodes = t.nodes.filter((n) => !doomed.has(n.id));
+      t.edges = t.edges.filter((e) => !doomed.has(e.from) && !doomed.has(e.to));
+      for (const id of doomed) pruneCrossRefs(next, "architecture", id);
       break;
     }
     case "connect": {
@@ -537,6 +546,9 @@ function applyCrossCutting(next, m) {
     case "scaffold_subsystem":
       scaffoldSubsystem(next, m);
       break;
+    case "scaffold_runtime":
+      scaffoldRuntime(next, m);
+      break;
     case "realize": {
       // Link a logical component to its infra deployment (resolves labels → ids).
       const comp = resolve(next, "architecture", m.component);
@@ -578,6 +590,21 @@ function scaffoldSubsystem(next, m) {
     next.views.data_model.entities.push(entity);
     next.cross_refs.push(makeCrossRef({ from: { view: "architecture", ref: store.id }, to: { view: "data_model", ref: entity.id }, kind: "owns" }));
   }
+}
+
+// Composite: an Agent Runtime container with its five internals nested inside —
+// the "负责稳定运行" execution core (State Manager, Task Queue, Scheduler, Logger,
+// Monitor). One assistant move that mirrors the canonical runtime diagram.
+function scaffoldRuntime(next, m) {
+  const base = m.position || { x: 360, y: 360 };
+  const runtime = makeNode({ type: "agent_runtime", label: m.label || "Agent Runtime", position: base });
+  next.views.architecture.nodes.push(runtime);
+  const internals = ["state_manager", "task_queue", "scheduler", "logger", "monitor"];
+  internals.forEach((t, i) => {
+    next.views.architecture.nodes.push(
+      makeNode({ type: t, parent: runtime.id, position: { x: 18, y: 46 + i * 44 } })
+    );
+  });
 }
 
 // ---- helpers ---------------------------------------------------------------

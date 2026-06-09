@@ -16,12 +16,15 @@ import { CATEGORIES, PLANES, DELIVERY, CONSISTENCY, nodeDefaults, getType } from
 const CAT_COLOR = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.color]));
 const PLANE_COLOR = Object.fromEntries(PLANES.map((p) => [p.id, p.color]));
 
-// Swimlane Y bands — control on top, execution middle, data bottom.
 const BANDS = { control: { y: 0, h: 250 }, execution: { y: 270, h: 270 }, data: { y: 560, h: 270 } };
-const bandCenterY = (plane) => BANDS[plane] ? BANDS[plane].y + BANDS[plane].h / 2 - 30 : 380;
+const bandCenterY = (plane) => (BANDS[plane] ? BANDS[plane].y + BANDS[plane].h / 2 - 30 : 380);
 const ZONE_W = 2200;
 
-// Background swimlane node (non-interactive).
+// Container component sizes (agent_runtime nests its internals).
+const CONTAINER_SIZE = { agent_runtime: { w: 196, h: 268 } };
+const isContainer = (type) => !!getType(type)?.container;
+const containerSize = (type) => CONTAINER_SIZE[type] || { w: 220, h: 260 };
+
 function ZoneNode({ data }) {
   return (
     <div className="plane-zone" style={{ width: ZONE_W, height: data.h, borderColor: data.color }}>
@@ -30,7 +33,19 @@ function ZoneNode({ data }) {
   );
 }
 
-// A component node: category-colored, with plane badge + tech. Ringed red on violation.
+// A container component (e.g. Agent Runtime) — a titled box children nest inside.
+function ArchGroupNode({ data }) {
+  const { node, bad } = data;
+  const color = CAT_COLOR[node.category] || "#b9c5ff";
+  return (
+    <div className={`arch-group ${bad ? "bad" : ""}`} style={{ width: data.w, height: data.h, borderColor: bad ? "#ff6b6b" : color }}>
+      <Handle type="target" position={Position.Left} className="arch-handle" />
+      <div className="arch-group-title" style={{ color }}>{node.label}</div>
+      <Handle type="source" position={Position.Right} className="arch-handle" />
+    </div>
+  );
+}
+
 function ArchNode({ data, selected }) {
   const { node, bad } = data;
   const color = CAT_COLOR[node.category] || "#cccccc";
@@ -39,7 +54,7 @@ function ArchNode({ data, selected }) {
     <div className={`arch-node ${bad ? "bad" : ""} ${selected ? "sel" : ""}`} style={{ borderColor: bad ? "#ff6b6b" : color }}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-kind" style={{ color }}>
-        {(getType(node.type)?.label || node.type || node.kind)}
+        {getType(node.type)?.label || node.type || node.kind}
         <span className="arch-plane" style={{ background: PLANE_COLOR[plane] }}>{plane[0].toUpperCase()}</span>
       </div>
       <div className="arch-label">{node.label}</div>
@@ -49,7 +64,7 @@ function ArchNode({ data, selected }) {
   );
 }
 
-const nodeTypes = { arch: ArchNode, zone: ZoneNode };
+const nodeTypes = { arch: ArchNode, zone: ZoneNode, archGroup: ArchGroupNode };
 
 export default function Canvas({ spec, commit, catalog }) {
   const vIndex = useMemo(() => violationIndex(spec).byView.architecture, [spec]);
@@ -61,45 +76,47 @@ export default function Canvas({ spec, commit, catalog }) {
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const { screenToFlowPosition } = useReactFlow();
 
+  const byId = useMemo(() => new Map(archNodes.map((n) => [n.id, n])), [archNodes]);
+  const depth = useCallback((n) => { let d = 0, c = n; while (c && c.parent) { c = byId.get(c.parent); d++; } return d; }, [byId]);
+
   useEffect(() => {
     const zones = PLANES.map((p) => ({
       id: `__zone_${p.id}`,
       type: "zone",
       position: { x: -120, y: BANDS[p.id].y },
       data: { label: p.label, color: p.color, h: BANDS[p.id].h },
-      draggable: false,
-      selectable: false,
-      connectable: false,
-      zIndex: -1,
+      draggable: false, selectable: false, connectable: false, zIndex: -1,
     }));
-    const comps = archNodes.map((n) => ({
-      id: n.id,
-      type: "arch",
-      position: n.position || { x: 0, y: 0 },
-      data: { node: n, bad: vIndex.nodes.has(n.id) },
-      selected: n.id === selectedId,
-    }));
+    const sorted = [...archNodes].sort((a, b) => depth(a) - depth(b)); // parents before children
+    const comps = sorted.map((n) => {
+      const container = isContainer(n.type);
+      const base = {
+        id: n.id,
+        type: container ? "archGroup" : "arch",
+        position: n.position || { x: 0, y: 0 },
+        data: { node: n, bad: vIndex.nodes.has(n.id), ...(container ? containerSize(n.type) : {}) },
+        selected: n.id === selectedId,
+      };
+      if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }
+      if (container) base.style = { ...containerSize(n.type) };
+      return base;
+    });
     setRfNodes([...zones, ...comps]);
     setRfEdges(
       archEdges.map((e) => ({
-        id: e.id,
-        source: e.from,
-        target: e.to,
+        id: e.id, source: e.from, target: e.to,
         label: edgeLabel(e),
         className: vIndex.edges.has(e.id) ? "edge-bad" : "edge-ok",
       }))
     );
-  }, [spec, vIndex, selectedId, archNodes, archEdges, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, archNodes, archEdges, depth, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) => commit(applyMutation(spec, { op: "connect", view: "architecture", from: c.source, to: c.target, kind: "calls", protocol: "http" })),
     [spec, commit]
   );
   const onNodeDragStop = useCallback(
-    (_e, node) => {
-      if (node.id.startsWith("__zone")) return;
-      commit(applyMutation(spec, { op: "update_node", view: "architecture", id: node.id, position: node.position }));
-    },
+    (_e, node) => { if (!node.id.startsWith("__zone")) commit(applyMutation(spec, { op: "update_node", view: "architecture", id: node.id, position: node.position })); },
     [spec, commit]
   );
   const onNodesDelete = useCallback(
@@ -119,6 +136,19 @@ export default function Canvas({ spec, commit, catalog }) {
     },
     [spec, commit]
   );
+
+  // Deepest top-level container component whose rect contains the point.
+  const containerAt = useCallback((pt) => {
+    let best = null;
+    for (const n of archNodes) {
+      if (!isContainer(n.type) || n.parent) continue;
+      const size = containerSize(n.type);
+      const a = n.position || { x: 0, y: 0 };
+      if (pt.x >= a.x && pt.x <= a.x + size.w && pt.y >= a.y && pt.y <= a.y + size.h) best = n;
+    }
+    return best;
+  }, [archNodes]);
+
   const onDrop = useCallback(
     (event) => {
       event.preventDefault();
@@ -126,38 +156,44 @@ export default function Canvas({ spec, commit, catalog }) {
       if (!type) return;
       const def = nodeDefaults(type, catalog);
       const at = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      // Land in the plane's swimlane: keep drop X, snap Y to the band.
-      const position = { x: at.x, y: bandCenterY(def.plane) };
-      commit(applyMutation(spec, { op: "add_node", view: "architecture", type, ...def, position }));
+      const parent = containerAt(at);
+      if (parent) {
+        const position = { x: at.x - parent.position.x, y: at.y - parent.position.y };
+        commit(applyMutation(spec, { op: "add_node", view: "architecture", type, ...def, parent: parent.id, position }));
+      } else {
+        const position = isContainer(type) ? at : { x: at.x, y: bandCenterY(def.plane) };
+        commit(applyMutation(spec, { op: "add_node", view: "architecture", type, ...def, position }));
+      }
     },
-    [spec, commit, catalog, screenToFlowPosition]
+    [spec, commit, catalog, screenToFlowPosition, containerAt]
   );
-  const onDragOver = useCallback((e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  }, []);
+  const onDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }, []);
 
-  // Re-arrange all nodes into their plane's band.
   const tidyByPlane = useCallback(() => {
     let s = spec;
     const counts = { control: 0, execution: 0, data: 0 };
     for (const n of s.views.architecture.nodes) {
+      if (n.parent) continue; // leave nested internals where they are
       const plane = n.plane || "execution";
       const i = counts[plane]++;
-      s = applyMutation(s, { op: "update_node", view: "architecture", id: n.id, position: { x: 40 + i * 230, y: bandCenterY(plane) } });
+      s = applyMutation(s, { op: "update_node", view: "architecture", id: n.id, position: { x: 40 + i * 250, y: bandCenterY(plane) } });
     }
     commit(s);
   }, [spec, commit]);
 
+  const scaffoldRuntime = useCallback(() => commit(applyMutation(spec, { op: "scaffold_runtime" })), [spec, commit]);
+
   const selectedNode = archNodes.find((n) => n.id === selectedId) || null;
   const selectedEdge = archEdges.find((e) => e.id === selectedEdgeId) || null;
   const techOptions = selectedNode ? getType(selectedNode.type)?.tech || [] : [];
+  const containers = archNodes.filter((n) => isContainer(n.type) && n.id !== selectedId);
   const setNode = (patch) => commit(applyMutation(spec, { op: "update_node", view: "architecture", id: selectedId, ...patch }));
   const setEdgeSem = (patch) => commit(applyMutation(spec, { op: "set_edge_semantics", view: "architecture", id: selectedEdgeId, ...patch }));
 
   return (
     <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
       <div className="canvas-toolbar">
+        <button className="mini-btn" onClick={scaffoldRuntime}>+ Agent Runtime</button>
         <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>
       </div>
       <ReactFlow
@@ -181,7 +217,7 @@ export default function Canvas({ spec, commit, catalog }) {
       </ReactFlow>
 
       {archNodes.length === 0 && (
-        <div className="empty-hint">Drag a component from the catalog, or ask the assistant to sketch one.</div>
+        <div className="empty-hint">Drag a component from the catalog, drop “+ Agent Runtime”, or ask the assistant.</div>
       )}
 
       {selectedNode && (
@@ -190,14 +226,17 @@ export default function Canvas({ spec, commit, catalog }) {
           <label>Label</label>
           <input value={selectedNode.label} onChange={(e) => setNode({ label: e.target.value })} />
           <label>Plane</label>
-          <select value={selectedNode.plane || "execution"} onChange={(e) => setNode({ plane: e.target.value, position: { ...selectedNode.position, y: bandCenterY(e.target.value) } })}>
+          <select value={selectedNode.plane || "execution"} onChange={(e) => setNode({ plane: e.target.value, ...(selectedNode.parent ? {} : { position: { ...selectedNode.position, y: bandCenterY(e.target.value) } }) })}>
             {PLANES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          <label>Inside (container)</label>
+          <select value={selectedNode.parent || ""} onChange={(e) => setNode({ parent: e.target.value || null })}>
+            <option value="">— top level —</option>
+            {containers.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
           <label>Tech</label>
           <input list="tech-options" value={selectedNode.tech || ""} placeholder="pgvector, SQLite FTS5, Kafka…" onChange={(e) => setNode({ tech: e.target.value })} />
           <datalist id="tech-options">{techOptions.map((t) => <option key={t} value={t} />)}</datalist>
-          <label>Bounded context</label>
-          <input value={selectedNode.context || ""} placeholder="optional" onChange={(e) => setNode({ context: e.target.value })} />
           <label>Intent (read by the coding agent)</label>
           <textarea rows={3} value={selectedNode.notes || ""} onChange={(e) => setNode({ notes: e.target.value })} />
         </div>

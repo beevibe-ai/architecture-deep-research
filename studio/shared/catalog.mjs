@@ -37,6 +37,8 @@ const C = (id, category, label, plane, kind, extra = {}) => ({
   tech: extra.tech || [],
   pick_when: extra.pick_when || {},
   needs_upstream: extra.needs_upstream || [],
+  container: extra.container || false, // can nest child components (e.g. agent_runtime)
+  contains: extra.contains || [], // allowed child type ids ([] = any)
 });
 
 export const CATALOG = [
@@ -52,6 +54,18 @@ export const CATALOG = [
   C("guardrail", "agent_harness", "Guardrail", "control", "gateway", { tech: ["Llama Guard", "NeMo Guardrails", "Rebuff", "custom"] }),
   C("subagent", "agent_harness", "Subagent", "execution", "service"),
   C("mcp_server", "agent_harness", "MCP Server", "execution", "service"),
+  C("skill", "agent_harness", "Skill", "execution", "service", { tech: ["prompt", "SOP", "workflow"] }),
+  // Agent Runtime — a composite that nests its internals (State Manager, Task
+  // Queue, Scheduler, Logger, Monitor). The "负责稳定运行" execution core.
+  C("agent_runtime", "agent_harness", "Agent Runtime", "execution", "service", {
+    container: true,
+    contains: ["state_manager", "task_queue", "scheduler", "logger", "monitor"],
+  }),
+  C("state_manager", "agent_harness", "State Manager", "control", "service"),
+  C("task_queue", "agent_harness", "Task Queue", "execution", "queue"),
+  C("scheduler", "agent_harness", "Scheduler", "control", "service"),
+  C("logger", "agent_harness", "Logger", "data", "service"),
+  C("monitor", "agent_harness", "Monitor", "data", "service"),
   // ---- memory (your L1–L4 stack) ----
   C("working_memory", "memory", "Working Memory", "data", "datastore", { tech: ["in-context", "JSONL transcript"] }),
   C("long_term_memory", "memory", "Long-term Memory", "data", "datastore", { tech: ["MEMORY.md", "state.db", "SQLite"] }),

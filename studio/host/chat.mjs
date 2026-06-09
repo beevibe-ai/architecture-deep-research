@@ -29,6 +29,7 @@ const TOOLS = [
   { name: "flow_add_transition", description: "Connect two steps in a flow.", input_schema: { type: "object", properties: { flow: { type: "string" }, from: { type: "string" }, to: { type: "string" }, label: { type: "string" } }, required: ["flow", "from", "to"] } },
   // composite + cross-cutting
   { name: "scaffold_subsystem", description: "Create a service + datastore + wire + owned entity + cross_ref in one step.", input_schema: { type: "object", properties: { name: { type: "string" }, service: { type: "string" }, datastore: { type: "string" }, entity: { type: "string" }, tech: { type: "string" }, context: { type: "string" } }, required: ["name"] } },
+  { name: "scaffold_runtime", description: "Create an Agent Runtime container with its five internals nested inside (State Manager, Task Queue, Scheduler, Logger, Monitor).", input_schema: { type: "object", properties: { label: { type: "string" } } } },
   // infrastructure (deployment)
   { name: "infra_add", description: "Add an infra node (cluster, namespace, node_pool, deployment, statefulset, service, ingress, pvc, hpa, keda_scaledobject, kserve_inference, vllm, managed_postgres, dynamodb, s3, image, …). Pass parent (label/id of a container) to nest it.", input_schema: { type: "object", properties: { type: { type: "string" }, label: { type: "string" }, parent: { type: "string" }, props: { type: "object" } }, required: ["type", "label"] } },
   { name: "infra_connect", description: "Connect two infra nodes (exposes/routes/mounts/scales/backs/pulls/schedules).", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["exposes", "routes", "mounts", "scales", "backs", "pulls", "schedules"] } }, required: ["from", "to", "kind"] } },
@@ -72,6 +73,8 @@ function toolToMutations(name, input) {
       return [{ op: "add_transition", view: "flows", ...input }];
     case "scaffold_subsystem":
       return [{ op: "scaffold_subsystem", ...input }];
+    case "scaffold_runtime":
+      return [{ op: "scaffold_runtime", ...input }];
     case "infra_add":
       return [{ op: "add_infra", view: "infra", ...input }];
     case "infra_connect":
