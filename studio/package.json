@@ -16,6 +16,7 @@
   "main": "./out/extension.js",
   "dependencies": {
     "@anthropic-ai/sdk": "0.32.1",
+    "openai": "^4.77.0",
     "ajv": "8.20.0"
   },
   "devDependencies": {
@@ -44,10 +45,21 @@
           "default": ".adr/architecture.spec.json",
           "description": "Workspace-relative path to the architecture spec the canvas reads and writes."
         },
+        "adrStudio.provider": {
+          "type": "string",
+          "enum": ["anthropic", "openai"],
+          "default": "anthropic",
+          "description": "Which LLM provider powers the design assistant. Set the key via 'ADR Studio: Set Anthropic API Key'."
+        },
         "adrStudio.model": {
           "type": "string",
           "default": "claude-sonnet-4-6",
-          "description": "Anthropic model the design assistant uses for topology edits."
+          "description": "Anthropic model the design assistant uses (when provider is anthropic)."
+        },
+        "adrStudio.openaiModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "OpenAI model the design assistant uses (when provider is openai)."
         }
       }
     }

@@ -4,11 +4,11 @@
 // tool call the working spec is pushed back so every canvas animates mid-stream.
 // The model sees lint feedback per turn and can self-correct.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
 import { catalogVocabulary } from "../shared/catalog.mjs";
 import { infraVocabulary } from "../shared/infra.mjs";
+import { makeProvider, defaultModel } from "./providers.mjs";
 
 // View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
@@ -129,39 +129,40 @@ const label = (nodes, id) => (nodes.find((n) => n.id === id) || {}).label || id;
 
 // onEvent receives { type: "chatToken"|"specPatch", ... }. The host wires it to
 // postMessage. `client` is injectable for tests (no network).
-export async function runAssistant({ userText, spec, model, apiKey, onEvent = () => {}, client, catalog }) {
+export async function runAssistant({ userText, spec, model, apiKey, onEvent = () => {}, client, catalog, provider }) {
+  // An injected client (tests) always uses the Anthropic shape.
+  const providerName = client ? "anthropic" : provider || "anthropic";
   if (!apiKey && !client) {
-    return {
-      text: "No Anthropic API key found. Set ANTHROPIC_API_KEY or run `adr-doctor setup`, then reopen the canvas. (Drag-and-drop editing works without a key.)",
-      spec,
-      trace: [],
-    };
+    const hint = providerName === "openai"
+      ? "No OpenAI API key found. Run “ADR Studio: Set Anthropic API Key” (pick OpenAI) or set OPENAI_API_KEY."
+      : "No Anthropic API key found. Run “ADR Studio: Set Anthropic API Key”, or set ANTHROPIC_API_KEY.";
+    return { text: hint + " (Drag-and-drop editing works without a key.)", spec, trace: [] };
   }
 
-  const anthropic = client || new Anthropic({ apiKey });
+  const prov = makeProvider(providerName, { apiKey, client });
+  const useModel = model || defaultModel(providerName);
   let working = spec;
   const trace = [];
-  const messages = [{ role: "user", content: `Current design:\n${specSummary(spec)}\n\nUser: ${userText}` }];
+  const history = [{ role: "user", text: `Current design:\n${specSummary(spec)}\n\nUser: ${userText}` }];
 
   for (let turn = 0; turn < 8; turn++) {
-    const stream = anthropic.messages.stream({
-      model: model || "claude-sonnet-4-6",
-      max_tokens: 1500,
+    const { blocks } = await prov.stream({
       system: systemPrompt(catalog),
       tools: TOOLS,
-      messages,
+      model: useModel,
+      history,
+      maxTokens: 1500,
+      onText: (t) => onEvent({ type: "chatToken", text: t }),
     });
-    stream.on("text", (delta) => onEvent({ type: "chatToken", text: delta }));
-    const msg = await stream.finalMessage();
-    messages.push({ role: "assistant", content: msg.content });
+    history.push({ role: "assistant", blocks });
 
-    const toolUses = msg.content.filter((b) => b.type === "tool_use");
+    const toolUses = blocks.filter((b) => b.type === "tool_use");
     if (toolUses.length === 0) {
-      const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
       return { text: text || "Done.", spec: working, trace };
     }
 
-    const toolResults = [];
+    const results = [];
     for (const tu of toolUses) {
       let payload;
       try {
@@ -174,9 +175,9 @@ export async function runAssistant({ userText, spec, model, apiKey, onEvent = ()
         payload = { ok: false, error: String(err.message || err) };
       }
       trace.push({ tool: tu.name, input: tu.input, result: payload });
-      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(payload) });
+      results.push({ tool_use_id: tu.id, content: JSON.stringify(payload) });
     }
-    messages.push({ role: "user", content: toolResults });
+    history.push({ role: "tool", results });
   }
 
   return { text: "Reached the edit limit for one message — check the canvas and tell me what to adjust.", spec: working, trace };

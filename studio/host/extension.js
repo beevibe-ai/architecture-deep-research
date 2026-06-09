@@ -40,18 +40,28 @@ function activate(context) {
   );
 }
 
-// Prompt for an Anthropic key and store it in VS Code SecretStorage — no JSON
+// Prompt for a provider + key and store it in VS Code SecretStorage — no JSON
 // editing, no key in settings, survives restarts.
 async function setApiKey() {
+  const pick = await vscode.window.showQuickPick(
+    [
+      { label: "Anthropic", id: "anthropic", placeHolder: "sk-ant-…" },
+      { label: "OpenAI", id: "openai", placeHolder: "sk-…" },
+    ],
+    { placeHolder: "Which provider's API key?" }
+  );
+  if (!pick) return;
   const key = await vscode.window.showInputBox({
-    prompt: "Anthropic API key for the design assistant (stored securely in VS Code SecretStorage)",
+    prompt: `${pick.label} API key (stored securely in VS Code SecretStorage)`,
     password: true,
     ignoreFocusOut: true,
-    placeHolder: "sk-ant-…",
+    placeHolder: pick.placeHolder,
   });
   if (!key) return;
-  await secrets.store("adrStudio.anthropicKey", key.trim());
-  vscode.window.showInformationMessage("Anthropic key saved. The assistant is ready.");
+  await secrets.store(`adrStudio.${pick.id}Key`, key.trim());
+  vscode.window.showInformationMessage(
+    `${pick.label} key saved.` + (pick.id !== (config().get("provider") || "anthropic") ? ` Set adrStudio.provider to "${pick.id}" to use it.` : " The assistant is ready.")
+  );
 }
 
 let panel = null;
@@ -163,11 +173,13 @@ async function handleMessage(msg) {
 
     case "chat": {
       post({ type: "chatStart" });
+      const provider = config().get("provider") || "anthropic";
       const result = await chat.runAssistant({
         userText: msg.text,
         spec: msg.spec,
-        model: config().get("model"),
-        apiKey: await apiKey(),
+        provider,
+        model: provider === "openai" ? config().get("openaiModel") : config().get("model"),
+        apiKey: await apiKey(provider),
         catalog: loadCatalog(catalog),
         onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
       });
@@ -263,22 +275,24 @@ function writeSpec(spec) {
   lastWritten = json; // mark as self-write for the watcher
 }
 
-async function apiKey() {
+async function apiKey(provider = "anthropic") {
   // SecretStorage (set via the command) → env → ~/.adr/config.json. Falls back
   // to null so the assistant shows a clear setup hint rather than a mock reply.
   try {
     if (secrets) {
-      const stored = await secrets.get("adrStudio.anthropicKey");
+      const stored = await secrets.get(`adrStudio.${provider}Key`);
       if (stored) return stored;
     }
   } catch {
     /* ignore */
   }
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  const envName = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+  if (process.env[envName]) return process.env[envName];
   try {
     const cfg = path.join(require("os").homedir(), ".adr", "config.json");
     if (fs.existsSync(cfg)) {
       const j = JSON.parse(fs.readFileSync(cfg, "utf8"));
+      if (provider === "openai") return j.OPENAI_API_KEY || j.ADR_OPENAI_API_KEY || null;
       return j.ANTHROPIC_API_KEY || j.ADR_ANTHROPIC_API_KEY || j.anthropicApiKey || null;
     }
   } catch {
