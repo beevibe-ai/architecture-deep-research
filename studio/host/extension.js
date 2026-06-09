@@ -30,10 +30,28 @@ function shared() {
   return sharedPromise;
 }
 
+let secrets = null;
+
 function activate(context) {
+  secrets = context.secrets;
   context.subscriptions.push(
-    vscode.commands.registerCommand("adrStudio.open", () => openCanvas(context))
+    vscode.commands.registerCommand("adrStudio.open", () => openCanvas(context)),
+    vscode.commands.registerCommand("adrStudio.setApiKey", setApiKey)
   );
+}
+
+// Prompt for an Anthropic key and store it in VS Code SecretStorage — no JSON
+// editing, no key in settings, survives restarts.
+async function setApiKey() {
+  const key = await vscode.window.showInputBox({
+    prompt: "Anthropic API key for the design assistant (stored securely in VS Code SecretStorage)",
+    password: true,
+    ignoreFocusOut: true,
+    placeHolder: "sk-ant-…",
+  });
+  if (!key) return;
+  await secrets.store("adrStudio.anthropicKey", key.trim());
+  vscode.window.showInformationMessage("Anthropic key saved. The assistant is ready.");
 }
 
 let panel = null;
@@ -149,7 +167,7 @@ async function handleMessage(msg) {
         userText: msg.text,
         spec: msg.spec,
         model: config().get("model"),
-        apiKey: apiKey(),
+        apiKey: await apiKey(),
         catalog: loadCatalog(catalog),
         onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
       });
@@ -245,16 +263,23 @@ function writeSpec(spec) {
   lastWritten = json; // mark as self-write for the watcher
 }
 
-function apiKey() {
-  // Reuse the same key adr-doctor persists, then env, then nothing (chat
-  // degrades to a clear error rather than a mock response).
-  const fromEnv = process.env.ANTHROPIC_API_KEY;
-  if (fromEnv) return fromEnv;
+async function apiKey() {
+  // SecretStorage (set via the command) → env → ~/.adr/config.json. Falls back
+  // to null so the assistant shows a clear setup hint rather than a mock reply.
+  try {
+    if (secrets) {
+      const stored = await secrets.get("adrStudio.anthropicKey");
+      if (stored) return stored;
+    }
+  } catch {
+    /* ignore */
+  }
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   try {
     const cfg = path.join(require("os").homedir(), ".adr", "config.json");
     if (fs.existsSync(cfg)) {
       const j = JSON.parse(fs.readFileSync(cfg, "utf8"));
-      return j.ANTHROPIC_API_KEY || j.anthropicApiKey || null;
+      return j.ANTHROPIC_API_KEY || j.ADR_ANTHROPIC_API_KEY || j.anthropicApiKey || null;
     }
   } catch {
     /* ignore */

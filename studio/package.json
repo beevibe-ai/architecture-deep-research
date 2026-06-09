@@ -29,6 +29,11 @@
         "command": "adrStudio.open",
         "title": "Open Architecture Canvas",
         "category": "ADR Studio"
+      },
+      {
+        "command": "adrStudio.setApiKey",
+        "title": "Set Anthropic API Key",
+        "category": "ADR Studio"
       }
     ],
     "configuration": {
