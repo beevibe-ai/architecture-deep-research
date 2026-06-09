@@ -27,7 +27,7 @@
     "commands": [
       {
         "command": "adrStudio.open",
-        "title": "ADR Studio: Open Architecture Canvas",
+        "title": "Open Architecture Canvas",
         "category": "ADR Studio"
       }
     ],

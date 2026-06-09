@@ -5,7 +5,7 @@
 import Ajv from "ajv";
 
 export const SPEC_SCHEMA = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
+  // No $schema — the bundled Ajv is draft-07 and this schema uses no 2020 features.
   type: "object",
   required: ["version", "views"],
   properties: {
