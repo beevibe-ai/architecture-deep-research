@@ -2,11 +2,11 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run ADR Studio",
+      "name": "Run ADR Studio (studio folder opened directly)",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}/studio"],
-      "outFiles": ["${workspaceFolder}/studio/host/**/*.js"]
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/host/**/*.js"]
     }
   ]
 }
