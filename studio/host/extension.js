@@ -21,6 +21,7 @@ function shared() {
       ir: await import("../shared/ir.mjs"),
       constraints: await import("../shared/constraints.mjs"),
       handoff: await import("../shared/handoff.mjs"),
+      plan: await import("../shared/plan.mjs"),
       chat: await import("./chat.mjs"),
     }))();
   }
@@ -70,7 +71,7 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, chat } = await shared();
+  const { ir, handoff, plan, chat } = await shared();
   switch (msg.type) {
     case "ready":
       post({ type: "spec", spec: readSpec(ir) });
@@ -90,6 +91,16 @@ async function handleMessage(msg) {
       vscode.window.showInformationMessage(
         `Handoff written → ${vscode.workspace.asRelativePath(out)}`
       );
+      return;
+    }
+
+    case "writePlan": {
+      const md = plan.generatePlan(msg.spec);
+      const out = planPath();
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.writeFileSync(out, md);
+      writeSpec(msg.spec);
+      post({ type: "planWritten", path: vscode.workspace.asRelativePath(out) });
       return;
     }
 
@@ -134,6 +145,10 @@ function specPath() {
 
 function handoffPath() {
   return path.join(path.dirname(specPath()), "execution-handoff.json");
+}
+
+function planPath() {
+  return path.join(path.dirname(specPath()), "plan.md");
 }
 
 function readSpec(ir) {

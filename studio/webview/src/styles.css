@@ -149,10 +149,68 @@ body {
   resize: vertical;
 }
 
+/* ---- right dock ---- */
+.dock {
+  width: 320px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dock-tabs { display: flex; border-bottom: 1px solid var(--line); }
+.dock-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-dim);
+  padding: 9px 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.dock-tab:hover { color: var(--ink); }
+.dock-tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+.dock-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---- IR JSON panel ---- */
+.ir-panel { flex: 1; min-height: 0; overflow: auto; }
+.ir-json {
+  margin: 0;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre;
+}
+
+/* ---- plan panel ---- */
+.plan-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.plan-actions { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.plan-md { flex: 1; min-height: 0; overflow: auto; padding: 4px 14px 16px; line-height: 1.55; }
+.plan-md h1 { font-size: 18px; }
+.plan-md h2 { font-size: 15px; margin-top: 18px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.plan-md h3 { font-size: 13px; color: var(--ink-dim); }
+.plan-md table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 8px 0; }
+.plan-md th, .plan-md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.plan-md th { background: #20243200; color: var(--ink-dim); }
+.plan-md em { color: var(--ink-dim); }
+.plan-code {
+  background: #14161f;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  overflow: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: #9ee3c6;
+}
+
 /* ---- chat ---- */
 .chat {
-  width: 300px;
-  border-left: 1px solid var(--line);
+  flex: 1;
+  min-height: 0;
   background: var(--panel);
   display: flex;
   flex-direction: column;

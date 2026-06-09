@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import Palette from "./Palette.jsx";
 import Canvas from "./Canvas.jsx";
-import ChatSidebar from "./ChatSidebar.jsx";
+import RightDock from "./RightDock.jsx";
 import { post, onMessage } from "./vscode.js";
 import { emptySpec } from "../../shared/ir.mjs";
 import { lint } from "../../shared/constraints.mjs";
@@ -27,6 +27,9 @@ export default function App() {
           break;
         case "exported":
           flash(`Handoff written → ${msg.path}`);
+          break;
+        case "planWritten":
+          flash(`Plan written → ${msg.path}`);
           break;
         case "error":
           setMessages((m) => [...m, { role: "system", text: `⚠ ${msg.message}` }]);
@@ -66,6 +69,11 @@ export default function App() {
     post({ type: "export", spec });
   }, [spec]);
 
+  const writePlan = useCallback(
+    (markdown) => post({ type: "writePlan", spec, markdown }),
+    [spec]
+  );
+
   const { violations } = lint(spec);
 
   return (
@@ -85,11 +93,13 @@ export default function App() {
         <div className="body">
           <Palette />
           <Canvas spec={spec} commit={commit} violations={violations} />
-          <ChatSidebar
+          <RightDock
+            spec={spec}
             messages={messages}
             busy={busy}
             onSend={sendChat}
             violations={violations}
+            onWritePlan={writePlan}
           />
         </div>
 
