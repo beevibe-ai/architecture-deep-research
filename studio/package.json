@@ -1,0 +1,41 @@
+{
+  "name": "adr-studio",
+  "displayName": "ADR Studio — Architecture Canvas",
+  "description": "Drag-and-drop system architecture canvas with an AI design assistant. Designs compile to architecture.spec.json for coding agents.",
+  "version": "0.1.0",
+  "publisher": "beevibe",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Visualization", "Other"],
+  "main": "./host/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "adrStudio.open",
+        "title": "ADR Studio: Open Architecture Canvas",
+        "category": "ADR Studio"
+      }
+    ],
+    "configuration": {
+      "title": "ADR Studio",
+      "properties": {
+        "adrStudio.specPath": {
+          "type": "string",
+          "default": ".adr/architecture.spec.json",
+          "description": "Workspace-relative path to the architecture spec the canvas reads and writes."
+        },
+        "adrStudio.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-6",
+          "description": "Anthropic model the design assistant uses for topology edits."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "vite build --config webview/vite.config.js",
+    "dev": "vite build --watch --config webview/vite.config.js"
+  }
+}
