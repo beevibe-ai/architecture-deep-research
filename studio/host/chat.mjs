@@ -7,11 +7,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
+import { catalogVocabulary } from "../shared/catalog.mjs";
 
 // View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
   // architecture
-  { name: "arch_add_node", description: "Add an architecture component.", input_schema: { type: "object", properties: { kind: { type: "string", enum: ["service", "datastore", "queue", "gateway", "client", "external"] }, label: { type: "string" }, tech: { type: "string" }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["kind", "label"] } },
+  { name: "arch_add_node", description: "Add a component. Prefer a catalog `type` (orchestrator, semantic_gateway, vector_db, search_index, event_queue, otel_collector, rbac_policy, …) — it sets the category, plane, and tech options.", input_schema: { type: "object", properties: { type: { type: "string", description: "catalog component type id" }, label: { type: "string" }, tech: { type: "string", description: "specific tech, e.g. pgvector, SQLite FTS5, Kafka" }, plane: { type: "string", enum: ["control", "execution", "data"] }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["type", "label"] } },
+  { name: "arch_set_edge_semantics", description: "Set distributed/governance/observability properties on a wire.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, protocol: { type: "string" }, delivery: { type: "string", enum: ["best-effort", "at-least-once", "exactly-once", "ordered"] }, consistency: { type: "string", enum: ["none", "eventual", "linearizable", "vector_clock", "lamport"] }, required_role: { type: "string", description: "RBAC role required to traverse this edge" }, instrumented: { type: "boolean", description: "OTel-traced" } }, required: ["from", "to"] } },
   { name: "arch_remove_node", description: "Remove a component by id or label.", input_schema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] } },
   { name: "arch_connect", description: "Wire one component to another.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["calls", "streams", "owns", "publishes", "subscribes"] }, protocol: { type: "string", enum: ["http", "grpc", "sql", "event", "ws", "internal"] }, label: { type: "string" } }, required: ["from", "to"] } },
   { name: "arch_disconnect", description: "Remove a wire between two components.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
@@ -36,6 +38,8 @@ function toolToMutations(name, input) {
   switch (name) {
     case "arch_add_node":
       return [{ op: "add_node", view: "architecture", ...input }];
+    case "arch_set_edge_semantics":
+      return [{ op: "set_edge_semantics", view: "architecture", ...input }];
     case "arch_remove_node":
       return [{ op: "remove_node", view: "architecture", ref: input.ref }];
     case "arch_connect":
@@ -71,16 +75,20 @@ function toolToMutations(name, input) {
   }
 }
 
-function systemPrompt() {
+function systemPrompt(catalog) {
   return [
     "You are the design assistant inside a system-architecture canvas with three views:",
     "architecture (components + wiring), data model (entities + relations), and flows (flowcharts).",
     "Translate the user's intent into tool calls that edit the design — never describe edits and",
     "expect the user to make them; make them yourself. Use the view-prefixed tools (arch_, dm_, flow_).",
-    "Refer to existing elements by their human label/name. After your edits you receive element counts",
-    "and any constraint violations; mention real violations plainly and fix them when asked. When the",
-    "user asks for a design rationale or summary, capture it with write_plan_section. Keep chat replies",
-    "short and concrete.",
+    "Speak agent-native and distributed-systems language: pick precise component types from the catalog",
+    "below, place them on the right plane (control / execution / data), choose specific tech (pgvector,",
+    "SQLite FTS5, Kafka, Qdrant…), and set edge semantics with arch_set_edge_semantics —",
+    "delivery/consistency (incl. vector_clock) for distributed guarantees, required_role for RBAC,",
+    "instrumented for OTel traceability. Route external traffic through a gateway/semantic_gateway and",
+    "put a vector_db behind an embedder. Refer to existing elements by label. After edits you receive",
+    "counts and violations; fix real ones. Capture rationale with write_plan_section. Keep replies short.",
+    "\n\nComponent catalog:\n" + catalogVocabulary(catalog),
   ].join(" ");
 }
 
@@ -100,7 +108,7 @@ const label = (nodes, id) => (nodes.find((n) => n.id === id) || {}).label || id;
 
 // onEvent receives { type: "chatToken"|"specPatch", ... }. The host wires it to
 // postMessage. `client` is injectable for tests (no network).
-export async function runAssistant({ userText, spec, model, apiKey, onEvent = () => {}, client }) {
+export async function runAssistant({ userText, spec, model, apiKey, onEvent = () => {}, client, catalog }) {
   if (!apiKey && !client) {
     return {
       text: "No Anthropic API key found. Set ANTHROPIC_API_KEY or run `adr-doctor setup`, then reopen the canvas. (Drag-and-drop editing works without a key.)",
@@ -118,7 +126,7 @@ export async function runAssistant({ userText, spec, model, apiKey, onEvent = ()
     const stream = anthropic.messages.stream({
       model: model || "claude-sonnet-4-6",
       max_tokens: 1500,
-      system: systemPrompt(),
+      system: systemPrompt(catalog),
       tools: TOOLS,
       messages,
     });

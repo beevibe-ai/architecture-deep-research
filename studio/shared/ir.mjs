@@ -5,6 +5,8 @@
 // write this single shape. One mutation path (`applyMutation`) serves drag-drop
 // and the assistant alike, so the two surfaces can never diverge.
 
+import { nodeDefaults, getType } from "./catalog.mjs";
+
 export const SPEC_VERSION = "0.3.0";
 
 export const VIEWS = ["architecture", "data_model", "flows"];
@@ -83,8 +85,26 @@ export function defaultConstraints() {
       rule: "entity_requires_pk",
       message: "Every entity needs a primary key.",
     },
+    {
+      id: "plane-separation",
+      view: "architecture",
+      rule: "plane_separation",
+    },
+    {
+      id: "vector-db-needs-embedder",
+      view: "architecture",
+      rule: "vector_db_needs_embedder",
+    },
   ];
 }
+
+// Higher-noise governance/observability rules — available for the user or the
+// assistant to switch on via add_constraint, not seeded by default.
+export const OPTIONAL_CONSTRAINTS = [
+  { id: "external-through-gateway", view: "architecture", rule: "external_through_gateway" },
+  { id: "rbac-on-control", view: "architecture", rule: "rbac_on_control" },
+  { id: "edge-requires-trace", view: "architecture", rule: "edge_requires_trace" },
+];
 
 // ---- ids -------------------------------------------------------------------
 // Deterministic within a session (prefix + counter). No Date.now/Math.random,
@@ -100,21 +120,32 @@ export function __resetIds(n = 0) {
 }
 
 // ---- factories -------------------------------------------------------------
-export function makeNode({ kind, label, tech = "", context = "", notes = "", position }) {
-  if (!ARCH_KIND_SET.has(kind)) throw new Error(`unknown node kind: ${kind}`);
+// A component node. Created either from a catalog `type` (orchestrator,
+// vector_db, semantic_gateway, …) — which fills category/plane/coarse-kind/tech —
+// or from a bare legacy `kind`. Catalog-driven is the norm; bare kind stays for
+// back-compat and tests.
+export function makeNode({ kind, type, category, plane, label, tech, context = "", notes = "", ports, position }) {
+  const def = type ? nodeDefaults(type) : {};
+  const resolvedKind = kind || def.kind || "service";
   return {
-    id: nextId(kind),
-    kind,
-    label: label || defaultLabelFor(kind),
-    tech,
+    id: nextId(type || resolvedKind),
+    kind: resolvedKind,
+    type: type || def.type || resolvedKind,
+    category: category || def.category || "compute",
+    plane: plane || def.plane || "execution",
+    label: label || (type && getType(type)?.label) || defaultLabelFor(resolvedKind),
+    tech: tech !== undefined ? tech : def.tech || "",
     context,
     notes,
+    ports: ports || [],
     position: position || { x: 0, y: 0 },
   };
 }
 
-export function makeEdge({ from, to, kind = "calls", protocol = "http", label = "" }) {
-  return { id: nextId("e"), from, to, kind, protocol, label };
+// An edge now carries distributed/governance/observability semantics:
+// delivery + consistency (incl. vector_clock), required_role (RBAC), instrumented (OTel).
+export function makeEdge({ from, to, kind = "calls", protocol = "http", label = "", delivery = null, consistency = null, required_role = null, instrumented = false }) {
+  return { id: nextId("e"), from, to, kind, protocol, label, delivery, consistency, required_role, instrumented };
 }
 
 export function makeEntity({ name, context = "", position, fields = [] }) {
@@ -225,8 +256,20 @@ function architectureReducer(next, m) {
     case "update_node": {
       const node = resolve(next, "architecture", m.id || m.ref);
       if (!node) throw new Error(`update_node: no node "${m.id || m.ref}"`);
-      for (const f of ["label", "tech", "context", "notes"]) if (m[f] !== undefined) node[f] = m[f];
+      for (const f of ["label", "tech", "context", "notes", "plane", "type", "category", "ports"]) if (m[f] !== undefined) node[f] = m[f];
       if (m.position) node.position = m.position;
+      break;
+    }
+    case "set_edge_semantics": {
+      const edge = m.id
+        ? t.edges.find((e) => e.id === m.id)
+        : t.edges.find((e) => {
+            const from = resolve(next, "architecture", m.from);
+            const to = resolve(next, "architecture", m.to);
+            return from && to && e.from === from.id && e.to === to.id;
+          });
+      if (!edge) throw new Error(`set_edge_semantics: no edge`);
+      for (const f of ["protocol", "kind", "label", "delivery", "consistency", "required_role", "instrumented"]) if (m[f] !== undefined) edge[f] = m[f];
       break;
     }
     case "remove_node": {
@@ -523,5 +566,25 @@ function fillDefaults(spec) {
   spec.constraints = spec.constraints || defaultConstraints();
   spec.cross_refs = spec.cross_refs || [];
   spec.plan = spec.plan || { sections: [] };
+  normalizeArchitecture(spec.views.architecture);
   return spec;
+}
+
+// Backfill catalog/semantics fields on nodes and edges drawn before M7, so lint
+// and plan can assume the richer shape. Plane is inferred from the coarse kind.
+const PLANE_BY_KIND = { gateway: "control", datastore: "data", queue: "data", external: "data", client: "execution", service: "execution" };
+const CATEGORY_BY_KIND = { gateway: "compute", datastore: "data", queue: "messaging", external: "edge", client: "edge", service: "compute" };
+function normalizeArchitecture(arch) {
+  for (const n of arch.nodes) {
+    if (!n.type) n.type = n.kind;
+    if (!n.category) n.category = CATEGORY_BY_KIND[n.kind] || "compute";
+    if (!n.plane) n.plane = PLANE_BY_KIND[n.kind] || "execution";
+    if (!n.ports) n.ports = [];
+  }
+  for (const e of arch.edges) {
+    if (e.delivery === undefined) e.delivery = null;
+    if (e.consistency === undefined) e.consistency = null;
+    if (e.required_role === undefined) e.required_role = null;
+    if (e.instrumented === undefined) e.instrumented = false;
+  }
 }

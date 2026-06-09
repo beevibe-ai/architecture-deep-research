@@ -25,7 +25,7 @@ test("generatePlan produces a structured doc with component table + valid mermai
   const md = generatePlan(s);
   assert.match(md, /^# Billing System/m);
   assert.match(md, /## Components/);
-  assert.match(md, /\| API \| service \| Express \|/);
+  assert.match(md, /\| API \| service \| execution \| Express \|/);
   assert.match(md, /## Data model/);
   assert.match(md, /### Invoice/);
   assert.match(md, /```mermaid/);

@@ -69,11 +69,13 @@ export function generatePlan(spec) {
   // Components
   if (arch.nodes.length) {
     L.push("## Components", "");
-    L.push("| Component | Kind | Tech | Context | Intent |", "| --- | --- | --- | --- | --- |");
+    L.push("| Component | Type | Plane | Tech | Intent |", "| --- | --- | --- | --- | --- |");
     for (const n of arch.nodes)
-      L.push(`| ${esc(n.label)} | ${esc(n.kind)} | ${esc(n.tech)} | ${esc(n.context)} | ${esc(n.notes)} |`);
+      L.push(`| ${esc(n.label)} | ${esc(n.type || n.kind)} | ${esc(n.plane || "execution")} | ${esc(n.tech)} | ${esc(n.notes)} |`);
     L.push("");
     L.push(...fence(architectureMermaid(spec)));
+    L.push(...planeSections(arch));
+    L.push(...edgeSemanticsSections(spec, arch));
   }
 
   // Data model
@@ -138,6 +140,56 @@ export function generatePlan(spec) {
   return L.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
+// Group components by plane (control / execution / data).
+function planeSections(arch) {
+  const L = [];
+  const planes = [["control", "Control plane"], ["execution", "Execution plane"], ["data", "Data plane"]];
+  const any = arch.nodes.some((n) => n.plane);
+  if (!any) return L;
+  L.push("## Planes", "");
+  for (const [pid, plabel] of planes) {
+    const inPlane = arch.nodes.filter((n) => (n.plane || "execution") === pid);
+    if (!inPlane.length) continue;
+    L.push(`**${plabel}** — ${inPlane.map((n) => esc(n.label)).join(", ")}`, "");
+  }
+  return L;
+}
+
+// Distributed semantics, RBAC, and observability tables drawn from edge fields.
+function edgeSemanticsSections(spec, arch) {
+  const L = [];
+  const lbl = (id) => esc((arch.nodes.find((n) => n.id === id) || {}).label || id);
+
+  const distributed = arch.edges.filter((e) => e.delivery || e.consistency);
+  if (distributed.length) {
+    L.push("## Distributed semantics", "");
+    L.push("| Edge | Delivery | Consistency |", "| --- | --- | --- |");
+    for (const e of distributed) L.push(`| ${lbl(e.from)} → ${lbl(e.to)} | ${esc(e.delivery || "—")} | ${esc(e.consistency || "—")} |`);
+    L.push("");
+  }
+
+  const guarded = arch.edges.filter((e) => e.required_role);
+  if (guarded.length) {
+    L.push("## Governance (RBAC)", "");
+    L.push("| Edge | Required role |", "| --- | --- |");
+    for (const e of guarded) L.push(`| ${lbl(e.from)} → ${lbl(e.to)} | ${esc(e.required_role)} |`);
+    L.push("");
+  }
+
+  const traced = arch.edges.filter((e) => e.instrumented);
+  const obsNodes = arch.nodes.filter((n) => n.category === "observability");
+  if (traced.length || obsNodes.length) {
+    L.push("## Observability", "");
+    if (obsNodes.length) L.push(`Instrumentation: ${obsNodes.map((n) => esc(n.label)).join(", ")}`, "");
+    if (traced.length) {
+      L.push("Traced edges:", "");
+      for (const e of traced) L.push(`- ${lbl(e.from)} → ${lbl(e.to)} (OTel)`);
+      L.push("");
+    }
+  }
+  return L;
+}
+
 function refLabel(spec, end) {
   if (end.view === "architecture") return (spec.views.architecture.nodes.find((n) => n.id === end.ref) || {}).label || end.ref;
   if (end.view === "data_model") return (spec.views.data_model.entities.find((e) => e.id === end.ref) || {}).name || end.ref;
@@ -154,7 +206,15 @@ function refLabel(spec, end) {
 export function architectureMermaid(spec) {
   const { nodes, edges } = spec.views.architecture;
   const lines = ["flowchart LR"];
-  for (const n of nodes) lines.push(`  ${n.id}["${safeLabel(n.label)}"]`);
+  // Group nodes into plane subgraphs (control / execution / data swimlanes).
+  const planes = [["control", "Control plane"], ["execution", "Execution plane"], ["data", "Data plane"]];
+  for (const [pid, plabel] of planes) {
+    const inPlane = nodes.filter((n) => (n.plane || "execution") === pid);
+    if (!inPlane.length) continue;
+    lines.push(`  subgraph ${pid}["${plabel}"]`);
+    for (const n of inPlane) lines.push(`    ${n.id}["${safeLabel(n.label)}"]`);
+    lines.push("  end");
+  }
   for (const e of edges) lines.push(`  ${e.from} -->|${safeLabel(e.protocol)}| ${e.to}`);
   return lines.join("\n");
 }

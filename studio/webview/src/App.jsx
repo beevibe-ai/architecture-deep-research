@@ -7,9 +7,11 @@ import RightDock from "./RightDock.jsx";
 import { post, onMessage } from "./vscode.js";
 import { emptySpec } from "../../shared/ir.mjs";
 import { lint } from "../../shared/constraints.mjs";
+import { CATALOG } from "../../shared/catalog.mjs";
 
 export default function App() {
   const [spec, setSpec] = useState(emptySpec());
+  const [catalog, setCatalog] = useState(CATALOG);
   const [activeView, setActiveView] = useState("architecture");
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -70,6 +72,9 @@ export default function App() {
           pastRef.current = [];
           futureRef.current = [];
           setSpec(msg.spec);
+          break;
+        case "catalog":
+          if (Array.isArray(msg.catalog) && msg.catalog.length) setCatalog(msg.catalog);
           break;
         case "externalReload":
           flash("Spec reloaded from disk");
@@ -189,7 +194,7 @@ export default function App() {
         <div className="view-col">
           <ViewTabs active={activeView} onChange={setActiveView} counts={counts} />
           <div className="view-stage">
-            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} violations={violations} />}
+            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} />}
             {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
           </div>

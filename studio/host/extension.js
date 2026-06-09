@@ -23,6 +23,7 @@ function shared() {
       handoff: await import("../shared/handoff.mjs"),
       plan: await import("../shared/plan.mjs"),
       schema: await import("./schema.mjs"),
+      catalog: await import("../shared/catalog.mjs"),
       chat: await import("./chat.mjs"),
     }))();
   }
@@ -94,10 +95,11 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, plan, schema, chat } = await shared();
+  const { ir, handoff, plan, schema, catalog, chat } = await shared();
   switch (msg.type) {
     case "ready":
       post({ type: "spec", spec: readSpec(ir, schema) });
+      post({ type: "catalog", catalog: loadCatalog(catalog) });
       return;
 
     case "persist":
@@ -134,6 +136,7 @@ async function handleMessage(msg) {
         spec: msg.spec,
         model: config().get("model"),
         apiKey: apiKey(),
+        catalog: loadCatalog(catalog),
         onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
       });
       writeSpec(result.spec);
@@ -174,6 +177,23 @@ function handoffPath() {
 
 function planPath() {
   return path.join(path.dirname(specPath()), "plan.md");
+}
+
+function catalogPath() {
+  return path.join(path.dirname(specPath()), "catalog.json");
+}
+
+// Built-in catalog merged with an optional project .adr/catalog.json override.
+function loadCatalog(catalogMod) {
+  const p = catalogPath();
+  if (!fs.existsSync(p)) return catalogMod.CATALOG;
+  try {
+    const overrides = JSON.parse(fs.readFileSync(p, "utf8"));
+    return catalogMod.mergeCatalog(Array.isArray(overrides) ? overrides : overrides.components || []);
+  } catch (err) {
+    vscode.window.showWarningMessage(`Ignoring catalog.json: ${err.message}`);
+    return catalogMod.CATALOG;
+  }
 }
 
 // Tracks the exact JSON we last wrote, so the file watcher can tell our own

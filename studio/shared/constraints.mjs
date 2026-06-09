@@ -29,7 +29,12 @@ export function lint(spec) {
 
 function lintArchitecture(spec, c, out) {
   const { nodes, edges } = spec.views.architecture;
-  const kindOf = (id) => (nodes.find((n) => n.id === id) || {}).kind || null;
+  const byId = (id) => nodes.find((n) => n.id === id) || {};
+  const kindOf = (id) => byId(id).kind || null;
+  const planeOf = (id) => byId(id).plane || "execution";
+  const catOf = (id) => byId(id).category || null;
+  const flagEdge = (e, msg) => out.push({ constraintId: c.id, view: "architecture", edgeId: e.id, message: c.message || msg });
+  const flagNode = (n, msg) => out.push({ constraintId: c.id, view: "architecture", nodeId: n.id, message: c.message || msg });
   switch (c.rule) {
     case "forbid_edge":
       for (const e of edges)
@@ -55,6 +60,41 @@ function lintArchitecture(spec, c, out) {
       if (!nodes.some((n) => n.kind === c.kind))
         out.push({ constraintId: c.id, view: "architecture", message: c.message || `Design must include a ${c.kind}.` });
       break;
+
+    // ---- planes (control vs execution vs data) ----
+    case "plane_separation":
+      // Execution must not reach the control plane except through a gateway.
+      for (const e of edges)
+        if (planeOf(e.from) === "execution" && planeOf(e.to) === "control" && kindOf(e.to) !== "gateway")
+          flagEdge(e, `${archLabel(spec, e.from)} → ${archLabel(spec, e.to)} crosses into the control plane directly — route through a gateway.`);
+      break;
+
+    // ---- boundary / governance ----
+    case "external_through_gateway":
+      for (const e of edges)
+        if ((catOf(e.from) === "edge" || kindOf(e.from) === "client") && kindOf(e.to) !== "gateway")
+          flagEdge(e, `External traffic into ${archLabel(spec, e.to)} should cross a gateway / semantic gateway.`);
+      break;
+    case "rbac_on_control":
+      for (const e of edges)
+        if (planeOf(e.to) === "control" && !e.required_role)
+          flagEdge(e, `${archLabel(spec, e.from)} → ${archLabel(spec, e.to)} mutates the control plane without a required role (RBAC).`);
+      break;
+
+    // ---- observability ----
+    case "edge_requires_trace":
+      for (const e of edges)
+        if (planeOf(e.from) !== "data" && planeOf(e.to) !== "data" && !e.instrumented)
+          flagEdge(e, `${archLabel(spec, e.from)} → ${archLabel(spec, e.to)} is not OTel-instrumented.`);
+      break;
+
+    // ---- data dependencies ----
+    case "vector_db_needs_embedder":
+      for (const n of nodes)
+        if (n.type === "vector_db" && !edges.some((e) => e.to === n.id))
+          flagNode(n, `Vector DB "${n.label}" has no upstream writer (who embeds + upserts?).`);
+      break;
+
     default:
       break;
   }

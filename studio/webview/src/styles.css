@@ -190,8 +190,41 @@ body {
 .dot-external { background: #ffb9d5; }
 .palette-hint { margin-top: auto; font-size: 11px; color: var(--ink-dim); line-height: 1.4; }
 
+/* ---- catalog palette ---- */
+.catalog-palette { width: 212px; }
+.cat-search {
+  background: #14161f; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--ink); padding: 6px 8px; font: inherit; width: 100%;
+}
+.cat-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.cat-group-head { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.cat-chip {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: #191c27; cursor: grab; margin-bottom: 4px;
+}
+.cat-chip:active { cursor: grabbing; }
+.cat-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.cat-chip-label { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-plane { font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 3px; color: #14161f; }
+.cp-control { background: #c8a7ff; }
+.cp-execution { background: #b9c5ff; }
+.cp-data { background: #9ee3c6; }
+
 /* ---- canvas ---- */
 .canvas-wrap { position: relative; flex: 1; min-width: 0; }
+.canvas-toolbar { position: absolute; top: 10px; right: 12px; z-index: 6; }
+
+/* plane swimlanes (background, non-interactive) */
+.plane-zone {
+  border: 1px dashed; border-radius: 12px; opacity: 0.22;
+  background: linear-gradient(180deg, currentColor 0%, transparent 14%);
+}
+.plane-zone-label {
+  position: absolute; top: 6px; left: 12px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.9;
+}
+.arch-plane { font-size: 8px; font-weight: 700; padding: 0 4px; border-radius: 3px; color: #14161f; margin-left: 6px; }
 .react-flow__renderer { background: var(--bg); }
 
 .arch-node {
