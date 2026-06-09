@@ -9,6 +9,8 @@
 //   data_model   → nodeId=entity,    edgeId=relation
 //   flows        → nodeId=step,      edgeId=transition
 
+import { lintInfra } from "./infra.mjs";
+
 const archLabel = (spec, id) => (spec.views.architecture.nodes.find((n) => n.id === id) || {}).label || id;
 const entityName = (spec, id) => (spec.views.data_model.entities.find((e) => e.id === id) || {}).name || id;
 
@@ -20,6 +22,7 @@ export function lint(spec) {
     if (view === "architecture") lintArchitecture(spec, c, violations);
     else if (view === "data_model") lintDataModel(spec, c, violations);
     else if (view === "flows") lintFlows(spec, c, violations);
+    else if (view === "infra") lintInfra(spec, c, violations);
     else if (view === "cross") lintCross(spec, c, violations);
   }
   // Cross-ref integrity always runs, even without an explicit constraint.
@@ -197,6 +200,7 @@ export function violationIndex(spec) {
     architecture: { nodes: new Set(), edges: new Set() },
     data_model: { nodes: new Set(), edges: new Set() },
     flows: { nodes: new Set(), edges: new Set() },
+    infra: { nodes: new Set(), edges: new Set() },
   };
   for (const v of violations) {
     const bucket = byView[v.view];

@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
 import { catalogVocabulary } from "../shared/catalog.mjs";
+import { infraVocabulary } from "../shared/infra.mjs";
 
 // View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
@@ -28,6 +29,11 @@ const TOOLS = [
   { name: "flow_add_transition", description: "Connect two steps in a flow.", input_schema: { type: "object", properties: { flow: { type: "string" }, from: { type: "string" }, to: { type: "string" }, label: { type: "string" } }, required: ["flow", "from", "to"] } },
   // composite + cross-cutting
   { name: "scaffold_subsystem", description: "Create a service + datastore + wire + owned entity + cross_ref in one step.", input_schema: { type: "object", properties: { name: { type: "string" }, service: { type: "string" }, datastore: { type: "string" }, entity: { type: "string" }, tech: { type: "string" }, context: { type: "string" } }, required: ["name"] } },
+  // infrastructure (deployment)
+  { name: "infra_add", description: "Add an infra node (cluster, namespace, node_pool, deployment, statefulset, service, ingress, pvc, hpa, keda_scaledobject, kserve_inference, vllm, managed_postgres, dynamodb, s3, image, …). Pass parent (label/id of a container) to nest it.", input_schema: { type: "object", properties: { type: { type: "string" }, label: { type: "string" }, parent: { type: "string" }, props: { type: "object" } }, required: ["type", "label"] } },
+  { name: "infra_connect", description: "Connect two infra nodes (exposes/routes/mounts/scales/backs/pulls/schedules).", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["exposes", "routes", "mounts", "scales", "backs", "pulls", "schedules"] } }, required: ["from", "to", "kind"] } },
+  { name: "infra_set_props", description: "Set config props on an infra node (image, replicas, cpu, memory, gpu, size, min, max, trigger, …).", input_schema: { type: "object", properties: { ref: { type: "string" }, props: { type: "object" } }, required: ["ref", "props"] } },
+  { name: "deploy_realize", description: "Link a logical component to the infra node that deploys it.", input_schema: { type: "object", properties: { component: { type: "string" }, infra: { type: "string" } }, required: ["component", "infra"] } },
   { name: "write_plan_section", description: "Write or replace an AI prose section of plan.md (e.g. overview, rationale, tradeoffs).", input_schema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, body_md: { type: "string" } }, required: ["id", "body_md"] } },
   { name: "run_constraint_check", description: "Return the current constraint violations without changing anything.", input_schema: { type: "object", properties: {} } },
 ];
@@ -66,6 +72,14 @@ function toolToMutations(name, input) {
       return [{ op: "add_transition", view: "flows", ...input }];
     case "scaffold_subsystem":
       return [{ op: "scaffold_subsystem", ...input }];
+    case "infra_add":
+      return [{ op: "add_infra", view: "infra", ...input }];
+    case "infra_connect":
+      return [{ op: "connect_infra", view: "infra", ...input }];
+    case "infra_set_props":
+      return [{ op: "set_infra_props", view: "infra", ref: input.ref, props: input.props }];
+    case "deploy_realize":
+      return [{ op: "realize", component: input.component, infra: input.infra }];
     case "write_plan_section":
       return [{ op: "set_plan_section", ...input }];
     case "run_constraint_check":
@@ -88,7 +102,11 @@ function systemPrompt(catalog) {
     "instrumented for OTel traceability. Route external traffic through a gateway/semantic_gateway and",
     "put a vector_db behind an embedder. Refer to existing elements by label. After edits you receive",
     "counts and violations; fix real ones. Capture rationale with write_plan_section. Keep replies short.",
+    "For deployment, use the infra_* tools to build the Infrastructure view (cluster ▸ namespace ▸",
+    "workload ▸ pod, node pools, services, PVCs, KEDA/HPA, KServe/vLLM, managed cloud) and deploy_realize",
+    "to link a logical component to the infra node that runs it.",
     "\n\nComponent catalog:\n" + catalogVocabulary(catalog),
+    "\n\nInfrastructure catalog:\n" + infraVocabulary(),
   ].join(" ");
 }
 

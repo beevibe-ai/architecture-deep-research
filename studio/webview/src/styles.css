@@ -225,6 +225,37 @@ body {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.9;
 }
 .arch-plane { font-size: 8px; font-weight: 700; padding: 0 4px; border-radius: 3px; color: #14161f; margin-left: 6px; }
+
+/* ---- infrastructure containment ---- */
+.infra-group {
+  border: 1.5px solid #7fd7ff; border-radius: 12px;
+  background: rgba(127, 215, 255, 0.05);
+  position: relative;
+}
+.infra-group.bad { border-color: var(--bad); }
+.lvl-cluster { border-color: #c8a7ff; background: rgba(200, 167, 255, 0.05); }
+.lvl-namespace { border-color: #b9c5ff; background: rgba(185, 197, 255, 0.05); }
+.lvl-node_pool { border-color: #ffd7a3; background: rgba(255, 215, 163, 0.06); border-style: dashed; }
+.lvl-workload { border-color: #9ee3c6; background: rgba(158, 227, 198, 0.06); }
+.infra-group-head {
+  position: absolute; top: 6px; left: 12px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-dim);
+}
+.infra-group-head .infra-type { font-weight: 400; text-transform: none; opacity: 0.6; margin-left: 6px; }
+.infra-leaf {
+  background: #1d2030; border: 1.5px solid #7fd7ff; border-radius: 9px;
+  padding: 6px 11px; min-width: 110px; color: var(--ink);
+}
+.infra-leaf.sel { box-shadow: 0 0 0 2px #7fd7ff; }
+.infra-leaf.bad { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad), 0 0 16px #ff6b6b55; }
+.infra-leaf-type { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-dim); }
+.infra-leaf-label { font-weight: 600; font-size: 12px; }
+.prop-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.prop-key { flex: 0 0 92px; font-size: 11px; color: var(--ink-dim); }
+.prop-row input[type="text"], .prop-row input:not([type]), .prop-row input[type="number"] {
+  flex: 1; min-width: 0; background: #14161f; border: 1px solid var(--line);
+  border-radius: 5px; color: var(--ink); padding: 3px 6px; font: inherit; font-size: 11px;
+}
 .react-flow__renderer { background: var(--bg); }
 
 .arch-node {

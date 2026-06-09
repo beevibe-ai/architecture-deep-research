@@ -4,12 +4,14 @@
 // across all three views instead of from a research run.
 
 import { lint } from "./constraints.mjs";
+import { compileManifests } from "./infra.mjs";
 
 export function buildHandoff(spec) {
   const { violations } = lint(spec);
   const arch = spec.views.architecture;
   const dm = spec.views.data_model;
   const flows = spec.views.flows;
+  const infra = spec.views.infra || { nodes: [], edges: [] };
 
   return {
     version: "0.3.0",
@@ -42,6 +44,11 @@ export function buildHandoff(spec) {
       steps: f.nodes.map((s) => ({ id: s.id, type: s.type, label: s.label })),
       transitions: f.transitions.map((t) => ({ from: t.from, to: t.to, label: t.label || null })),
     })),
+    infrastructure: {
+      nodes: infra.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label, parent: n.parent || null, props: n.props || {} })),
+      edges: infra.edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind })),
+      manifests: compileManifests(spec),
+    },
     cross_refs: (spec.cross_refs || []).map((x) => ({ from: x.from, to: x.to, kind: x.kind, note: x.note || null })),
     required_invariants: spec.domain_model?.domain_invariants || [],
     guardrails: spec.guardrails || null,

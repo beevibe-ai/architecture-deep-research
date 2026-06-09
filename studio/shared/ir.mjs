@@ -6,10 +6,11 @@
 // and the assistant alike, so the two surfaces can never diverge.
 
 import { nodeDefaults, getType } from "./catalog.mjs";
+import { infraDefaults, getInfraType, defaultInfraConstraints } from "./infra.mjs";
 
 export const SPEC_VERSION = "0.3.0";
 
-export const VIEWS = ["architecture", "data_model", "flows"];
+export const VIEWS = ["architecture", "data_model", "flows", "infra"];
 
 // ---- architecture vocabulary ----------------------------------------------
 export const NODE_KINDS = [
@@ -31,7 +32,7 @@ export const CARDINALITIES = ["1:1", "1:N", "N:M"];
 export const STEP_TYPES = ["start", "process", "decision", "end"];
 
 // ---- cross-view vocabulary ------------------------------------------------
-export const CROSS_REF_KINDS = ["owns", "reads", "writes", "realizes", "implements"];
+export const CROSS_REF_KINDS = ["owns", "reads", "writes", "realizes", "implements", "deployed_as", "runs_on", "backed_by"];
 
 const ARCH_KIND_SET = new Set(NODE_KINDS.map((k) => k.kind));
 
@@ -43,6 +44,7 @@ const CROSS_CUTTING_OPS = new Set([
   "remove_cross_ref",
   "scaffold_subsystem",
   "set_plan_section",
+  "realize",
 ]);
 
 // A genuinely empty design. Blank-canvas-first: no seeded elements.
@@ -56,8 +58,9 @@ export function emptySpec() {
       architecture: { nodes: [], edges: [] },
       data_model: { entities: [], relations: [] },
       flows: [],
+      infra: { nodes: [], edges: [] },
     },
-    constraints: defaultConstraints(),
+    constraints: [...defaultConstraints(), ...defaultInfraConstraints()],
     cross_refs: [],
     plan: { sections: [] },
   };
@@ -184,6 +187,27 @@ export function makeCrossRef({ from, to, kind = "owns", note = "" }) {
   return { id: nextId("xref"), from, to, kind, note };
 }
 
+// An infrastructure node — a deployment artifact (Deployment, Pod, Service, PVC,
+// managed DB, …). `parent` gives the containment hierarchy (Cluster ▸ Namespace ▸
+// Workload ▸ Pod); `props` holds the catalog-typed config used to compile manifests.
+export function makeInfraNode({ type, label, parent = null, props = {}, position }) {
+  const def = infraDefaults(type);
+  return {
+    id: nextId("inf"),
+    type,
+    group: def.group,
+    level: def.level,
+    label: label || getInfraType(type)?.label || type,
+    parent,
+    props: { ...def.props, ...props },
+    position: position || { x: 0, y: 0 },
+  };
+}
+
+export function makeInfraEdge({ from, to, kind = "exposes", label = "" }) {
+  return { id: nextId("ie"), from, to, kind, label };
+}
+
 function defaultLabelFor(kind) {
   const found = NODE_KINDS.find((k) => k.kind === kind);
   return found ? found.label : kind;
@@ -206,6 +230,10 @@ export function resolve(spec, view, ref) {
   if (view === "flows") {
     const fs = spec.views.flows;
     return fs.find((f) => f.id === ref) || fs.find((f) => f.name.toLowerCase() === low) || null;
+  }
+  if (view === "infra") {
+    const ns = spec.views.infra.nodes;
+    return ns.find((n) => n.id === ref) || ns.find((n) => n.label.toLowerCase() === low) || null;
   }
   return null;
 }
@@ -240,6 +268,9 @@ export function applyMutation(spec, m) {
       break;
     case "flows":
       flowsReducer(next, m);
+      break;
+    case "infra":
+      infraReducer(next, m);
       break;
     default:
       throw new Error(`unknown view "${view}" for op "${m.op}"`);
@@ -434,6 +465,61 @@ function flowElementReducer(flow, next, m) {
   }
 }
 
+function infraReducer(next, m) {
+  const inf = next.views.infra;
+  switch (m.op) {
+    case "add_infra":
+      inf.nodes.push(makeInfraNode(m));
+      break;
+    case "update_infra": {
+      const n = resolve(next, "infra", m.id || m.ref);
+      if (!n) throw new Error(`update_infra: no node "${m.id || m.ref}"`);
+      for (const f of ["label", "parent"]) if (m[f] !== undefined) n[f] = m[f];
+      if (m.props) n.props = { ...n.props, ...m.props };
+      if (m.position) n.position = m.position;
+      break;
+    }
+    case "set_infra_props": {
+      const n = resolve(next, "infra", m.id || m.ref);
+      if (!n) throw new Error(`set_infra_props: no node "${m.id || m.ref}"`);
+      n.props = { ...n.props, ...(m.props || {}) };
+      break;
+    }
+    case "remove_infra": {
+      const n = resolve(next, "infra", m.id || m.ref);
+      if (!n) break;
+      // Cascade: remove the node, its descendants, and any touching edges.
+      const doomed = new Set([n.id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const x of inf.nodes) if (x.parent && doomed.has(x.parent) && !doomed.has(x.id)) { doomed.add(x.id); grew = true; }
+      }
+      inf.nodes = inf.nodes.filter((x) => !doomed.has(x.id));
+      inf.edges = inf.edges.filter((e) => !doomed.has(e.from) && !doomed.has(e.to));
+      for (const id of doomed) pruneCrossRefs(next, "infra", id);
+      break;
+    }
+    case "connect_infra": {
+      const from = resolve(next, "infra", m.from);
+      const to = resolve(next, "infra", m.to);
+      if (!from || !to) throw new Error(`connect_infra: unknown endpoint ${m.from} → ${m.to}`);
+      inf.edges.push(makeInfraEdge({ ...m, from: from.id, to: to.id }));
+      break;
+    }
+    case "disconnect_infra":
+      if (m.id) inf.edges = inf.edges.filter((e) => e.id !== m.id);
+      else {
+        const from = resolve(next, "infra", m.from);
+        const to = resolve(next, "infra", m.to);
+        inf.edges = inf.edges.filter((e) => !(from && to && e.from === from.id && e.to === to.id));
+      }
+      break;
+    default:
+      throw new Error(`unknown op "${m.op}" for view "infra"`);
+  }
+}
+
 function applyCrossCutting(next, m) {
   switch (m.op) {
     case "add_constraint":
@@ -451,6 +537,14 @@ function applyCrossCutting(next, m) {
     case "scaffold_subsystem":
       scaffoldSubsystem(next, m);
       break;
+    case "realize": {
+      // Link a logical component to its infra deployment (resolves labels → ids).
+      const comp = resolve(next, "architecture", m.component);
+      const inf = resolve(next, "infra", m.infra);
+      if (!comp || !inf) throw new Error(`realize: unknown ${m.component} → ${m.infra}`);
+      next.cross_refs.push(makeCrossRef({ from: { view: "architecture", ref: comp.id }, to: { view: "infra", ref: inf.id }, kind: "deployed_as" }));
+      break;
+    }
     case "set_plan_section": {
       // Upsert an AI-authored plan section by id (the assistant's prose).
       const sections = next.plan.sections;
@@ -563,7 +657,10 @@ function fillDefaults(spec) {
   spec.views.architecture = spec.views.architecture || { nodes: [], edges: [] };
   spec.views.data_model = spec.views.data_model || { entities: [], relations: [] };
   spec.views.flows = spec.views.flows || [];
+  spec.views.infra = spec.views.infra || { nodes: [], edges: [] };
   spec.constraints = spec.constraints || defaultConstraints();
+  // Backfill infra constraints for specs created before the infra view existed.
+  if (!spec.constraints.some((c) => c.view === "infra")) spec.constraints.push(...defaultInfraConstraints());
   spec.cross_refs = spec.cross_refs || [];
   spec.plan = spec.plan || { sections: [] };
   normalizeArchitecture(spec.views.architecture);

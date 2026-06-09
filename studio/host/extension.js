@@ -129,6 +129,20 @@ async function handleMessage(msg) {
       return;
     }
 
+    case "writeManifests": {
+      const infra = await import("../shared/infra.mjs");
+      const out = infra.compileManifests(msg.spec);
+      const baseDir = path.dirname(specPath());
+      for (const f of out) {
+        const p = path.join(baseDir, f.path);
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(p, f.content);
+      }
+      writeSpec(msg.spec);
+      post({ type: "manifestsWritten", dir: vscode.workspace.asRelativePath(path.join(baseDir, "deploy")), count: out.length });
+      return;
+    }
+
     case "chat": {
       post({ type: "chatStart" });
       const result = await chat.runAssistant({

@@ -3,6 +3,7 @@ import ViewTabs from "./ViewTabs.jsx";
 import ArchitectureView from "./views/ArchitectureView.jsx";
 import DataModelView from "./views/DataModelView.jsx";
 import FlowsView from "./views/FlowsView.jsx";
+import InfrastructureView from "./views/InfrastructureView.jsx";
 import RightDock from "./RightDock.jsx";
 import { post, onMessage } from "./vscode.js";
 import { emptySpec } from "../../shared/ir.mjs";
@@ -100,6 +101,9 @@ export default function App() {
         case "planWritten":
           flash(`Plan written → ${msg.path}`);
           break;
+        case "manifestsWritten":
+          flash(msg.count ? `Manifests written → ${msg.dir} (${msg.count} files)` : "No manifests to write yet");
+          break;
         case "error":
           setMessages((m) => [...m, { role: "system", text: `⚠ ${msg.message}` }]);
           setBusy(false);
@@ -172,6 +176,7 @@ export default function App() {
     architecture: spec.views.architecture.nodes.length,
     data_model: spec.views.data_model.entities.length,
     flows: spec.views.flows.length,
+    infra: spec.views.infra.nodes.length,
   };
 
   return (
@@ -197,6 +202,7 @@ export default function App() {
             {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} />}
             {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
+            {activeView === "infra" && <InfrastructureView spec={spec} commit={commit} />}
           </div>
         </div>
         <RightDock
