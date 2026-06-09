@@ -22,6 +22,7 @@ function shared() {
       constraints: await import("../shared/constraints.mjs"),
       handoff: await import("../shared/handoff.mjs"),
       plan: await import("../shared/plan.mjs"),
+      schema: await import("./schema.mjs"),
       chat: await import("./chat.mjs"),
     }))();
   }
@@ -55,7 +56,29 @@ async function openCanvas(context) {
     }
   );
 
+  // Watch the spec file so external edits (git pull, hand-edit, another tool)
+  // reflect into the canvas. Self-writes are suppressed via lastWritten.
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(workspaceRoot(), vscode.workspace.asRelativePath(specPath()))
+  );
+  const onExternal = async () => {
+    const { ir } = await shared();
+    try {
+      const content = fs.readFileSync(specPath(), "utf8");
+      if (content === lastWritten) return; // our own write — ignore
+      const { spec } = ir.migrate(JSON.parse(content));
+      lastWritten = JSON.stringify(spec, null, 2);
+      post({ type: "spec", spec });
+      post({ type: "externalReload" });
+    } catch {
+      /* mid-write or invalid JSON — wait for the next event */
+    }
+  };
+  watcher.onDidChange(onExternal);
+  watcher.onDidCreate(onExternal);
+
   panel.onDidDispose(() => {
+    watcher.dispose();
     panel = null;
   });
 
@@ -71,10 +94,10 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, plan, chat } = await shared();
+  const { ir, handoff, plan, schema, chat } = await shared();
   switch (msg.type) {
     case "ready":
-      post({ type: "spec", spec: readSpec(ir) });
+      post({ type: "spec", spec: readSpec(ir, schema) });
       return;
 
     case "persist":
@@ -153,7 +176,11 @@ function planPath() {
   return path.join(path.dirname(specPath()), "plan.md");
 }
 
-function readSpec(ir) {
+// Tracks the exact JSON we last wrote, so the file watcher can tell our own
+// writes apart from genuine external edits (no infinite reload loop).
+let lastWritten = null;
+
+function readSpec(ir, schema) {
   const p = specPath();
   if (!fs.existsSync(p)) return ir.emptySpec();
   try {
@@ -165,6 +192,10 @@ function readSpec(ir) {
       writeSpec(spec);
       vscode.window.showInformationMessage(`Upgraded design spec ${from} → ${spec.version}.`);
     }
+    // Validate after migration — a clean signal if a hand-edited file drifts.
+    const { ok, errors } = schema.validateSpec(spec);
+    if (!ok) vscode.window.showWarningMessage(`Spec has schema issues: ${errors.slice(0, 3).join("; ")}`);
+    lastWritten = JSON.stringify(spec, null, 2);
     return spec;
   } catch (err) {
     vscode.window.showWarningMessage(`Could not parse spec, starting fresh: ${err.message}`);
@@ -175,7 +206,9 @@ function readSpec(ir) {
 function writeSpec(spec) {
   const p = specPath();
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(spec, null, 2));
+  const json = JSON.stringify(spec, null, 2);
+  fs.writeFileSync(p, json);
+  lastWritten = json; // mark as self-write for the watcher
 }
 
 function apiKey() {

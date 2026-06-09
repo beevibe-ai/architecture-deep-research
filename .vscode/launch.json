@@ -5,8 +5,9 @@
       "name": "Run ADR Studio",
       "type": "extensionHost",
       "request": "launch",
+      "preLaunchTask": "studio: build",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/studio"],
-      "outFiles": ["${workspaceFolder}/studio/host/**/*.js"]
+      "outFiles": ["${workspaceFolder}/studio/out/**/*.js"]
     }
   ]
 }

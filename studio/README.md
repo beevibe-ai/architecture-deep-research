@@ -1,70 +1,83 @@
 # ADR Studio — Architecture Canvas
 
-A drag-and-drop system-architecture canvas with an AI design assistant, running
-as a VS Code webview. You shape a design by dragging typed components and talking
-to the assistant; the design compiles to `architecture.spec.json` +
-`execution-handoff.json` — the same artifacts the `adr` pipeline already hands to
+A production multi-view system-design tool that runs as a VS Code extension. You
+shape a design by dragging typed components, modeling data, and sketching flows —
+or by talking to a streaming AI assistant that edits every view through tools.
+The design compiles to `architecture.spec.json` + `plan.md` +
+`execution-handoff.json`, the artifacts the `adr` pipeline already hands to
 coding agents.
 
-Blank-canvas-first: you start from nothing and build up. The IR is generated from
-what you draw, not seeded from a research run.
+Blank-canvas-first: you start from nothing. The IR is generated from what you
+draw and say, not seeded from a research run.
 
-## What's here
+## Three cross-referenced views
+
+- **Architecture** — components (service / datastore / queue / gateway / client /
+  external) wired with typed protocols.
+- **Data model** — entities with typed fields (PK/FK), relations with cardinality.
+  An entity can be *owned by* a component (a cross-reference — the unification layer).
+- **Flows** — multiple flowcharts of start / process / decision / end steps.
+
+Live constraint lint runs across all three: a forbidden edge, a keyless entity,
+an orphaned step glows red and the assistant can explain or fix it.
+
+## The dock
+
+- **Assistant** — streaming AI that edits the IR through view-namespaced tools
+  (`arch_*`, `dm_*`, `flow_*`, `scaffold_subsystem`, `write_plan_section`). Every
+  edit animates the canvas live; the model sees lint feedback and self-corrects.
+- **IR JSON** — the live `architecture.spec.json`.
+- **Plan** — the generated `plan.md` (deterministic tables + Mermaid from the IR,
+  AI prose spliced in). “Write plan.md” persists it.
+
+Undo/redo (`Cmd/Ctrl+Z`, `+Shift`) and external file-watch (edit the spec on disk
+or `git pull` and the canvas reloads) are built in.
+
+## Layout
 
 ```
 studio/
-  host/            VS Code extension host (CJS)
-    extension.js     command, webview panel, spec file I/O, message bridge
-    chat.mjs         design-assistant loop — Anthropic tool-calls -> IR edits
-  shared/          one source of truth, imported by host AND webview
-    ir.mjs           the topology IR: nodes, edges, applyMutation
-    constraints.mjs  the live lint engine (forbid_edge, require_protocol, …)
-    handoff.mjs      compile a design -> execution-handoff.json
-    ir.test.mjs      core unit tests (node --test)
-  webview/         React + React Flow canvas (Vite)
-    src/Canvas.jsx   the drag-drop graph + inspector
-    src/Palette.jsx  component drag source
-    src/ChatSidebar.jsx  the assistant + violation list
+  host/          extension host (bundled to out/extension.js by esbuild)
+    extension.js   command, webview panel, spec I/O, file-watch, schema validate
+    chat.mjs       streaming assistant — Anthropic tool-calls -> IR edits
+    schema.mjs     ajv schema, validate-on-read
+  shared/        one source of truth, imported by host AND webview
+    ir.mjs         multi-view IR: views{architecture,data_model,flows}, applyMutation, migrate
+    constraints.mjs per-view lint + view-keyed violationIndex
+    plan.mjs       deterministic plan.md + relaxed Mermaid validator
+    handoff.mjs    compile -> execution-handoff.json
+    *.test.mjs     node --test (pure)
+  webview/       React + React Flow (Vite -> dist/)
+    src/views/*    ArchitectureView, DataModelView, FlowsView + custom nodes
+    src/RightDock, IrJsonPanel, PlanPanel
 ```
 
-The **same `applyMutation` path** handles both a drag-drop edit and an assistant
-tool-call, so the two surfaces can never diverge.
+The **same `applyMutation` path** handles a drag-drop edit and an assistant
+tool-call across every view, so the surfaces can never diverge.
 
-## The IR
-
-One `topology` block added to `architecture.spec.json`:
-
-```jsonc
-"topology": {
-  "nodes": [{ "id": "service_1", "kind": "service", "label": "API",
-              "tech": "Express", "context": "", "notes": "",
-              "position": { "x": 240, "y": 120 } }],
-  "edges": [{ "id": "e_2", "from": "service_1", "to": "datastore_1",
-              "kind": "calls", "protocol": "sql", "label": "" }]
-},
-"constraints": [{ "id": "no-direct-client-db", "rule": "forbid_edge",
-                  "from_kind": "client", "to_kind": "datastore",
-                  "message": "Clients must not touch a datastore directly." }]
-```
-
-`constraints` are machine-checkable and evaluated live — a violating edge glows
-red and the assistant can explain it. That's the part Figma / plain React Flow
-can't do, and the part coding agents actually need at handoff.
-
-## Run it
+## Install (normal use)
 
 ```bash
-# from the repo root — installs are already hoisted there
-npm run build --prefix studio      # build the webview into studio/dist
+cd studio
+npm install
+npm run package                       # build webview + bundle host + vsce package
+code --install-extension adr-studio-0.1.0.vsix
 ```
 
-Then in VS Code: open this repo, press **F5** (uses `studio/.vscode/launch.json`),
-and in the dev host run **ADR Studio: Open Architecture Canvas** from the command
-palette.
+Then in any VS Code window: open a folder → `Cmd+Shift+P` → **ADR Studio: Open
+Architecture Canvas**. The design saves to `.adr/architecture.spec.json` in that
+folder. The assistant needs an Anthropic key (`ANTHROPIC_API_KEY` or the one
+`adr-doctor setup` writes to `~/.adr/config.json`); drag-and-drop works keyless.
 
-The assistant needs an Anthropic key — `ANTHROPIC_API_KEY` in the env or the one
-`adr-doctor setup` persists to `~/.adr/config.json`. Drag-and-drop editing works
-without a key.
+## Develop
+
+Open this repo in VS Code and press **F5** (a `preLaunchTask` builds the webview
+and bundles the host). Or build manually:
+
+```bash
+npm run build --prefix studio         # webview (dist/) + host bundle (out/)
+npm test --prefix studio              # node --test, shared + host
+```
 
 ## Config
 
@@ -72,9 +85,3 @@ without a key.
 | --- | --- | --- |
 | `adrStudio.specPath` | `.adr/architecture.spec.json` | where the design is read/written |
 | `adrStudio.model` | `claude-sonnet-4-6` | model the assistant uses |
-
-## Test
-
-```bash
-node --test studio/shared/ir.test.mjs
-```

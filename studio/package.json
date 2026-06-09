@@ -13,9 +13,14 @@
     "vscode": "^1.90.0"
   },
   "categories": ["Visualization", "Other"],
-  "main": "./host/extension.js",
+  "main": "./out/extension.js",
   "dependencies": {
-    "@anthropic-ai/sdk": "0.32.1"
+    "@anthropic-ai/sdk": "0.32.1",
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "@vscode/vsce": "^3.2.0"
   },
   "activationEvents": [],
   "contributes": {
@@ -43,7 +48,12 @@
     }
   },
   "scripts": {
-    "build": "vite build --config webview/vite.config.js",
-    "dev": "vite build --watch --config webview/vite.config.js"
+    "build:webview": "vite build --config webview/vite.config.js",
+    "build:host": "node esbuild.mjs",
+    "build": "npm run build:webview && npm run build:host",
+    "watch:host": "node esbuild.mjs --watch",
+    "dev": "vite build --watch --config webview/vite.config.js",
+    "package": "npm run build && vsce package",
+    "test": "node --test shared/*.test.mjs host/*.test.mjs"
   }
 }

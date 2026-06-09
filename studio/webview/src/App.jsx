@@ -21,12 +21,58 @@ export default function App() {
     busyRef.current = busy;
   }, [busy]);
 
+  // Undo/redo history. Every immutable spec is a snapshot — undo/redo is just a
+  // stack of them. Refs (not state) so the keyboard handler stays stable.
+  const specRef = useRef(spec);
+  useEffect(() => {
+    specRef.current = spec;
+  }, [spec]);
+  const pastRef = useRef([]);
+  const futureRef = useRef([]);
+  const recordHistory = useCallback(() => {
+    pastRef.current.push(specRef.current);
+    if (pastRef.current.length > 50) pastRef.current.shift();
+    futureRef.current = [];
+  }, []);
+  const restore = useCallback((next) => {
+    setSpec(next);
+    post({ type: "persist", spec: next });
+  }, []);
+  const undo = useCallback(() => {
+    if (!pastRef.current.length) return;
+    futureRef.current.push(specRef.current);
+    restore(pastRef.current.pop());
+  }, [restore]);
+  const redo = useCallback(() => {
+    if (!futureRef.current.length) return;
+    pastRef.current.push(specRef.current);
+    restore(futureRef.current.pop());
+  }, [restore]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.shiftKey ? redo() : undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
   // Wire up the host bridge once, then announce we're ready for the spec.
   useEffect(() => {
     const off = onMessage((msg) => {
       switch (msg.type) {
         case "spec":
+          // Full load or external reload — reset history to avoid undoing into
+          // a state that no longer matches disk.
+          pastRef.current = [];
+          futureRef.current = [];
           setSpec(msg.spec);
+          break;
+        case "externalReload":
+          flash("Spec reloaded from disk");
           break;
         case "chatStart":
           // Open a streaming assistant bubble the tokens append into.
@@ -87,19 +133,24 @@ export default function App() {
   // Every committed canvas edit flows through here: update local state and
   // persist to disk via the host. Single write path. Edits are ignored while
   // the assistant is streaming, so a user drag can't race incoming specPatches.
-  const commit = useCallback((nextSpec) => {
-    if (busyRef.current) return;
-    setSpec(nextSpec);
-    post({ type: "persist", spec: nextSpec });
-  }, []);
+  const commit = useCallback(
+    (nextSpec) => {
+      if (busyRef.current) return;
+      recordHistory();
+      setSpec(nextSpec);
+      post({ type: "persist", spec: nextSpec });
+    },
+    [recordHistory]
+  );
 
   const sendChat = useCallback(
     (text) => {
+      recordHistory(); // one undo step reverts the whole assistant turn
       setMessages((m) => [...m, { role: "user", text }]);
       setBusy(true);
       post({ type: "chat", text, spec });
     },
-    [spec]
+    [spec, recordHistory]
   );
 
   const exportHandoff = useCallback(() => {
