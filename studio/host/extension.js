@@ -105,14 +105,16 @@ async function handleMessage(msg) {
     }
 
     case "chat": {
+      post({ type: "chatStart" });
       const result = await chat.runAssistant({
         userText: msg.text,
         spec: msg.spec,
         model: config().get("model"),
         apiKey: apiKey(),
+        onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
       });
       writeSpec(result.spec);
-      post({ type: "chatReply", text: result.text, spec: result.spec, trace: result.trace });
+      post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace });
       return;
     }
 

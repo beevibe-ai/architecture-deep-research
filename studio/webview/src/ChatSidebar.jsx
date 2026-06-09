@@ -29,11 +29,14 @@ export default function ChatSidebar({ messages, busy, onSend, violations }) {
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`msg msg-${m.role}`}>
+          <div key={i} className={`msg msg-${m.role} ${m.streaming ? "streaming" : ""}`}>
             {m.text}
+            {m.streaming && <span className="caret">▍</span>}
           </div>
         ))}
-        {busy && <div className="msg msg-assistant typing">…</div>}
+        {busy && !messages[messages.length - 1]?.streaming && (
+          <div className="msg msg-assistant typing">…</div>
+        )}
       </div>
 
       {violations.length > 0 && (

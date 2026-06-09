@@ -40,6 +40,7 @@ const CROSS_CUTTING_OPS = new Set([
   "add_cross_ref",
   "remove_cross_ref",
   "scaffold_subsystem",
+  "set_plan_section",
 ]);
 
 // A genuinely empty design. Blank-canvas-first: no seeded elements.
@@ -407,6 +408,15 @@ function applyCrossCutting(next, m) {
     case "scaffold_subsystem":
       scaffoldSubsystem(next, m);
       break;
+    case "set_plan_section": {
+      // Upsert an AI-authored plan section by id (the assistant's prose).
+      const sections = next.plan.sections;
+      const i = sections.findIndex((s) => s.id === m.id);
+      const section = { id: m.id, title: m.title || m.id, body_md: m.body_md || "", source: "ai" };
+      if (i >= 0) sections[i] = section;
+      else sections.push(section);
+      break;
+    }
     default:
       throw new Error(`unknown cross-cutting op "${m.op}"`);
   }

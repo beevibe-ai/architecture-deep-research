@@ -1,176 +1,154 @@
-// The design assistant. The model never returns free-form "here's your
-// architecture" prose that someone has to re-key — it edits the IR through
-// tools, the exact same applyMutation path drag-drop uses. Every edit is then
-// linted, and the model sees the violations on the next turn so it can react
-// ("I added the cache, but note clients still hit the DB directly").
+// The design assistant. It never returns prose for someone to re-key — it edits
+// the IR through tools, the exact same applyMutation path drag-drop uses, now
+// spanning all three views. Responses stream token-by-token; after each applied
+// tool call the working spec is pushed back so every canvas animates mid-stream.
+// The model sees lint feedback per turn and can self-correct.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
 
+// View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
-  {
-    name: "add_node",
-    description: "Add a component to the design.",
-    input_schema: {
-      type: "object",
-      properties: {
-        kind: {
-          type: "string",
-          enum: ["service", "datastore", "queue", "gateway", "client", "external"],
-        },
-        label: { type: "string" },
-        tech: { type: "string", description: "Implementation tech, e.g. Postgres, Redis." },
-        context: { type: "string", description: "Bounded context this belongs to." },
-        notes: { type: "string", description: "Design intent for the coding agent." },
-      },
-      required: ["kind", "label"],
-    },
-  },
-  {
-    name: "remove_node",
-    description: "Remove a component (and its edges) by id or label.",
-    input_schema: {
-      type: "object",
-      properties: { ref: { type: "string" } },
-      required: ["ref"],
-    },
-  },
-  {
-    name: "connect",
-    description: "Wire one component to another.",
-    input_schema: {
-      type: "object",
-      properties: {
-        from: { type: "string", description: "Source node id or label." },
-        to: { type: "string", description: "Target node id or label." },
-        kind: { type: "string", enum: ["calls", "streams", "owns", "publishes", "subscribes"] },
-        protocol: { type: "string", enum: ["http", "grpc", "sql", "event", "ws", "internal"] },
-        label: { type: "string" },
-      },
-      required: ["from", "to"],
-    },
-  },
-  {
-    name: "disconnect",
-    description: "Remove a wire between two components.",
-    input_schema: {
-      type: "object",
-      properties: { from: { type: "string" }, to: { type: "string" } },
-      required: ["from", "to"],
-    },
-  },
+  // architecture
+  { name: "arch_add_node", description: "Add an architecture component.", input_schema: { type: "object", properties: { kind: { type: "string", enum: ["service", "datastore", "queue", "gateway", "client", "external"] }, label: { type: "string" }, tech: { type: "string" }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["kind", "label"] } },
+  { name: "arch_remove_node", description: "Remove a component by id or label.", input_schema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] } },
+  { name: "arch_connect", description: "Wire one component to another.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["calls", "streams", "owns", "publishes", "subscribes"] }, protocol: { type: "string", enum: ["http", "grpc", "sql", "event", "ws", "internal"] }, label: { type: "string" } }, required: ["from", "to"] } },
+  { name: "arch_disconnect", description: "Remove a wire between two components.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
+  // data model
+  { name: "dm_create_entity", description: "Create a data-model entity with its fields.", input_schema: { type: "object", properties: { name: { type: "string" }, context: { type: "string" }, fields: { type: "array", items: { type: "object", properties: { name: { type: "string" }, type: { type: "string" }, pk: { type: "boolean" }, nullable: { type: "boolean" } }, required: ["name"] } } }, required: ["name"] } },
+  { name: "dm_add_field", description: "Add a field to an entity.", input_schema: { type: "object", properties: { entity: { type: "string" }, name: { type: "string" }, type: { type: "string" }, pk: { type: "boolean" } }, required: ["entity", "name"] } },
+  { name: "dm_add_relation", description: "Relate two entities.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, cardinality: { type: "string", enum: ["1:1", "1:N", "N:M"] }, label: { type: "string" } }, required: ["from", "to"] } },
+  { name: "dm_remove_entity", description: "Remove an entity by id or name.", input_schema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] } },
+  // flows
+  { name: "flow_create_flow", description: "Create a flowchart with its steps and transitions.", input_schema: { type: "object", properties: { name: { type: "string" }, steps: { type: "array", items: { type: "object", properties: { type: { type: "string", enum: ["start", "process", "decision", "end"] }, label: { type: "string" } }, required: ["type", "label"] } }, transitions: { type: "array", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, label: { type: "string" } }, required: ["from", "to"] } } }, required: ["name"] } },
+  { name: "flow_add_step", description: "Add a step to a flow.", input_schema: { type: "object", properties: { flow: { type: "string" }, type: { type: "string", enum: ["start", "process", "decision", "end"] }, label: { type: "string" } }, required: ["flow", "type", "label"] } },
+  { name: "flow_add_transition", description: "Connect two steps in a flow.", input_schema: { type: "object", properties: { flow: { type: "string" }, from: { type: "string" }, to: { type: "string" }, label: { type: "string" } }, required: ["flow", "from", "to"] } },
+  // composite + cross-cutting
+  { name: "scaffold_subsystem", description: "Create a service + datastore + wire + owned entity + cross_ref in one step.", input_schema: { type: "object", properties: { name: { type: "string" }, service: { type: "string" }, datastore: { type: "string" }, entity: { type: "string" }, tech: { type: "string" }, context: { type: "string" } }, required: ["name"] } },
+  { name: "write_plan_section", description: "Write or replace an AI prose section of plan.md (e.g. overview, rationale, tradeoffs).", input_schema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, body_md: { type: "string" } }, required: ["id", "body_md"] } },
+  { name: "run_constraint_check", description: "Return the current constraint violations without changing anything.", input_schema: { type: "object", properties: {} } },
 ];
 
-const OP_BY_TOOL = {
-  add_node: (input) => ({ op: "add_node", ...input }),
-  remove_node: (input) => ({ op: "remove_node", ref: input.ref }),
-  connect: (input) => ({ op: "connect", ...input }),
-  disconnect: (input) => ({ op: "disconnect", ...input }),
-};
+// Map a tool call to one or more IR mutations. Returns [] for run_constraint_check
+// (a read-only tool handled by the loop).
+function toolToMutations(name, input) {
+  switch (name) {
+    case "arch_add_node":
+      return [{ op: "add_node", view: "architecture", ...input }];
+    case "arch_remove_node":
+      return [{ op: "remove_node", view: "architecture", ref: input.ref }];
+    case "arch_connect":
+      return [{ op: "connect", view: "architecture", ...input }];
+    case "arch_disconnect":
+      return [{ op: "disconnect", view: "architecture", ...input }];
+    case "dm_create_entity":
+      return [{ op: "add_entity", view: "data_model", name: input.name, context: input.context, fields: input.fields || [] }];
+    case "dm_add_field":
+      return [{ op: "add_field", view: "data_model", ...input }];
+    case "dm_add_relation":
+      return [{ op: "add_relation", view: "data_model", ...input }];
+    case "dm_remove_entity":
+      return [{ op: "remove_entity", view: "data_model", ref: input.ref }];
+    case "flow_create_flow": {
+      const muts = [{ op: "add_flow", view: "flows", name: input.name }];
+      for (const s of input.steps || []) muts.push({ op: "add_step", view: "flows", flow: input.name, type: s.type, label: s.label });
+      for (const t of input.transitions || []) muts.push({ op: "add_transition", view: "flows", flow: input.name, from: t.from, to: t.to, label: t.label });
+      return muts;
+    }
+    case "flow_add_step":
+      return [{ op: "add_step", view: "flows", ...input }];
+    case "flow_add_transition":
+      return [{ op: "add_transition", view: "flows", ...input }];
+    case "scaffold_subsystem":
+      return [{ op: "scaffold_subsystem", ...input }];
+    case "write_plan_section":
+      return [{ op: "set_plan_section", ...input }];
+    case "run_constraint_check":
+      return [];
+    default:
+      throw new Error(`unknown tool ${name}`);
+  }
+}
 
 function systemPrompt() {
   return [
-    "You are the design assistant inside an architecture canvas.",
-    "The user is shaping a system design by dragging components and talking to you.",
-    "Translate their intent into tool calls that edit the design — do not describe",
-    "changes in prose and expect the user to make them; make them yourself with tools.",
-    "After your edits, you receive the current node/edge counts and any constraint",
-    "violations. Mention real violations plainly; do not invent problems.",
-    "Keep replies short and concrete. Refer to components by their labels.",
+    "You are the design assistant inside a system-architecture canvas with three views:",
+    "architecture (components + wiring), data model (entities + relations), and flows (flowcharts).",
+    "Translate the user's intent into tool calls that edit the design — never describe edits and",
+    "expect the user to make them; make them yourself. Use the view-prefixed tools (arch_, dm_, flow_).",
+    "Refer to existing elements by their human label/name. After your edits you receive element counts",
+    "and any constraint violations; mention real violations plainly and fix them when asked. When the",
+    "user asks for a design rationale or summary, capture it with write_plan_section. Keep chat replies",
+    "short and concrete.",
   ].join(" ");
 }
 
-function topologySummary(spec) {
-  const t = spec.views.architecture;
-  const nodes = t.nodes.map((n) => `${n.label} (${n.kind}, id=${n.id})`).join(", ") || "none";
-  const edges =
-    t.edges
-      .map((e) => {
-        const f = t.nodes.find((n) => n.id === e.from);
-        const g = t.nodes.find((n) => n.id === e.to);
-        return `${f ? f.label : e.from} -[${e.kind}/${e.protocol}]-> ${g ? g.label : e.to}`;
-      })
-      .join("; ") || "none";
+// Compact full-IR context so the model grounds across all three views.
+function specSummary(spec) {
+  const a = spec.views.architecture;
+  const dm = spec.views.data_model;
+  const flows = spec.views.flows;
+  const comps = a.nodes.map((n) => `${n.label}(${n.kind})`).join(", ") || "none";
+  const wires = a.edges.map((e) => `${label(a.nodes, e.from)}→${label(a.nodes, e.to)}[${e.protocol}]`).join(", ") || "none";
+  const ents = dm.entities.map((e) => `${e.name}{${e.fields.map((f) => f.name + (f.pk ? "*" : "")).join(",")}}`).join(", ") || "none";
+  const fl = flows.map((f) => `${f.name}(${f.nodes.length} steps)`).join(", ") || "none";
   const { violations } = lint(spec);
-  return { nodes, edges, violations };
+  return `components: ${comps}\nwiring: ${wires}\nentities: ${ents}\nflows: ${fl}\nviolations: ${violations.length}`;
 }
+const label = (nodes, id) => (nodes.find((n) => n.id === id) || {}).label || id;
 
-export async function runAssistant({ userText, spec, model, apiKey }) {
-  if (!apiKey) {
+// onEvent receives { type: "chatToken"|"specPatch", ... }. The host wires it to
+// postMessage. `client` is injectable for tests (no network).
+export async function runAssistant({ userText, spec, model, apiKey, onEvent = () => {}, client }) {
+  if (!apiKey && !client) {
     return {
-      text:
-        "No Anthropic API key found. Set ANTHROPIC_API_KEY or run `adr-doctor setup`, " +
-        "then reopen the canvas. (Drag-and-drop editing works without a key.)",
+      text: "No Anthropic API key found. Set ANTHROPIC_API_KEY or run `adr-doctor setup`, then reopen the canvas. (Drag-and-drop editing works without a key.)",
       spec,
       trace: [],
     };
   }
 
-  const client = new Anthropic({ apiKey });
+  const anthropic = client || new Anthropic({ apiKey });
   let working = spec;
   const trace = [];
+  const messages = [{ role: "user", content: `Current design:\n${specSummary(spec)}\n\nUser: ${userText}` }];
 
-  const messages = [
-    {
-      role: "user",
-      content:
-        `Current design — nodes: ${topologySummary(spec).nodes}. ` +
-        `edges: ${topologySummary(spec).edges}.\n\nUser: ${userText}`,
-    },
-  ];
-
-  // Bounded agentic loop: edit -> lint -> let the model react -> finalize.
-  for (let turn = 0; turn < 6; turn++) {
-    const res = await client.messages.create({
+  for (let turn = 0; turn < 8; turn++) {
+    const stream = anthropic.messages.stream({
       model: model || "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 1500,
       system: systemPrompt(),
       tools: TOOLS,
       messages,
     });
+    stream.on("text", (delta) => onEvent({ type: "chatToken", text: delta }));
+    const msg = await stream.finalMessage();
+    messages.push({ role: "assistant", content: msg.content });
 
-    messages.push({ role: "assistant", content: res.content });
-
-    const toolUses = res.content.filter((b) => b.type === "tool_use");
+    const toolUses = msg.content.filter((b) => b.type === "tool_use");
     if (toolUses.length === 0) {
-      const text = res.content
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim();
+      const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
       return { text: text || "Done.", spec: working, trace };
     }
 
     const toolResults = [];
     for (const tu of toolUses) {
-      const make = OP_BY_TOOL[tu.name];
-      let resultPayload;
+      let payload;
       try {
-        working = applyMutation(working, make(tu.input));
-        const sum = topologySummary(working);
-        resultPayload = {
-          ok: true,
-          nodes: working.views.architecture.nodes.length,
-          edges: working.views.architecture.edges.length,
-          violations: sum.violations,
-        };
+        const muts = toolToMutations(tu.name, tu.input || {});
+        for (const m of muts) working = applyMutation(working, m);
+        const { violations } = lint(working);
+        payload = { ok: true, applied: muts.length, violations };
+        if (muts.length) onEvent({ type: "specPatch", spec: working });
       } catch (err) {
-        resultPayload = { ok: false, error: String(err.message || err) };
+        payload = { ok: false, error: String(err.message || err) };
       }
-      trace.push({ tool: tu.name, input: tu.input, result: resultPayload });
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: tu.id,
-        content: JSON.stringify(resultPayload),
-      });
+      trace.push({ tool: tu.name, input: tu.input, result: payload });
+      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(payload) });
     }
     messages.push({ role: "user", content: toolResults });
   }
 
-  return {
-    text: "Reached the edit limit for one message — check the canvas and tell me what to adjust.",
-    spec: working,
-    trace,
-  };
+  return { text: "Reached the edit limit for one message — check the canvas and tell me what to adjust.", spec: working, trace };
 }
