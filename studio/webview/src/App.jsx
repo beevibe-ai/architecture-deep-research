@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ReactFlowProvider } from "@xyflow/react";
-import Palette from "./Palette.jsx";
-import Canvas from "./Canvas.jsx";
+import ViewTabs from "./ViewTabs.jsx";
+import ArchitectureView from "./views/ArchitectureView.jsx";
+import DataModelView from "./views/DataModelView.jsx";
+import FlowsView from "./views/FlowsView.jsx";
 import RightDock from "./RightDock.jsx";
 import { post, onMessage } from "./vscode.js";
 import { emptySpec } from "../../shared/ir.mjs";
@@ -9,6 +10,7 @@ import { lint } from "../../shared/constraints.mjs";
 
 export default function App() {
   const [spec, setSpec] = useState(emptySpec());
+  const [activeView, setActiveView] = useState("architecture");
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
@@ -75,36 +77,48 @@ export default function App() {
   );
 
   const { violations } = lint(spec);
+  const counts = {
+    architecture: spec.views.architecture.nodes.length,
+    data_model: spec.views.data_model.entities.length,
+    flows: spec.views.flows.length,
+  };
 
   return (
-    <ReactFlowProvider>
-      <div className="studio">
-        <header className="topbar">
-          <div className="title">{spec.decision?.title || "Untitled architecture"}</div>
-          <div className="spacer" />
-          <span className={`lint-badge ${violations.length ? "bad" : "ok"}`}>
-            {violations.length ? `${violations.length} issue${violations.length > 1 ? "s" : ""}` : "clean"}
-          </span>
-          <button className="btn" onClick={exportHandoff}>
-            Export handoff
-          </button>
-        </header>
+    <div className="studio">
+      <header className="topbar">
+        <div className="title">{spec.decision?.title || "Untitled architecture"}</div>
+        <div className="spacer" />
+        <span className={`lint-badge ${violations.length ? "bad" : "ok"}`}>
+          {violations.length ? `${violations.length} issue${violations.length > 1 ? "s" : ""}` : "clean"}
+        </span>
+        <button className="btn ghost" onClick={() => post({ type: "writePlan", spec })}>
+          Write plan.md
+        </button>
+        <button className="btn" onClick={exportHandoff}>
+          Export handoff
+        </button>
+      </header>
 
-        <div className="body">
-          <Palette />
-          <Canvas spec={spec} commit={commit} violations={violations} />
-          <RightDock
-            spec={spec}
-            messages={messages}
-            busy={busy}
-            onSend={sendChat}
-            violations={violations}
-            onWritePlan={writePlan}
-          />
+      <div className="body">
+        <div className="view-col">
+          <ViewTabs active={activeView} onChange={setActiveView} counts={counts} />
+          <div className="view-stage">
+            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} violations={violations} />}
+            {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
+            {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
+          </div>
         </div>
-
-        {toast && <div className="toast">{toast}</div>}
+        <RightDock
+          spec={spec}
+          messages={messages}
+          busy={busy}
+          onSend={sendChat}
+          violations={violations}
+          onWritePlan={writePlan}
+        />
       </div>
-    </ReactFlowProvider>
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
   );
 }
