@@ -59,9 +59,9 @@ async function setApiKey() {
   });
   if (!key) return;
   await secrets.store(`adrStudio.${pick.id}Key`, key.trim());
-  vscode.window.showInformationMessage(
-    `${pick.label} key saved.` + (pick.id !== (config().get("provider") || "anthropic") ? ` Set adrStudio.provider to "${pick.id}" to use it.` : " The assistant is ready.")
-  );
+  // Switch the active provider to the one we just got a key for.
+  await config().update("provider", pick.id, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(`${pick.label} key saved and set as the active provider. The assistant is ready.`);
 }
 
 let panel = null;
@@ -173,13 +173,21 @@ async function handleMessage(msg) {
 
     case "chat": {
       post({ type: "chatStart" });
-      const provider = config().get("provider") || "anthropic";
+      // Use the configured provider, but if it has no key and the other one does,
+      // auto-switch — so an existing OpenAI key just works without touching settings.
+      let provider = config().get("provider") || "anthropic";
+      let key = await apiKey(provider);
+      if (!key) {
+        const other = provider === "anthropic" ? "openai" : "anthropic";
+        const otherKey = await apiKey(other);
+        if (otherKey) { provider = other; key = otherKey; }
+      }
       const result = await chat.runAssistant({
         userText: msg.text,
         spec: msg.spec,
         provider,
         model: provider === "openai" ? config().get("openaiModel") : config().get("model"),
-        apiKey: await apiKey(provider),
+        apiKey: key,
         catalog: loadCatalog(catalog),
         onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
       });
