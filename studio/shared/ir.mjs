@@ -34,6 +34,17 @@ export const STEP_TYPES = ["start", "process", "decision", "end"];
 // ---- cross-view vocabulary ------------------------------------------------
 export const CROSS_REF_KINDS = ["owns", "reads", "writes", "realizes", "implements", "deployed_as", "runs_on", "backed_by"];
 
+// ---- notes (requirements, ideas, decisions) -------------------------------
+export const NOTE_KINDS = [
+  { id: "functional", label: "Functional req" },
+  { id: "non_functional", label: "Non-functional req" },
+  { id: "idea", label: "Idea" },
+  { id: "question", label: "Question" },
+  { id: "decision", label: "Decision" },
+  { id: "risk", label: "Risk" },
+];
+export const NOTE_PRIORITIES = ["must", "should", "could", "wont"];
+
 const ARCH_KIND_SET = new Set(NODE_KINDS.map((k) => k.kind));
 
 // Mutation ops that span views (not routed to a single view reducer).
@@ -46,6 +57,9 @@ const CROSS_CUTTING_OPS = new Set([
   "scaffold_runtime",
   "set_plan_section",
   "realize",
+  "add_note",
+  "update_note",
+  "remove_note",
 ]);
 
 // A genuinely empty design. Blank-canvas-first: no seeded elements.
@@ -64,7 +78,14 @@ export function emptySpec() {
     constraints: [...defaultConstraints(), ...defaultInfraConstraints()],
     cross_refs: [],
     plan: { sections: [] },
+    notes: [],
   };
+}
+
+// A note: a functional/non-functional requirement, idea, question, decision, or
+// risk. `refs` optionally links it to design elements (traceability).
+export function makeNote({ kind = "functional", title = "", body = "", priority = null, status = "open", refs = [] }) {
+  return { id: nextId("note"), kind, title, body, priority, status, refs };
 }
 
 export function defaultConstraints() {
@@ -557,6 +578,18 @@ function applyCrossCutting(next, m) {
       next.cross_refs.push(makeCrossRef({ from: { view: "architecture", ref: comp.id }, to: { view: "infra", ref: inf.id }, kind: "deployed_as" }));
       break;
     }
+    case "add_note":
+      next.notes.push(makeNote(m));
+      break;
+    case "update_note": {
+      const note = next.notes.find((n) => n.id === m.id);
+      if (!note) throw new Error(`update_note: no note "${m.id}"`);
+      for (const f of ["kind", "title", "body", "priority", "status", "refs"]) if (m[f] !== undefined) note[f] = m[f];
+      break;
+    }
+    case "remove_note":
+      next.notes = next.notes.filter((n) => n.id !== m.id);
+      break;
     case "set_plan_section": {
       // Upsert an AI-authored plan section by id (the assistant's prose).
       const sections = next.plan.sections;
@@ -690,6 +723,7 @@ function fillDefaults(spec) {
   if (!spec.constraints.some((c) => c.view === "infra")) spec.constraints.push(...defaultInfraConstraints());
   spec.cross_refs = spec.cross_refs || [];
   spec.plan = spec.plan || { sections: [] };
+  spec.notes = spec.notes || [];
   normalizeArchitecture(spec.views.architecture);
   return spec;
 }

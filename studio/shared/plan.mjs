@@ -66,6 +66,9 @@ export function generatePlan(spec) {
   L.push("## Overview", "");
   L.push(aiBody(spec, "overview") || "_A system design authored in the architecture canvas._", "");
 
+  // Requirements + ideas, captured in the Notes panel.
+  L.push(...notesSections(spec));
+
   // Components
   if (arch.nodes.length) {
     L.push("## Components", "");
@@ -138,6 +141,39 @@ export function generatePlan(spec) {
   }
 
   return L.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+
+// Requirements (functional + non-functional) as tables; ideas/decisions/
+// questions/risks as lists. Drawn from spec.notes.
+function notesSections(spec) {
+  const L = [];
+  const notes = spec.notes || [];
+  if (!notes.length) return L;
+  const of = (kind) => notes.filter((n) => n.kind === kind);
+
+  const reqTable = (kind, heading) => {
+    const items = of(kind);
+    if (!items.length) return;
+    L.push(`## ${heading}`, "");
+    L.push("| Priority | Requirement | Detail |", "| --- | --- | --- |");
+    for (const n of items) L.push(`| ${esc(n.priority || "—")} | ${esc(n.title)} | ${esc(n.body)} |`);
+    L.push("");
+  };
+  reqTable("functional", "Functional requirements");
+  reqTable("non_functional", "Non-functional requirements");
+
+  const list = (kind, heading) => {
+    const items = of(kind);
+    if (!items.length) return;
+    L.push(`## ${heading}`, "");
+    for (const n of items) L.push(`- ${n.title ? `**${esc(n.title)}** — ` : ""}${esc(n.body)}`);
+    L.push("");
+  };
+  list("decision", "Decisions");
+  list("idea", "Ideas");
+  list("question", "Open questions");
+  list("risk", "Risks");
+  return L;
 }
 
 // Group components by plane (control / execution / data).

@@ -50,6 +50,7 @@ export function buildHandoff(spec) {
       manifests: compileManifests(spec),
     },
     cross_refs: (spec.cross_refs || []).map((x) => ({ from: x.from, to: x.to, kind: x.kind, note: x.note || null })),
+    notes: (spec.notes || []).map((n) => ({ kind: n.kind, title: n.title, body: n.body, priority: n.priority || null, refs: n.refs || [] })),
     required_invariants: spec.domain_model?.domain_invariants || [],
     guardrails: spec.guardrails || null,
     constraints: spec.constraints || [],

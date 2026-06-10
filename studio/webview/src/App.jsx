@@ -207,6 +207,7 @@ export default function App() {
         </div>
         <RightDock
           spec={spec}
+          commit={commit}
           messages={messages}
           busy={busy}
           onSend={sendChat}
