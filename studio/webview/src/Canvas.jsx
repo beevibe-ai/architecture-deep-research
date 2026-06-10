@@ -292,6 +292,9 @@ export default function Canvas({ spec, commit, catalog }) {
           <datalist id="tech-options">{techOptions.map((t) => <option key={t} value={t} />)}</datalist>
           <label>Intent (read by the coding agent)</label>
           <textarea rows={3} value={selectedNode.notes || ""} onChange={(e) => setNode({ notes: e.target.value })} />
+          <button className="mini-btn danger" onClick={() => { commit(applyMutation(spec, { op: "remove_node", view: "architecture", id: selectedNode.id })); setSelectedId(null); }}>
+            Delete {getType(selectedNode.type)?.container ? "(and its internals)" : "component"}
+          </button>
         </div>
       )}
 
@@ -319,6 +322,7 @@ export default function Canvas({ spec, commit, catalog }) {
           <label>Required role (RBAC)</label>
           <input value={selectedEdge.required_role || ""} placeholder="e.g. admin" onChange={(e) => setEdgeSem({ required_role: e.target.value || null })} />
           <label className="f-pk"><input type="checkbox" checked={!!selectedEdge.instrumented} onChange={(e) => setEdgeSem({ instrumented: e.target.checked })} /> OTel instrumented</label>
+          <button className="mini-btn danger" onClick={() => { commit(applyMutation(spec, { op: "disconnect", view: "architecture", id: selectedEdge.id })); setSelectedEdgeId(null); }}>Delete edge</button>
         </div>
       )}
     </div>

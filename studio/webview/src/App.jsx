@@ -191,6 +191,9 @@ export default function App() {
         <span className={`lint-badge ${violations.length ? "bad" : "ok"}`}>
           {violations.length ? `${violations.length} issue${violations.length > 1 ? "s" : ""}` : "clean"}
         </span>
+        <button className="btn ghost" onClick={() => post({ type: "newDesign" })}>
+          New
+        </button>
         <button className="btn ghost" onClick={() => post({ type: "writePlan", spec })}>
           Write plan.md
         </button>

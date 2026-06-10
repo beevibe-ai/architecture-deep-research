@@ -147,6 +147,20 @@ async function handleMessage(msg) {
       return;
     }
 
+    case "newDesign": {
+      const ok = await vscode.window.showWarningMessage(
+        "Clear the whole design and start fresh? This overwrites the spec file.",
+        { modal: true },
+        "Clear"
+      );
+      if (ok === "Clear") {
+        const fresh = ir.emptySpec();
+        writeSpec(fresh);
+        post({ type: "spec", spec: fresh });
+      }
+      return;
+    }
+
     case "writePlan": {
       const md = plan.generatePlan(msg.spec);
       const out = planPath();
