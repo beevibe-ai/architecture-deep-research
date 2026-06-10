@@ -27,8 +27,8 @@ const containerSize = (type) => CONTAINER_SIZE[type] || { w: 220, h: 260 };
 
 function ZoneNode({ data }) {
   return (
-    <div className="plane-zone" style={{ width: data.w || ZONE_W, height: data.h, borderColor: data.color }}>
-      <span className="plane-zone-label" style={{ color: data.color }}>{data.label}</span>
+    <div className="plane-zone" style={{ width: data.w || ZONE_W, height: data.h, background: `${data.color}0c`, borderColor: `${data.color}2e` }}>
+      <span className="plane-zone-label" style={{ background: `${data.color}26`, color: data.color }}>{data.label}</span>
     </div>
   );
 }
@@ -94,6 +94,7 @@ export default function Canvas({ spec, commit, catalog }) {
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [layout, setLayout] = useState("free"); // "free" | "layered"
+  const [showPlanes, setShowPlanes] = useState(false); // plane swimlanes off by default
   const { screenToFlowPosition } = useReactFlow();
 
   const byId = useMemo(() => new Map(archNodes.map((n) => [n.id, n])), [archNodes]);
@@ -105,15 +106,17 @@ export default function Canvas({ spec, commit, catalog }) {
       ? layered.used.map((l) => ({
           id: `__layer_${l.id}`, type: "zone",
           position: { x: -120, y: layered.bandY[l.id] },
-          data: { label: l.label, color: "#5a6075", h: LAYER_H, w: BAND_W },
+          data: { label: l.label, color: "#8a93b0", h: LAYER_H, w: BAND_W },
           draggable: false, selectable: false, connectable: false, zIndex: -1,
         }))
-      : PLANES.map((p) => ({
+      : showPlanes
+      ? PLANES.map((p) => ({
           id: `__zone_${p.id}`, type: "zone",
           position: { x: -120, y: BANDS[p.id].y },
           data: { label: p.label, color: p.color, h: BANDS[p.id].h },
           draggable: false, selectable: false, connectable: false, zIndex: -1,
-        }));
+        }))
+      : [];
     const sorted = [...archNodes].sort((a, b) => depth(a) - depth(b)); // parents before children
     const comps = sorted.map((n) => {
       const container = isContainer(n.type);
@@ -137,7 +140,7 @@ export default function Canvas({ spec, commit, catalog }) {
         className: `${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"}`,
       }))
     );
-  }, [spec, vIndex, selectedId, layout, archNodes, archEdges, depth, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) => commit(applyMutation(spec, { op: "connect", view: "architecture", from: c.source, to: c.target, kind: "calls", protocol: "http" })),
@@ -227,7 +230,8 @@ export default function Canvas({ spec, commit, catalog }) {
         </div>
         <button className="mini-btn" onClick={scaffoldRuntime}>+ Agent Runtime</button>
         {layout === "free" && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "architecture", direction: "TB" }))}>Auto-arrange</button>}
-        {layout === "free" && <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>}
+        {layout === "free" && <button className={`mini-btn ${showPlanes ? "on" : ""}`} onClick={() => setShowPlanes((v) => !v)}>Planes</button>}
+        {layout === "free" && showPlanes && <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>}
       </div>
       <ReactFlow
         nodes={rfNodes}

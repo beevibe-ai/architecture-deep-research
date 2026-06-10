@@ -158,6 +158,7 @@ body {
 .f-pk { display: flex; align-items: center; gap: 2px; font-size: 10px; color: var(--ink-dim); }
 .mini-btn { background: #232734; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
 .mini-btn.ghost { background: transparent; color: var(--ink-dim); }
+.mini-btn.on { background: var(--accent); color: #14161f; border-color: var(--accent); font-weight: 600; }
 
 /* ---- palette ---- */
 .palette {
@@ -233,14 +234,14 @@ body {
 .edge-legend .ek-event { background: #9ee3c6; }
 .edge-legend .ek-own { background: #ffd7a3; }
 
-/* plane swimlanes (background, non-interactive) */
+/* plane / layer swimlanes (background, non-interactive) — clean flat tint */
 .plane-zone {
-  border: 1px dashed; border-radius: 12px; opacity: 0.22;
-  background: linear-gradient(180deg, currentColor 0%, transparent 14%);
+  border: 1px solid; border-radius: 10px;
 }
 .plane-zone-label {
-  position: absolute; top: 6px; left: 12px;
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.9;
+  position: absolute; top: 8px; left: 12px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 2px 9px; border-radius: 999px;
 }
 .arch-plane { font-size: 8px; font-weight: 700; padding: 0 4px; border-radius: 3px; color: #14161f; margin-left: 6px; }
 
