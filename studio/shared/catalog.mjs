@@ -114,6 +114,50 @@ export function getType(id) {
   return BY_ID.get(id) || null;
 }
 
+// Named layers for the "big picture" layered layout (generalizes the 3 planes).
+// Ordered top → bottom.
+export const LAYERS = [
+  { id: "clients", label: "Clients / Access" },
+  { id: "orchestration", label: "Orchestration" },
+  { id: "capabilities", label: "Capabilities" },
+  { id: "memory", label: "Memory" },
+  { id: "knowledge", label: "Knowledge" },
+  { id: "model", label: "Model" },
+  { id: "tools", label: "Tools" },
+  { id: "external", label: "External Services" },
+  { id: "infrastructure", label: "Infrastructure" },
+];
+const LAYER_BY_ID = new Map(LAYERS.map((l) => [l.id, l]));
+export const layerLabel = (id) => (LAYER_BY_ID.get(id) || {}).label || id;
+
+// Type-level overrides where category alone is too coarse.
+const TYPE_LAYER = {
+  orchestrator: "orchestration", query_engine: "orchestration", agent_runtime: "orchestration",
+  scheduler: "orchestration", state_manager: "orchestration", context_layer: "orchestration",
+  agent_loop: "capabilities", tool_system: "capabilities", subagent: "capabilities", skill: "capabilities",
+  task_queue: "capabilities", semantic_gateway: "capabilities", guardrail: "capabilities", permission_layer: "infrastructure",
+  mcp_server: "tools",
+  model_router: "model", llm_provider: "model",
+  vector_db: "knowledge", search_index: "knowledge",
+  logger: "infrastructure", monitor: "infrastructure",
+};
+const CATEGORY_LAYER = {
+  edge: "clients",
+  agent_harness: "orchestration",
+  memory: "memory",
+  data: "knowledge",
+  messaging: "infrastructure",
+  compute: "capabilities",
+  governance: "infrastructure",
+  observability: "infrastructure",
+};
+
+// Which layer band a component belongs to: explicit node.layer wins, then a
+// type override, then its category, then a sensible default.
+export function layerForNode(node) {
+  return node.layer || TYPE_LAYER[node.type] || CATEGORY_LAYER[node.category] || "capabilities";
+}
+
 export function typesByCategory(catalog = CATALOG) {
   const out = {};
   for (const cat of CATEGORIES) out[cat.id] = [];

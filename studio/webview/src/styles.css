@@ -213,7 +213,25 @@ body {
 
 /* ---- canvas ---- */
 .canvas-wrap { position: relative; flex: 1; min-width: 0; }
-.canvas-toolbar { position: absolute; top: 10px; right: 12px; z-index: 6; }
+.canvas-toolbar { position: absolute; top: 10px; right: 12px; z-index: 6; display: flex; gap: 6px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg-btn { background: #191c27; color: var(--ink-dim); border: none; padding: 4px 10px; font: inherit; font-size: 11px; cursor: pointer; }
+.seg-btn.on { background: var(--accent); color: #14161f; font-weight: 600; }
+
+/* edge colors by kind */
+.react-flow__edge.ek-call .react-flow__edge-path { stroke: #7fa8ff; }
+.react-flow__edge.ek-event .react-flow__edge-path { stroke: #9ee3c6; }
+.react-flow__edge.ek-own .react-flow__edge-path { stroke: #ffd7a3; }
+.edge-legend {
+  position: absolute; bottom: 12px; right: 12px; z-index: 6;
+  display: flex; gap: 12px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--ink-dim);
+}
+.edge-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.edge-legend .lg { width: 14px; height: 2px; border-radius: 2px; display: inline-block; }
+.edge-legend .ek-call { background: #7fa8ff; }
+.edge-legend .ek-event { background: #9ee3c6; }
+.edge-legend .ek-own { background: #ffd7a3; }
 
 /* plane swimlanes (background, non-interactive) */
 .plane-zone {

@@ -310,7 +310,7 @@ function architectureReducer(next, m) {
     case "update_node": {
       const node = resolve(next, "architecture", m.id || m.ref);
       if (!node) throw new Error(`update_node: no node "${m.id || m.ref}"`);
-      for (const f of ["label", "tech", "context", "notes", "plane", "type", "category", "ports", "parent"]) if (m[f] !== undefined) node[f] = m[f];
+      for (const f of ["label", "tech", "context", "notes", "plane", "type", "category", "ports", "parent", "layer"]) if (m[f] !== undefined) node[f] = m[f];
       if (m.position) node.position = m.position;
       break;
     }

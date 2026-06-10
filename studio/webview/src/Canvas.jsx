@@ -11,7 +11,7 @@ import {
 } from "@xyflow/react";
 import { applyMutation, EDGE_KINDS, PROTOCOLS } from "../../shared/ir.mjs";
 import { violationIndex } from "../../shared/constraints.mjs";
-import { CATEGORIES, PLANES, DELIVERY, CONSISTENCY, nodeDefaults, getType } from "../../shared/catalog.mjs";
+import { CATEGORIES, PLANES, DELIVERY, CONSISTENCY, LAYERS, nodeDefaults, getType, layerForNode, layerLabel } from "../../shared/catalog.mjs";
 
 const CAT_COLOR = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.color]));
 const PLANE_COLOR = Object.fromEntries(PLANES.map((p) => [p.id, p.color]));
@@ -27,7 +27,7 @@ const containerSize = (type) => CONTAINER_SIZE[type] || { w: 220, h: 260 };
 
 function ZoneNode({ data }) {
   return (
-    <div className="plane-zone" style={{ width: ZONE_W, height: data.h, borderColor: data.color }}>
+    <div className="plane-zone" style={{ width: data.w || ZONE_W, height: data.h, borderColor: data.color }}>
       <span className="plane-zone-label" style={{ color: data.color }}>{data.label}</span>
     </div>
   );
@@ -66,6 +66,25 @@ function ArchNode({ data, selected }) {
 
 const nodeTypes = { arch: ArchNode, zone: ZoneNode, archGroup: ArchGroupNode };
 
+// Edge color by kind (matches a small legend) — request/data vs event vs internal.
+const EDGE_KIND_CLASS = { calls: "ek-call", streams: "ek-event", publishes: "ek-event", subscribes: "ek-event", owns: "ek-own" };
+
+// Layered "big picture" layout: stack components into named layer bands.
+const LAYER_H = 158, LAYER_GAP = 18, NODE_W = 220, NODE_GAP = 34, PAD_X = 70, PAD_TOP = 30, BAND_W = 2200;
+function computeLayered(topLevel) {
+  const used = LAYERS.filter((l) => topLevel.some((n) => layerForNode(n) === l.id));
+  const bandY = {};
+  used.forEach((l, i) => { bandY[l.id] = PAD_TOP + i * (LAYER_H + LAYER_GAP); });
+  const counts = {};
+  const pos = {};
+  for (const n of topLevel) {
+    const lid = layerForNode(n);
+    const idx = counts[lid] = (counts[lid] || 0) + 1;
+    pos[n.id] = { x: PAD_X + (idx - 1) * (NODE_W + NODE_GAP), y: bandY[lid] + 34 };
+  }
+  return { used, bandY, pos };
+}
+
 export default function Canvas({ spec, commit, catalog }) {
   const vIndex = useMemo(() => violationIndex(spec).byView.architecture, [spec]);
   const archNodes = spec.views.architecture.nodes;
@@ -74,26 +93,35 @@ export default function Canvas({ spec, commit, catalog }) {
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
+  const [layout, setLayout] = useState("free"); // "free" | "layered"
   const { screenToFlowPosition } = useReactFlow();
 
   const byId = useMemo(() => new Map(archNodes.map((n) => [n.id, n])), [archNodes]);
   const depth = useCallback((n) => { let d = 0, c = n; while (c && c.parent) { c = byId.get(c.parent); d++; } return d; }, [byId]);
 
   useEffect(() => {
-    const zones = PLANES.map((p) => ({
-      id: `__zone_${p.id}`,
-      type: "zone",
-      position: { x: -120, y: BANDS[p.id].y },
-      data: { label: p.label, color: p.color, h: BANDS[p.id].h },
-      draggable: false, selectable: false, connectable: false, zIndex: -1,
-    }));
+    const layered = layout === "layered" ? computeLayered(archNodes.filter((n) => !n.parent)) : null;
+    const zones = layered
+      ? layered.used.map((l) => ({
+          id: `__layer_${l.id}`, type: "zone",
+          position: { x: -120, y: layered.bandY[l.id] },
+          data: { label: l.label, color: "#5a6075", h: LAYER_H, w: BAND_W },
+          draggable: false, selectable: false, connectable: false, zIndex: -1,
+        }))
+      : PLANES.map((p) => ({
+          id: `__zone_${p.id}`, type: "zone",
+          position: { x: -120, y: BANDS[p.id].y },
+          data: { label: p.label, color: p.color, h: BANDS[p.id].h },
+          draggable: false, selectable: false, connectable: false, zIndex: -1,
+        }));
     const sorted = [...archNodes].sort((a, b) => depth(a) - depth(b)); // parents before children
     const comps = sorted.map((n) => {
       const container = isContainer(n.type);
+      const pos = layered && !n.parent ? layered.pos[n.id] : n.position || { x: 0, y: 0 };
       const base = {
         id: n.id,
         type: container ? "archGroup" : "arch",
-        position: n.position || { x: 0, y: 0 },
+        position: pos,
         data: { node: n, bad: vIndex.nodes.has(n.id), ...(container ? containerSize(n.type) : {}) },
         selected: n.id === selectedId,
       };
@@ -106,10 +134,10 @@ export default function Canvas({ spec, commit, catalog }) {
       archEdges.map((e) => ({
         id: e.id, source: e.from, target: e.to,
         label: edgeLabel(e),
-        className: vIndex.edges.has(e.id) ? "edge-bad" : "edge-ok",
+        className: `${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"}`,
       }))
     );
-  }, [spec, vIndex, selectedId, archNodes, archEdges, depth, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, layout, archNodes, archEdges, depth, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) => commit(applyMutation(spec, { op: "connect", view: "architecture", from: c.source, to: c.target, kind: "calls", protocol: "http" })),
@@ -193,13 +221,18 @@ export default function Canvas({ spec, commit, catalog }) {
   return (
     <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
       <div className="canvas-toolbar">
+        <div className="seg">
+          <button className={`seg-btn ${layout === "free" ? "on" : ""}`} onClick={() => setLayout("free")}>Free</button>
+          <button className={`seg-btn ${layout === "layered" ? "on" : ""}`} onClick={() => setLayout("layered")}>Layered</button>
+        </div>
         <button className="mini-btn" onClick={scaffoldRuntime}>+ Agent Runtime</button>
-        <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>
+        {layout === "free" && <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>}
       </div>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        nodesDraggable={layout === "free"}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -215,6 +248,12 @@ export default function Canvas({ spec, commit, catalog }) {
         <Background gap={18} color="#2a2d3a" />
         <Controls />
       </ReactFlow>
+
+      <div className="edge-legend">
+        <span><i className="lg ek-call" /> request / data</span>
+        <span><i className="lg ek-event" /> event</span>
+        <span><i className="lg ek-own" /> owns</span>
+      </div>
 
       {archNodes.length === 0 && (
         <div className="empty-hint">Drag a component from the catalog, drop “+ Agent Runtime”, or ask the assistant.</div>
@@ -233,6 +272,10 @@ export default function Canvas({ spec, commit, catalog }) {
           <select value={selectedNode.parent || ""} onChange={(e) => setNode({ parent: e.target.value || null })}>
             <option value="">— top level —</option>
             {containers.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+          <label>Layer (big-picture band)</label>
+          <select value={selectedNode.layer || layerForNode(selectedNode)} onChange={(e) => setNode({ layer: e.target.value })}>
+            {LAYERS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </select>
           <label>Tech</label>
           <input list="tech-options" value={selectedNode.tech || ""} placeholder="pgvector, SQLite FTS5, Kafka…" onChange={(e) => setNode({ tech: e.target.value })} />
