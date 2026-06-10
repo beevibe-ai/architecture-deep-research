@@ -11,7 +11,6 @@ import {
   useEdgesState,
 } from "@xyflow/react";
 import InfraPalette from "./InfraPalette.jsx";
-import SkillMenu from "./SkillMenu.jsx";
 import { applyMutation } from "../../../shared/ir.mjs";
 import { violationIndex } from "../../../shared/constraints.mjs";
 import { getInfraType, INFRA_EDGE_KINDS } from "../../../shared/infra.mjs";
@@ -157,7 +156,7 @@ function Inner({ spec, commit }) {
       <InfraPalette />
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
-          <SkillMenu view="infra" spec={spec} commit={commit} />
+          <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "derive", view: "infra" }))}>Sync from architecture</button>
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "infra", direction: "TB" }))}>Auto-arrange</button>
           <button className="mini-btn" onClick={() => post({ type: "writeManifests", spec })}>Generate manifests</button>
         </div>

@@ -9,7 +9,6 @@ import {
   useEdgesState,
 } from "@xyflow/react";
 import EntityNode from "./EntityNode.jsx";
-import SkillMenu from "./SkillMenu.jsx";
 import { applyMutation, FIELD_TYPES } from "../../../shared/ir.mjs";
 import { violationIndex } from "../../../shared/constraints.mjs";
 
@@ -107,7 +106,7 @@ function Inner({ spec, commit }) {
 
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
-          <SkillMenu view="data_model" spec={spec} commit={commit} />
+          <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "derive", view: "data_model" }))}>Sync from architecture</button>
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "data_model", direction: "LR" }))}>Auto-arrange</button>
         </div>
         <ReactFlow

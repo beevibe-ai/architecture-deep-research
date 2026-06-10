@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import SkillMenu from "./SkillMenu.jsx";
 import { applyMutation, SEQ_MESSAGE_TYPES } from "../../../shared/ir.mjs";
 
 // Sequence diagrams are time-ordered, not free-canvas — so this is a purpose-built
@@ -39,7 +38,7 @@ export default function SequenceView({ spec, commit }) {
             {seqs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             {!seqs.length && <option value="">no sequences</option>}
           </select>
-          <SkillMenu view="sequences" spec={spec} commit={commit} />
+          <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "derive", view: "sequences" }))}>Sync from architecture</button>
           <button className="mini-btn" onClick={addSeq}>+ sequence</button>
           {seq && <button className="mini-btn ghost" onClick={() => mut({ op: "remove_sequence", view: "sequences", id: seq.id })}>delete</button>}
         </div>

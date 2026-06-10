@@ -11,7 +11,6 @@ import {
   useNodesState,
   useEdgesState,
 } from "@xyflow/react";
-import SkillMenu from "./SkillMenu.jsx";
 import { applyMutation, CLASS_EDGE_KINDS, VISIBILITIES } from "../../../shared/ir.mjs";
 
 // A UML class: «stereotype» + name, an attributes compartment, a methods one.
@@ -88,7 +87,7 @@ function Inner({ spec, commit }) {
 
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
-          <SkillMenu view="classes" spec={spec} commit={commit} />
+          <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "derive", view: "classes" }))}>Sync from architecture</button>
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "classes", direction: "TB" }))}>Auto-arrange</button>
         </div>
         <ReactFlow

@@ -15,6 +15,7 @@ import { makeProvider, defaultModel } from "./providers.mjs";
 const TOOLS = [
   // skills — the primary, architect-grade action
   { name: "apply_skill", description: "Lay down a coherent design pattern in one step — places components on the right planes, wires them correctly, and auto-arranges. PREFER this over many low-level calls. Skills are listed in the system prompt.", input_schema: { type: "object", properties: { skill: { type: "string" }, params: { type: "object" } }, required: ["skill"] } },
+  { name: "derive_view", description: "Project the architecture into another view, keeping them in sync. infra = deployment for each component; data_model = entities for datastores; sequences = the wiring as an interaction; classes = a class per service. Idempotent. (e.g. 'from ui to infra' = derive_view infra.)", input_schema: { type: "object", properties: { view: { type: "string", enum: ["infra", "data_model", "sequences", "classes"] } }, required: ["view"] } },
   // architecture
   { name: "arch_add_node", description: "Add a component. Prefer a catalog `type` (orchestrator, semantic_gateway, vector_db, search_index, event_queue, otel_collector, rbac_policy, …) — it sets the category, plane, and tech options.", input_schema: { type: "object", properties: { type: { type: "string", description: "catalog component type id" }, label: { type: "string" }, tech: { type: "string", description: "specific tech, e.g. pgvector, SQLite FTS5, Kafka" }, plane: { type: "string", enum: ["control", "execution", "data"] }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["type", "label"] } },
   { name: "arch_set_edge_semantics", description: "Set distributed/governance/observability properties on a wire.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, protocol: { type: "string" }, delivery: { type: "string", enum: ["best-effort", "at-least-once", "exactly-once", "ordered"] }, consistency: { type: "string", enum: ["none", "eventual", "linearizable", "vector_clock", "lamport"] }, required_role: { type: "string", description: "RBAC role required to traverse this edge" }, instrumented: { type: "boolean", description: "OTel-traced" } }, required: ["from", "to"] } },
@@ -53,6 +54,8 @@ function toolToMutations(name, input) {
   switch (name) {
     case "apply_skill":
       return [{ op: "apply_skill", skill: input.skill, params: input.params || {} }];
+    case "derive_view":
+      return [{ op: "derive", view: input.view }];
     case "arch_add_node":
       return [{ op: "add_node", view: "architecture", ...input }];
     case "arch_set_edge_semantics":
@@ -123,6 +126,8 @@ function systemPrompt(catalog) {
     "random boxes. Your PRIMARY action is apply_skill — it lays down a coherent, correctly-planed,",
     "auto-arranged subgraph in one step. Decompose the user's intent into one or more skills and apply",
     "them; use the low-level tools (arch_/dm_/flow_/infra_/class_) only to refine or connect skills.",
+    "The other views derive from the architecture — use derive_view to project it (infra, data_model,",
+    "sequences, classes) rather than building them from scratch ('from ui to infra' = derive_view infra).",
     "You change the design ONLY by calling tools, in the same response — never reply with a plan and stop.",
     "After the edits, give a one-line confirmation. You can set distributed/governance/observability edge",
     "semantics (delivery, consistency incl. vector_clock, required_role for RBAC, instrumented for OTel),",

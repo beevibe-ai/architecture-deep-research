@@ -9,6 +9,7 @@ import { nodeDefaults, getType } from "./catalog.mjs";
 import { infraDefaults, getInfraType, defaultInfraConstraints } from "./infra.mjs";
 import { applyAutoLayout } from "./layout.mjs";
 import { buildSkill, skillView } from "./skills.mjs";
+import { buildDerivation } from "./derive.mjs";
 
 export const SPEC_VERSION = "0.3.0";
 
@@ -59,6 +60,7 @@ const CROSS_CUTTING_OPS = new Set([
   "remove_constraint",
   "add_cross_ref",
   "remove_cross_ref",
+  "link",
   "scaffold_subsystem",
   "scaffold_runtime",
   "set_plan_section",
@@ -330,7 +332,18 @@ export function applyMutation(spec, m) {
     for (const mut of buildSkill(m.skill, m.params || {})) s = applyMutation(s, mut);
     if (m.layout !== false) {
       s = clone(s);
-      applyAutoLayout(s, skillView(m.skill), skillView(m.skill) === "infra" ? "TB" : "TB");
+      applyAutoLayout(s, skillView(m.skill), "TB");
+    }
+    return s;
+  }
+
+  // Derivation: project the architecture into another view (idempotent).
+  if (m.op === "derive") {
+    let s = spec;
+    for (const mut of buildDerivation(m.view, s)) s = applyMutation(s, mut);
+    if (m.layout !== false) {
+      s = clone(s);
+      applyAutoLayout(s, m.view, "TB");
     }
     return s;
   }
@@ -765,6 +778,14 @@ function applyCrossCutting(next, m) {
     case "add_cross_ref":
       next.cross_refs.push(makeCrossRef(m));
       break;
+    case "link": {
+      // Like add_cross_ref but resolves each endpoint by id-or-label in its view.
+      const from = resolve(next, m.from.view, m.from.ref);
+      const to = resolve(next, m.to.view, m.to.ref);
+      if (!from || !to) throw new Error(`link: unknown ${m.from.ref} → ${m.to.ref}`);
+      next.cross_refs.push(makeCrossRef({ from: { view: m.from.view, ref: from.id }, to: { view: m.to.view, ref: to.id }, kind: m.kind }));
+      break;
+    }
     case "remove_cross_ref":
       next.cross_refs = next.cross_refs.filter((x) => x.id !== m.id);
       break;
