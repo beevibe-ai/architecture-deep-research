@@ -256,6 +256,17 @@ body {
   font-weight: 700; font-size: 13px;
 }
 
+/* ---- UML class node ---- */
+.uml-class { background: #1d2030; border: 1.5px solid #b9c5ff; border-radius: 8px; min-width: 160px; color: var(--ink); overflow: hidden; }
+.uml-class.sel { box-shadow: 0 0 0 2px #b9c5ff; }
+.uml-head { padding: 7px 10px; text-align: center; border-bottom: 1px solid var(--line); background: #232a36; }
+.uml-stereo { font-size: 10px; color: var(--ink-dim); font-style: italic; }
+.uml-name { font-weight: 700; font-size: 13px; }
+.uml-compartment { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.uml-compartment:last-child { border-bottom: none; }
+.uml-member { padding: 1px 10px; font-size: 11px; font-family: ui-monospace, Menlo, monospace; }
+.uml-member.empty { color: var(--ink-dim); }
+
 /* ---- infrastructure containment ---- */
 .infra-group {
   border: 1.5px solid #7fd7ff; border-radius: 12px;

@@ -35,6 +35,8 @@ const TOOLS = [
   { name: "infra_connect", description: "Connect two infra nodes (exposes/routes/mounts/scales/backs/pulls/schedules).", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["exposes", "routes", "mounts", "scales", "backs", "pulls", "schedules"] } }, required: ["from", "to", "kind"] } },
   { name: "infra_set_props", description: "Set config props on an infra node (image, replicas, cpu, memory, gpu, size, min, max, trigger, …).", input_schema: { type: "object", properties: { ref: { type: "string" }, props: { type: "object" } }, required: ["ref", "props"] } },
   { name: "deploy_realize", description: "Link a logical component to the infra node that deploys it.", input_schema: { type: "object", properties: { component: { type: "string" }, infra: { type: "string" } }, required: ["component", "infra"] } },
+  { name: "class_add", description: "Add a UML class with its members.", input_schema: { type: "object", properties: { name: { type: "string" }, stereotype: { type: "string", enum: ["abstract", "interface"] }, members: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["attribute", "method"] }, name: { type: "string" }, type: { type: "string" }, visibility: { type: "string" } }, required: ["kind", "name"] } } }, required: ["name"] } },
+  { name: "class_connect", description: "Relate two classes (inherits/implements/associates/composes/aggregates).", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["inherits", "implements", "associates", "composes", "aggregates"] } }, required: ["from", "to", "kind"] } },
   { name: "add_note", description: "Capture a requirement, idea, decision, question, or risk in the Notes panel.", input_schema: { type: "object", properties: { kind: { type: "string", enum: ["functional", "non_functional", "idea", "question", "decision", "risk"] }, title: { type: "string" }, body: { type: "string" }, priority: { type: "string", enum: ["must", "should", "could", "wont"] } }, required: ["kind", "title"] } },
   { name: "write_plan_section", description: "Write or replace an AI prose section of plan.md (e.g. overview, rationale, tradeoffs).", input_schema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, body_md: { type: "string" } }, required: ["id", "body_md"] } },
   { name: "run_constraint_check", description: "Return the current constraint violations without changing anything.", input_schema: { type: "object", properties: {} } },
@@ -85,6 +87,10 @@ function toolToMutations(name, input) {
       return [{ op: "set_infra_props", view: "infra", ref: input.ref, props: input.props }];
     case "deploy_realize":
       return [{ op: "realize", component: input.component, infra: input.infra }];
+    case "class_add":
+      return [{ op: "add_class", view: "classes", ...input }];
+    case "class_connect":
+      return [{ op: "connect_class", view: "classes", ...input }];
     case "add_note":
       return [{ op: "add_note", ...input }];
     case "auto_layout":

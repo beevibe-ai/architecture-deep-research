@@ -43,6 +43,15 @@ export function applyAutoLayout(spec, view, direction) {
       const pos = rankPositions(flow.nodes, flow.transitions, { direction: direction || "TB", sizeOf: () => ({ w: 130, h: 50 }) });
       for (const s of flow.nodes) if (pos[s.id]) s.position = pos[s.id];
     }
+  } else if (view === "classes") {
+    const cv = spec.views.classes;
+    // Reverse inheritance edges so the base class ranks above its subclasses.
+    const ranked = cv.edges.map((e) => (e.kind === "inherits" || e.kind === "implements" ? { from: e.to, to: e.from } : e));
+    const pos = rankPositions(cv.nodes, ranked, {
+      direction: direction || "TB",
+      sizeOf: (c) => ({ w: 200, h: 50 + (c.members?.length || 0) * 20 }),
+    });
+    for (const c of cv.nodes) if (pos[c.id]) c.position = pos[c.id];
   } else if (view === "infra") {
     const inf = spec.views.infra;
     const top = inf.nodes.filter((n) => !n.parent);

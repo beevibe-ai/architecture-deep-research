@@ -11,7 +11,10 @@ import { applyAutoLayout } from "./layout.mjs";
 
 export const SPEC_VERSION = "0.3.0";
 
-export const VIEWS = ["architecture", "data_model", "flows", "infra"];
+export const VIEWS = ["architecture", "data_model", "flows", "infra", "classes", "sequences"];
+
+export const CLASS_EDGE_KINDS = ["inherits", "implements", "associates", "composes", "aggregates"];
+export const VISIBILITIES = ["+", "-", "#", "~"];
 
 // ---- architecture vocabulary ----------------------------------------------
 export const NODE_KINDS = [
@@ -76,6 +79,8 @@ export function emptySpec() {
       data_model: { entities: [], relations: [] },
       flows: [],
       infra: { nodes: [], edges: [] },
+      classes: { nodes: [], edges: [] },
+      sequences: [],
     },
     constraints: [...defaultConstraints(), ...defaultInfraConstraints()],
     cross_refs: [],
@@ -233,6 +238,18 @@ export function makeInfraEdge({ from, to, kind = "exposes", label = "" }) {
   return { id: nextId("ie"), from, to, kind, label };
 }
 
+// A UML class — name, optional stereotype (abstract/interface), and members
+// (attributes + methods). Edges carry inheritance/association.
+export function makeClass({ name, stereotype = null, members = [], position }) {
+  return { id: nextId("cls"), name: name || "Class", stereotype, members: members.map((m) => makeMember(m)), position: position || { x: 0, y: 0 } };
+}
+export function makeMember({ kind = "attribute", name = "field", type = "", visibility = "+" }) {
+  return { id: nextId("mem"), kind, name, type, visibility };
+}
+export function makeClassEdge({ from, to, kind = "inherits", label = "" }) {
+  return { id: nextId("ce"), from, to, kind, label };
+}
+
 function defaultLabelFor(kind) {
   const found = NODE_KINDS.find((k) => k.kind === kind);
   return found ? found.label : kind;
@@ -259,6 +276,10 @@ export function resolve(spec, view, ref) {
   if (view === "infra") {
     const ns = spec.views.infra.nodes;
     return ns.find((n) => n.id === ref) || ns.find((n) => n.label.toLowerCase() === low) || null;
+  }
+  if (view === "classes") {
+    const ns = spec.views.classes.nodes;
+    return ns.find((n) => n.id === ref) || ns.find((n) => n.name.toLowerCase() === low) || null;
   }
   return null;
 }
@@ -296,6 +317,9 @@ export function applyMutation(spec, m) {
       break;
     case "infra":
       infraReducer(next, m);
+      break;
+    case "classes":
+      classesReducer(next, m);
       break;
     default:
       throw new Error(`unknown view "${view}" for op "${m.op}"`);
@@ -494,6 +518,64 @@ function flowElementReducer(flow, next, m) {
       break;
     default:
       throw new Error(`unknown op "${m.op}" for view "flows"`);
+  }
+}
+
+function classesReducer(next, m) {
+  const cv = next.views.classes;
+  switch (m.op) {
+    case "add_class":
+      cv.nodes.push(makeClass(m));
+      break;
+    case "update_class": {
+      const c = resolve(next, "classes", m.id || m.ref);
+      if (!c) throw new Error(`update_class: no class "${m.id || m.ref}"`);
+      for (const f of ["name", "stereotype"]) if (m[f] !== undefined) c[f] = m[f];
+      if (m.position) c.position = m.position;
+      break;
+    }
+    case "remove_class": {
+      const c = resolve(next, "classes", m.id || m.ref);
+      if (!c) break;
+      cv.nodes = cv.nodes.filter((x) => x.id !== c.id);
+      cv.edges = cv.edges.filter((e) => e.from !== c.id && e.to !== c.id);
+      break;
+    }
+    case "add_member": {
+      const c = resolve(next, "classes", m.class);
+      if (!c) throw new Error(`add_member: no class "${m.class}"`);
+      c.members.push(makeMember(m));
+      break;
+    }
+    case "update_member": {
+      const c = resolve(next, "classes", m.class);
+      const mem = c && c.members.find((x) => x.id === m.member || x.name === m.member);
+      if (!mem) throw new Error(`update_member: no member "${m.member}"`);
+      for (const f of ["kind", "name", "type", "visibility"]) if (m[f] !== undefined) mem[f] = m[f];
+      break;
+    }
+    case "remove_member": {
+      const c = resolve(next, "classes", m.class);
+      if (c) c.members = c.members.filter((x) => x.id !== m.member && x.name !== m.member);
+      break;
+    }
+    case "connect_class": {
+      const from = resolve(next, "classes", m.from);
+      const to = resolve(next, "classes", m.to);
+      if (!from || !to) throw new Error(`connect_class: unknown ${m.from} → ${m.to}`);
+      cv.edges.push(makeClassEdge({ ...m, from: from.id, to: to.id }));
+      break;
+    }
+    case "disconnect_class":
+      if (m.id) cv.edges = cv.edges.filter((e) => e.id !== m.id);
+      else {
+        const from = resolve(next, "classes", m.from);
+        const to = resolve(next, "classes", m.to);
+        cv.edges = cv.edges.filter((e) => !(from && to && e.from === from.id && e.to === to.id));
+      }
+      break;
+    default:
+      throw new Error(`unknown op "${m.op}" for view "classes"`);
   }
 }
 
@@ -723,6 +805,8 @@ function fillDefaults(spec) {
   spec.views.data_model = spec.views.data_model || { entities: [], relations: [] };
   spec.views.flows = spec.views.flows || [];
   spec.views.infra = spec.views.infra || { nodes: [], edges: [] };
+  spec.views.classes = spec.views.classes || { nodes: [], edges: [] };
+  spec.views.sequences = spec.views.sequences || [];
   spec.constraints = spec.constraints || defaultConstraints();
   // Backfill infra constraints for specs created before the infra view existed.
   if (!spec.constraints.some((c) => c.view === "infra")) spec.constraints.push(...defaultInfraConstraints());

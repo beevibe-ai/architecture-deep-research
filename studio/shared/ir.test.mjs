@@ -9,7 +9,7 @@ beforeEach(() => __resetIds(0));
 test("empty spec has the full 0.3.0 multi-view shape", () => {
   const s = emptySpec();
   assert.equal(s.version, "0.3.0");
-  assert.deepEqual(Object.keys(s.views).sort(), ["architecture", "data_model", "flows", "infra"]);
+  assert.deepEqual(Object.keys(s.views).sort(), ["architecture", "classes", "data_model", "flows", "infra", "sequences"]);
   assert.equal(s.views.architecture.nodes.length, 0);
   assert.equal(s.views.data_model.entities.length, 0);
   assert.ok(Array.isArray(s.views.flows));
