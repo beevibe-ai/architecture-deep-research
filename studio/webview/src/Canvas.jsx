@@ -226,12 +226,14 @@ export default function Canvas({ spec, commit, catalog }) {
           <button className={`seg-btn ${layout === "layered" ? "on" : ""}`} onClick={() => setLayout("layered")}>Layered</button>
         </div>
         <button className="mini-btn" onClick={scaffoldRuntime}>+ Agent Runtime</button>
+        {layout === "free" && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "architecture", direction: "TB" }))}>Auto-arrange</button>}
         {layout === "free" && <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>}
       </div>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        defaultEdgeOptions={{ type: "smoothstep" }}
         nodesDraggable={layout === "free"}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

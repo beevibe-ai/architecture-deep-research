@@ -38,6 +38,7 @@ const TOOLS = [
   { name: "add_note", description: "Capture a requirement, idea, decision, question, or risk in the Notes panel.", input_schema: { type: "object", properties: { kind: { type: "string", enum: ["functional", "non_functional", "idea", "question", "decision", "risk"] }, title: { type: "string" }, body: { type: "string" }, priority: { type: "string", enum: ["must", "should", "could", "wont"] } }, required: ["kind", "title"] } },
   { name: "write_plan_section", description: "Write or replace an AI prose section of plan.md (e.g. overview, rationale, tradeoffs).", input_schema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, body_md: { type: "string" } }, required: ["id", "body_md"] } },
   { name: "run_constraint_check", description: "Return the current constraint violations without changing anything.", input_schema: { type: "object", properties: {} } },
+  { name: "auto_layout", description: "Auto-arrange a view into a clean layout (dagre, like Mermaid). Use after adding several nodes so the diagram stays tidy.", input_schema: { type: "object", properties: { view: { type: "string", enum: ["architecture", "data_model", "flows", "infra"] }, direction: { type: "string", enum: ["TB", "LR"] } }, required: ["view"] } },
 ];
 
 // Map a tool call to one or more IR mutations. Returns [] for run_constraint_check
@@ -86,6 +87,8 @@ function toolToMutations(name, input) {
       return [{ op: "realize", component: input.component, infra: input.infra }];
     case "add_note":
       return [{ op: "add_note", ...input }];
+    case "auto_layout":
+      return [{ op: "auto_layout", ...input }];
     case "write_plan_section":
       return [{ op: "set_plan_section", ...input }];
     case "run_constraint_check":

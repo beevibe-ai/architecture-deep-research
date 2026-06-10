@@ -156,12 +156,14 @@ function Inner({ spec, commit }) {
       <InfraPalette />
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
+          <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "infra", direction: "TB" }))}>Auto-arrange</button>
           <button className="mini-btn" onClick={() => post({ type: "writeManifests", spec })}>Generate manifests</button>
         </div>
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={{ type: "smoothstep" }}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}

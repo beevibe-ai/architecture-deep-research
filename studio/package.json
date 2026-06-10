@@ -17,7 +17,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.32.1",
     "openai": "^4.77.0",
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "dagre": "^0.8.5"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

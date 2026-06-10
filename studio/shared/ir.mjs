@@ -7,6 +7,7 @@
 
 import { nodeDefaults, getType } from "./catalog.mjs";
 import { infraDefaults, getInfraType, defaultInfraConstraints } from "./infra.mjs";
+import { applyAutoLayout } from "./layout.mjs";
 
 export const SPEC_VERSION = "0.3.0";
 
@@ -60,6 +61,7 @@ const CROSS_CUTTING_OPS = new Set([
   "add_note",
   "update_note",
   "remove_note",
+  "auto_layout",
 ]);
 
 // A genuinely empty design. Blank-canvas-first: no seeded elements.
@@ -589,6 +591,9 @@ function applyCrossCutting(next, m) {
     }
     case "remove_note":
       next.notes = next.notes.filter((n) => n.id !== m.id);
+      break;
+    case "auto_layout":
+      applyAutoLayout(next, m.view || "architecture", m.direction);
       break;
     case "set_plan_section": {
       // Upsert an AI-authored plan section by id (the assistant's prose).

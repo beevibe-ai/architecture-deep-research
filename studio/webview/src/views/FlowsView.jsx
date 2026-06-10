@@ -133,6 +133,7 @@ function Inner({ spec, commit }) {
             {!flows.length && <option value="">no flows yet</option>}
           </select>
           <button className="mini-btn" onClick={addFlow}>+ flow</button>
+          {flow && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "flows", direction: "TB" }))}>Auto-arrange</button>}
           {flow && (
             <button className="mini-btn ghost" onClick={() => commit(applyMutation(spec, { op: "remove_flow", view: "flows", id: flow.id }))}>
               delete flow
@@ -144,6 +145,7 @@ function Inner({ spec, commit }) {
           nodes={rfNodes}
           edges={rfEdges}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={{ type: "smoothstep" }}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}

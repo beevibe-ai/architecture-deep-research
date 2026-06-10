@@ -105,10 +105,14 @@ function Inner({ spec, commit }) {
       </aside>
 
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
+        <div className="canvas-toolbar">
+          <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "data_model", direction: "LR" }))}>Auto-arrange</button>
+        </div>
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={{ type: "smoothstep" }}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
