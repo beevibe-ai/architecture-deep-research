@@ -12,6 +12,7 @@ import {
 import { applyMutation, EDGE_KINDS, PROTOCOLS } from "../../shared/ir.mjs";
 import { violationIndex } from "../../shared/constraints.mjs";
 import { CATEGORIES, PLANES, DELIVERY, CONSISTENCY, LAYERS, nodeDefaults, getType, layerForNode, layerLabel } from "../../shared/catalog.mjs";
+import { SKILLS } from "../../shared/skills.mjs";
 
 const CAT_COLOR = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.color]));
 const PLANE_COLOR = Object.fromEntries(PLANES.map((p) => [p.id, p.color]));
@@ -228,7 +229,10 @@ export default function Canvas({ spec, commit, catalog }) {
           <button className={`seg-btn ${layout === "free" ? "on" : ""}`} onClick={() => setLayout("free")}>Free</button>
           <button className={`seg-btn ${layout === "layered" ? "on" : ""}`} onClick={() => setLayout("layered")}>Layered</button>
         </div>
-        <button className="mini-btn" onClick={scaffoldRuntime}>+ Agent Runtime</button>
+        <select className="mini-btn skill-select" value="" onChange={(e) => { if (e.target.value) commit(applyMutation(spec, { op: "apply_skill", skill: e.target.value })); e.target.value = ""; }}>
+          <option value="">+ Skill…</option>
+          {SKILLS.filter((s) => s.view === "architecture").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
         {layout === "free" && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "architecture", direction: "TB" }))}>Auto-arrange</button>}
         {layout === "free" && <button className={`mini-btn ${showPlanes ? "on" : ""}`} onClick={() => setShowPlanes((v) => !v)}>Planes</button>}
         {layout === "free" && showPlanes && <button className="mini-btn" onClick={tidyByPlane}>Tidy by plane</button>}

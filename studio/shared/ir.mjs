@@ -8,6 +8,7 @@
 import { nodeDefaults, getType } from "./catalog.mjs";
 import { infraDefaults, getInfraType, defaultInfraConstraints } from "./infra.mjs";
 import { applyAutoLayout } from "./layout.mjs";
+import { buildSkill, skillView } from "./skills.mjs";
 
 export const SPEC_VERSION = "0.3.0";
 
@@ -322,6 +323,18 @@ function resolveStep(flow, ref) {
 // Apply one structured mutation, returning a NEW spec (no in-place edits on the
 // input). Drag-drop commits and assistant tool-calls both come through here.
 export function applyMutation(spec, m) {
+  // The skill harness: expand a recipe into its mutations, apply them in order,
+  // then auto-lay-out the affected view. Coherent-by-construction.
+  if (m.op === "apply_skill") {
+    let s = spec;
+    for (const mut of buildSkill(m.skill, m.params || {})) s = applyMutation(s, mut);
+    if (m.layout !== false) {
+      s = clone(s);
+      applyAutoLayout(s, skillView(m.skill), skillView(m.skill) === "infra" ? "TB" : "TB");
+    }
+    return s;
+  }
+
   const next = clone(spec);
   if (CROSS_CUTTING_OPS.has(m.op)) {
     applyCrossCutting(next, m);

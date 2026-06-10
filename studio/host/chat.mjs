@@ -8,10 +8,13 @@ import { applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
 import { catalogVocabulary } from "../shared/catalog.mjs";
 import { infraVocabulary } from "../shared/infra.mjs";
+import { skillVocabulary } from "../shared/skills.mjs";
 import { makeProvider, defaultModel } from "./providers.mjs";
 
 // View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
+  // skills — the primary, architect-grade action
+  { name: "apply_skill", description: "Lay down a coherent design pattern in one step — places components on the right planes, wires them correctly, and auto-arranges. PREFER this over many low-level calls. Skills are listed in the system prompt.", input_schema: { type: "object", properties: { skill: { type: "string" }, params: { type: "object" } }, required: ["skill"] } },
   // architecture
   { name: "arch_add_node", description: "Add a component. Prefer a catalog `type` (orchestrator, semantic_gateway, vector_db, search_index, event_queue, otel_collector, rbac_policy, …) — it sets the category, plane, and tech options.", input_schema: { type: "object", properties: { type: { type: "string", description: "catalog component type id" }, label: { type: "string" }, tech: { type: "string", description: "specific tech, e.g. pgvector, SQLite FTS5, Kafka" }, plane: { type: "string", enum: ["control", "execution", "data"] }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["type", "label"] } },
   { name: "arch_set_edge_semantics", description: "Set distributed/governance/observability properties on a wire.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, protocol: { type: "string" }, delivery: { type: "string", enum: ["best-effort", "at-least-once", "exactly-once", "ordered"] }, consistency: { type: "string", enum: ["none", "eventual", "linearizable", "vector_clock", "lamport"] }, required_role: { type: "string", description: "RBAC role required to traverse this edge" }, instrumented: { type: "boolean", description: "OTel-traced" } }, required: ["from", "to"] } },
@@ -48,6 +51,8 @@ const TOOLS = [
 // (a read-only tool handled by the loop).
 function toolToMutations(name, input) {
   switch (name) {
+    case "apply_skill":
+      return [{ op: "apply_skill", skill: input.skill, params: input.params || {} }];
     case "arch_add_node":
       return [{ op: "add_node", view: "architecture", ...input }];
     case "arch_set_edge_semantics":
@@ -113,23 +118,17 @@ function toolToMutations(name, input) {
 
 function systemPrompt(catalog) {
   return [
-    "You are the design assistant inside a system-architecture canvas with views:",
-    "architecture, data model, flows, infrastructure, classes, sequences.",
-    "CRITICAL: You change the design ONLY by calling tools, and you call them in the SAME response.",
-    "Never reply with a plan and stop. If you say you will add or change something, you MUST call the",
-    "tools to do it in that same turn — do not narrate intentions without acting. After you finish all",
-    "the edits, give a one-line confirmation. Use the view-prefixed tools (arch_, dm_, flow_, infra_, class_).",
-    "Speak agent-native and distributed-systems language: pick precise component types from the catalog",
-    "below, place them on the right plane (control / execution / data), choose specific tech (pgvector,",
-    "SQLite FTS5, Kafka, Qdrant…), and set edge semantics with arch_set_edge_semantics —",
-    "delivery/consistency (incl. vector_clock) for distributed guarantees, required_role for RBAC,",
-    "instrumented for OTel traceability. Route external traffic through a gateway/semantic_gateway and",
-    "put a vector_db behind an embedder. Refer to existing elements by label. After edits you receive",
-    "counts and violations; fix real ones. Capture rationale with write_plan_section. Keep replies short.",
-    "For deployment, use the infra_* tools to build the Infrastructure view (cluster ▸ namespace ▸",
-    "workload ▸ pod, node pools, services, PVCs, KEDA/HPA, KServe/vLLM, managed cloud) and deploy_realize",
-    "to link a logical component to the infra node that runs it.",
-    "\n\nComponent catalog:\n" + catalogVocabulary(catalog),
+    "You are the design assistant inside a system-architecture canvas (views: architecture, data model,",
+    "flows, infrastructure, classes, sequences). You work like an architect: compose proven patterns, not",
+    "random boxes. Your PRIMARY action is apply_skill — it lays down a coherent, correctly-planed,",
+    "auto-arranged subgraph in one step. Decompose the user's intent into one or more skills and apply",
+    "them; use the low-level tools (arch_/dm_/flow_/infra_/class_) only to refine or connect skills.",
+    "You change the design ONLY by calling tools, in the same response — never reply with a plan and stop.",
+    "After the edits, give a one-line confirmation. You can set distributed/governance/observability edge",
+    "semantics (delivery, consistency incl. vector_clock, required_role for RBAC, instrumented for OTel),",
+    "capture requirements/decisions with add_note, and tidy any view with auto_layout.",
+    "\n\nSkills (prefer these):\n" + skillVocabulary(),
+    "\n\nComponent catalog (for refinement):\n" + catalogVocabulary(catalog),
     "\n\nInfrastructure catalog:\n" + infraVocabulary(),
   ].join(" ");
 }

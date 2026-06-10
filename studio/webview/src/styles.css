@@ -159,6 +159,7 @@ body {
 .mini-btn { background: #232734; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
 .mini-btn.ghost { background: transparent; color: var(--ink-dim); }
 .mini-btn.on { background: var(--accent); color: #14161f; border-color: var(--accent); font-weight: 600; }
+.skill-select { font: inherit; font-size: 11px; appearance: auto; }
 
 /* ---- palette ---- */
 .palette {
