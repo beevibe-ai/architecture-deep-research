@@ -9,6 +9,7 @@ import {
   useEdgesState,
 } from "@xyflow/react";
 import EntityNode from "./EntityNode.jsx";
+import SkillMenu from "./SkillMenu.jsx";
 import { applyMutation, FIELD_TYPES } from "../../../shared/ir.mjs";
 import { violationIndex } from "../../../shared/constraints.mjs";
 
@@ -106,6 +107,7 @@ function Inner({ spec, commit }) {
 
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
+          <SkillMenu view="data_model" spec={spec} commit={commit} />
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "data_model", direction: "LR" }))}>Auto-arrange</button>
         </div>
         <ReactFlow
@@ -183,6 +185,7 @@ function EntityInspector({ spec, entity, mutate, commit }) {
         <option value="">— none —</option>
         {owners.map((n) => <option key={n.id} value={n.id}>{n.label} ({n.kind})</option>)}
       </select>
+      <button className="mini-btn danger" onClick={() => commit(applyMutation(spec, { op: "remove_entity", view: "data_model", id: entity.id }))}>Delete entity</button>
     </div>
   );
 }

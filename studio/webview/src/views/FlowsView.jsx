@@ -9,6 +9,7 @@ import {
   useEdgesState,
 } from "@xyflow/react";
 import FlowNode from "./FlowNode.jsx";
+import SkillMenu from "./SkillMenu.jsx";
 import { applyMutation, STEP_TYPES } from "../../../shared/ir.mjs";
 import { violationIndex } from "../../../shared/constraints.mjs";
 
@@ -132,6 +133,7 @@ function Inner({ spec, commit }) {
             {flows.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
             {!flows.length && <option value="">no flows yet</option>}
           </select>
+          <SkillMenu view="flows" spec={spec} commit={commit} />
           <button className="mini-btn" onClick={addFlow}>+ flow</button>
           {flow && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "flows", direction: "TB" }))}>Auto-arrange</button>}
           {flow && (
@@ -173,6 +175,7 @@ function Inner({ spec, commit }) {
             <select value={selected.type} onChange={(e) => commit(applyMutation(spec, { op: "update_step", view: "flows", flow: flow.id, id: selected.id, type: e.target.value }))}>
               {STEP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
+            <button className="mini-btn danger" onClick={() => { commit(applyMutation(spec, { op: "remove_step", view: "flows", flow: flow.id, ref: selected.id })); setSelectedId(null); }}>Delete step</button>
           </div>
         )}
       </div>
