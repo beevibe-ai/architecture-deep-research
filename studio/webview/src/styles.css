@@ -256,6 +256,11 @@ body {
   font-weight: 700; font-size: 13px;
 }
 
+/* ---- sequence view ---- */
+.seq-wrap { overflow: hidden; }
+.seq-scroll { position: absolute; inset: 0; overflow: auto; padding-top: 4px; }
+.seq-svg { display: block; }
+
 /* ---- UML class node ---- */
 .uml-class { background: #1d2030; border: 1.5px solid #b9c5ff; border-radius: 8px; min-width: 160px; color: var(--ink); overflow: hidden; }
 .uml-class.sel { box-shadow: 0 0 0 2px #b9c5ff; }

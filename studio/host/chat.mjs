@@ -37,6 +37,7 @@ const TOOLS = [
   { name: "deploy_realize", description: "Link a logical component to the infra node that deploys it.", input_schema: { type: "object", properties: { component: { type: "string" }, infra: { type: "string" } }, required: ["component", "infra"] } },
   { name: "class_add", description: "Add a UML class with its members.", input_schema: { type: "object", properties: { name: { type: "string" }, stereotype: { type: "string", enum: ["abstract", "interface"] }, members: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["attribute", "method"] }, name: { type: "string" }, type: { type: "string" }, visibility: { type: "string" } }, required: ["kind", "name"] } } }, required: ["name"] } },
   { name: "class_connect", description: "Relate two classes (inherits/implements/associates/composes/aggregates).", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["inherits", "implements", "associates", "composes", "aggregates"] } }, required: ["from", "to", "kind"] } },
+  { name: "seq_create", description: "Create a sequence diagram with participants and ordered messages.", input_schema: { type: "object", properties: { name: { type: "string" }, participants: { type: "array", items: { type: "string" } }, messages: { type: "array", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, label: { type: "string" }, type: { type: "string", enum: ["sync", "async", "return"] } }, required: ["from", "to"] } } }, required: ["name"] } },
   { name: "add_note", description: "Capture a requirement, idea, decision, question, or risk in the Notes panel.", input_schema: { type: "object", properties: { kind: { type: "string", enum: ["functional", "non_functional", "idea", "question", "decision", "risk"] }, title: { type: "string" }, body: { type: "string" }, priority: { type: "string", enum: ["must", "should", "could", "wont"] } }, required: ["kind", "title"] } },
   { name: "write_plan_section", description: "Write or replace an AI prose section of plan.md (e.g. overview, rationale, tradeoffs).", input_schema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, body_md: { type: "string" } }, required: ["id", "body_md"] } },
   { name: "run_constraint_check", description: "Return the current constraint violations without changing anything.", input_schema: { type: "object", properties: {} } },
@@ -91,6 +92,12 @@ function toolToMutations(name, input) {
       return [{ op: "add_class", view: "classes", ...input }];
     case "class_connect":
       return [{ op: "connect_class", view: "classes", ...input }];
+    case "seq_create": {
+      const muts = [{ op: "add_sequence", view: "sequences", name: input.name }];
+      for (const p of input.participants || []) muts.push({ op: "add_participant", view: "sequences", seq: input.name, label: p });
+      for (const msg of input.messages || []) muts.push({ op: "add_message", view: "sequences", seq: input.name, from: msg.from, to: msg.to, label: msg.label, type: msg.type });
+      return muts;
+    }
     case "add_note":
       return [{ op: "add_note", ...input }];
     case "auto_layout":

@@ -15,6 +15,7 @@ export const VIEWS = ["architecture", "data_model", "flows", "infra", "classes",
 
 export const CLASS_EDGE_KINDS = ["inherits", "implements", "associates", "composes", "aggregates"];
 export const VISIBILITIES = ["+", "-", "#", "~"];
+export const SEQ_MESSAGE_TYPES = ["sync", "async", "return"];
 
 // ---- architecture vocabulary ----------------------------------------------
 export const NODE_KINDS = [
@@ -250,6 +251,17 @@ export function makeClassEdge({ from, to, kind = "inherits", label = "" }) {
   return { id: nextId("ce"), from, to, kind, label };
 }
 
+// A sequence diagram: ordered participants + time-ordered messages between them.
+export function makeSequence({ name }) {
+  return { id: nextId("seq"), name: name || "Sequence", participants: [], messages: [] };
+}
+export function makeParticipant({ label }) {
+  return { id: nextId("part"), label: label || "Participant" };
+}
+export function makeMessage({ from, to, label = "", type = "sync" }) {
+  return { id: nextId("msg"), from, to, label, type };
+}
+
 function defaultLabelFor(kind) {
   const found = NODE_KINDS.find((k) => k.kind === kind);
   return found ? found.label : kind;
@@ -281,7 +293,18 @@ export function resolve(spec, view, ref) {
     const ns = spec.views.classes.nodes;
     return ns.find((n) => n.id === ref) || ns.find((n) => n.name.toLowerCase() === low) || null;
   }
+  if (view === "sequences") {
+    const ss = spec.views.sequences;
+    return ss.find((s) => s.id === ref) || ss.find((s) => s.name.toLowerCase() === low) || null;
+  }
   return null;
+}
+
+// Resolve a participant within a sequence by id or label.
+function resolveParticipant(seq, ref) {
+  if (!ref) return null;
+  const low = String(ref).toLowerCase();
+  return seq.participants.find((p) => p.id === ref) || seq.participants.find((p) => p.label.toLowerCase() === low) || null;
 }
 
 // Back-compat alias — the architecture canvas and handoff used resolveNode.
@@ -320,6 +343,9 @@ export function applyMutation(spec, m) {
       break;
     case "classes":
       classesReducer(next, m);
+      break;
+    case "sequences":
+      sequencesReducer(next, m);
       break;
     default:
       throw new Error(`unknown view "${view}" for op "${m.op}"`);
@@ -576,6 +602,87 @@ function classesReducer(next, m) {
       break;
     default:
       throw new Error(`unknown op "${m.op}" for view "classes"`);
+  }
+}
+
+function sequencesReducer(next, m) {
+  const seqs = next.views.sequences;
+  switch (m.op) {
+    case "add_sequence":
+      seqs.push(makeSequence(m));
+      return;
+    case "remove_sequence":
+      next.views.sequences = seqs.filter((s) => s.id !== (m.id || (resolve(next, "sequences", m.ref) || {}).id));
+      return;
+    case "rename_sequence": {
+      const s = resolve(next, "sequences", m.id || m.ref);
+      if (!s) throw new Error(`rename_sequence: no sequence "${m.id || m.ref}"`);
+      s.name = m.name;
+      return;
+    }
+    default:
+      break;
+  }
+  // Participant/message ops operate inside a sequence named by m.seq.
+  const seq = resolve(next, "sequences", m.seq);
+  if (!seq) throw new Error(`${m.op}: no sequence "${m.seq}"`);
+  switch (m.op) {
+    case "add_participant":
+      seq.participants.push(makeParticipant(m));
+      break;
+    case "update_participant": {
+      const p = resolveParticipant(seq, m.id || m.ref);
+      if (!p) throw new Error(`update_participant: no participant "${m.id || m.ref}"`);
+      if (m.label !== undefined) p.label = m.label;
+      break;
+    }
+    case "remove_participant": {
+      const p = resolveParticipant(seq, m.id || m.ref);
+      if (!p) break;
+      seq.participants = seq.participants.filter((x) => x.id !== p.id);
+      seq.messages = seq.messages.filter((msg) => msg.from !== p.id && msg.to !== p.id);
+      break;
+    }
+    case "move_participant": {
+      const i = seq.participants.findIndex((p) => p.id === (m.id || (resolveParticipant(seq, m.ref) || {}).id));
+      const j = i + (m.dir === "left" ? -1 : 1);
+      if (i >= 0 && j >= 0 && j < seq.participants.length) {
+        const [p] = seq.participants.splice(i, 1);
+        seq.participants.splice(j, 0, p);
+      }
+      break;
+    }
+    case "add_message": {
+      const from = resolveParticipant(seq, m.from);
+      const to = resolveParticipant(seq, m.to);
+      if (!from || !to) throw new Error(`add_message: unknown participant ${m.from} → ${m.to}`);
+      const msg = makeMessage({ ...m, from: from.id, to: to.id });
+      if (Number.isInteger(m.index)) seq.messages.splice(m.index, 0, msg);
+      else seq.messages.push(msg);
+      break;
+    }
+    case "update_message": {
+      const msg = seq.messages.find((x) => x.id === m.id);
+      if (!msg) throw new Error(`update_message: no message "${m.id}"`);
+      if (m.from) msg.from = (resolveParticipant(seq, m.from) || {}).id || msg.from;
+      if (m.to) msg.to = (resolveParticipant(seq, m.to) || {}).id || msg.to;
+      for (const f of ["label", "type"]) if (m[f] !== undefined) msg[f] = m[f];
+      break;
+    }
+    case "remove_message":
+      seq.messages = seq.messages.filter((x) => x.id !== m.id);
+      break;
+    case "move_message": {
+      const i = seq.messages.findIndex((x) => x.id === m.id);
+      const j = i + (m.dir === "up" ? -1 : 1);
+      if (i >= 0 && j >= 0 && j < seq.messages.length) {
+        const [x] = seq.messages.splice(i, 1);
+        seq.messages.splice(j, 0, x);
+      }
+      break;
+    }
+    default:
+      throw new Error(`unknown op "${m.op}" for view "sequences"`);
   }
 }
 

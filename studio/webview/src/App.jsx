@@ -5,6 +5,7 @@ import DataModelView from "./views/DataModelView.jsx";
 import FlowsView from "./views/FlowsView.jsx";
 import InfrastructureView from "./views/InfrastructureView.jsx";
 import ClassView from "./views/ClassView.jsx";
+import SequenceView from "./views/SequenceView.jsx";
 import RightDock from "./RightDock.jsx";
 import { post, onMessage } from "./vscode.js";
 import { emptySpec } from "../../shared/ir.mjs";
@@ -179,6 +180,7 @@ export default function App() {
     flows: spec.views.flows.length,
     infra: spec.views.infra.nodes.length,
     classes: spec.views.classes.nodes.length,
+    sequences: spec.views.sequences.length,
   };
 
   return (
@@ -206,6 +208,7 @@ export default function App() {
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
             {activeView === "infra" && <InfrastructureView spec={spec} commit={commit} />}
             {activeView === "classes" && <ClassView spec={spec} commit={commit} />}
+            {activeView === "sequences" && <SequenceView spec={spec} commit={commit} />}
           </div>
         </div>
         <RightDock

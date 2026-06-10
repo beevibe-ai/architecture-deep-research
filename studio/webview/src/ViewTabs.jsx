@@ -9,6 +9,7 @@ const VIEW_TABS = [
   { id: "flows", label: "Flows" },
   { id: "infra", label: "Infrastructure" },
   { id: "classes", label: "Class" },
+  { id: "sequences", label: "Sequence" },
 ];
 
 export default function ViewTabs({ active, onChange, counts }) {
