@@ -113,10 +113,12 @@ function toolToMutations(name, input) {
 
 function systemPrompt(catalog) {
   return [
-    "You are the design assistant inside a system-architecture canvas with three views:",
-    "architecture (components + wiring), data model (entities + relations), and flows (flowcharts).",
-    "Translate the user's intent into tool calls that edit the design — never describe edits and",
-    "expect the user to make them; make them yourself. Use the view-prefixed tools (arch_, dm_, flow_).",
+    "You are the design assistant inside a system-architecture canvas with views:",
+    "architecture, data model, flows, infrastructure, classes, sequences.",
+    "CRITICAL: You change the design ONLY by calling tools, and you call them in the SAME response.",
+    "Never reply with a plan and stop. If you say you will add or change something, you MUST call the",
+    "tools to do it in that same turn — do not narrate intentions without acting. After you finish all",
+    "the edits, give a one-line confirmation. Use the view-prefixed tools (arch_, dm_, flow_, infra_, class_).",
     "Speak agent-native and distributed-systems language: pick precise component types from the catalog",
     "below, place them on the right plane (control / execution / data), choose specific tech (pgvector,",
     "SQLite FTS5, Kafka, Qdrant…), and set edge semantics with arch_set_edge_semantics —",
@@ -162,6 +164,8 @@ export async function runAssistant({ userText, spec, model, apiKey, onEvent = ()
   const useModel = model || defaultModel(providerName);
   let working = spec;
   const trace = [];
+  let anyToolUse = false; // did the model call any tool this run?
+  let nudged = false;
   const history = [{ role: "user", text: `Current design:\n${specSummary(spec)}\n\nUser: ${userText}` }];
 
   for (let turn = 0; turn < 8; turn++) {
@@ -178,8 +182,15 @@ export async function runAssistant({ userText, spec, model, apiKey, onEvent = ()
     const toolUses = blocks.filter((b) => b.type === "tool_use");
     if (toolUses.length === 0) {
       const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      // Safety net: if the model narrated intent but never called a tool, push it to act.
+      if (!anyToolUse && !nudged) {
+        nudged = true;
+        history.push({ role: "user", text: "Apply those changes now by calling the tools — do not just describe them." });
+        continue;
+      }
       return { text: text || "Done.", spec: working, trace };
     }
+    anyToolUse = true;
 
     const results = [];
     for (const tu of toolUses) {
