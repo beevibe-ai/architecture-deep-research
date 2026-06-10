@@ -185,30 +185,15 @@ async function handleMessage(msg) {
       return;
     }
 
-    case "chat": {
-      post({ type: "chatStart" });
-      // Use the configured provider, but if it has no key and the other one does,
-      // auto-switch — so an existing OpenAI key just works without touching settings.
-      let provider = config().get("provider") || "anthropic";
-      let key = await apiKey(provider);
-      if (!key) {
-        const other = provider === "anthropic" ? "openai" : "anthropic";
-        const otherKey = await apiKey(other);
-        if (otherKey) { provider = other; key = otherKey; }
-      }
-      const result = await chat.runAssistant({
-        userText: msg.text,
-        spec: msg.spec,
-        provider,
-        model: provider === "openai" ? config().get("openaiModel") : config().get("model"),
-        apiKey: key,
-        catalog: loadCatalog(catalog),
-        onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
-      });
-      writeSpec(result.spec);
-      post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace });
+    case "chat":
+      await runAssistantTurn(chat, catalog, msg.text, msg.spec);
       return;
-    }
+
+    case "deriveLLM":
+      // Use the LLM to derive a view from the architecture where there's no clean
+      // structural mapping (e.g. flows). It edits via the real tools.
+      await runAssistantTurn(chat, catalog, deriveInstruction(msg.view), msg.spec);
+      return;
 
     default:
       return;
@@ -217,6 +202,46 @@ async function handleMessage(msg) {
 
 function post(message) {
   if (panel) panel.webview.postMessage(message);
+}
+
+// Resolve the active provider + key + model, auto-switching to whichever provider
+// actually has a key (so an existing OpenAI key works without touching settings).
+async function resolveLlm() {
+  let provider = config().get("provider") || "anthropic";
+  let key = await apiKey(provider);
+  if (!key) {
+    const other = provider === "anthropic" ? "openai" : "anthropic";
+    const otherKey = await apiKey(other);
+    if (otherKey) { provider = other; key = otherKey; }
+  }
+  const model = provider === "openai" ? config().get("openaiModel") : config().get("model");
+  return { provider, key, model };
+}
+
+// Run one streaming assistant turn (used by chat and by LLM-derivation).
+async function runAssistantTurn(chat, catalog, userText, spec) {
+  post({ type: "chatStart" });
+  const { provider, key, model } = await resolveLlm();
+  const result = await chat.runAssistant({
+    userText, spec, provider, model, apiKey: key,
+    catalog: loadCatalog(catalog),
+    onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
+  });
+  writeSpec(result.spec);
+  post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace });
+}
+
+// Per-view instruction for LLM derivation from the architecture.
+function deriveInstruction(view) {
+  if (view === "flows")
+    return "Derive the primary user/request flowchart(s) for this system from its architecture — show how a request moves through the components, including the key decision points. Create one or more flows with flow_create_flow and wire the steps. Only edit the flows view.";
+  if (view === "sequences")
+    return "Derive a sequence diagram from the architecture showing the main end-to-end interaction between components. Use seq_create. Only edit the sequences view.";
+  if (view === "data_model")
+    return "Enrich the data model from the architecture: for each datastore, model realistic entities with typed fields, keys, and relations. Only edit the data model view.";
+  if (view === "classes")
+    return "Derive a class model from the architecture's services and key components, with attributes, methods, and any inheritance. Only edit the classes view.";
+  return `Refine the ${view} view based on the architecture.`;
 }
 
 // ---- spec file I/O ---------------------------------------------------------

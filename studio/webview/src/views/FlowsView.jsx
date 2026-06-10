@@ -10,6 +10,7 @@ import {
 } from "@xyflow/react";
 import FlowNode from "./FlowNode.jsx";
 import { applyMutation, STEP_TYPES } from "../../../shared/ir.mjs";
+import { post } from "../vscode.js";
 import { violationIndex } from "../../../shared/constraints.mjs";
 
 const nodeTypes = { step: FlowNode };
@@ -133,6 +134,7 @@ function Inner({ spec, commit }) {
             {!flows.length && <option value="">no flows yet</option>}
           </select>
           <button className="mini-btn" onClick={addFlow}>+ flow</button>
+          <button className="mini-btn" onClick={() => post({ type: "deriveLLM", view: "flows", spec })}>Generate from architecture (AI)</button>
           {flow && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "flows", direction: "TB" }))}>Auto-arrange</button>}
           {flow && (
             <button className="mini-btn ghost" onClick={() => commit(applyMutation(spec, { op: "remove_flow", view: "flows", id: flow.id }))}>
