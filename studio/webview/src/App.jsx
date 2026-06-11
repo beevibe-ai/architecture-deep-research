@@ -7,6 +7,7 @@ import InfrastructureView from "./views/InfrastructureView.jsx";
 import ClassView from "./views/ClassView.jsx";
 import SequenceView from "./views/SequenceView.jsx";
 import RightDock from "./RightDock.jsx";
+import OptionsModal from "./OptionsModal.jsx";
 import { post, onMessage } from "./vscode.js";
 import { emptySpec } from "../../shared/ir.mjs";
 import { lint } from "../../shared/constraints.mjs";
@@ -19,6 +20,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  const [options, setOptions] = useState(null); // { status, count, progress, options }
   // Mirror `busy` into a ref so the (stable) commit callback can gate edits
   // while a stream is in flight without re-creating itself.
   const busyRef = useRef(false);
@@ -81,6 +83,19 @@ export default function App() {
           break;
         case "externalReload":
           flash("Spec reloaded from disk");
+          break;
+        case "optionsStart":
+          setOptions({ status: "generating", count: msg.count, progress: null, options: [] });
+          break;
+        case "optionsProgress":
+          setOptions((o) => (o ? { ...o, progress: { index: msg.index, label: msg.label } } : o));
+          break;
+        case "options":
+          setOptions({ status: "ready", options: msg.options });
+          break;
+        case "optionsError":
+          setOptions(null);
+          flash(msg.message);
           break;
         case "chatStart":
           // Open a streaming assistant bubble the tokens append into.
@@ -173,6 +188,21 @@ export default function App() {
     [spec]
   );
 
+  // Load a generated candidate: replace the architecture, drop now-stale arch links.
+  const useOption = useCallback(
+    (opt) => {
+      const next = {
+        ...spec,
+        views: { ...spec.views, architecture: opt.architecture },
+        cross_refs: (spec.cross_refs || []).filter((x) => x.from.view !== "architecture" && x.to.view !== "architecture"),
+      };
+      commit(next);
+      setOptions(null);
+      flash(`Loaded the “${opt.label}” design`);
+    },
+    [spec, commit]
+  );
+
   const { violations } = lint(spec);
   const counts = {
     architecture: spec.views.architecture.nodes.length,
@@ -191,6 +221,9 @@ export default function App() {
         <span className={`lint-badge ${violations.length ? "bad" : "ok"}`}>
           {violations.length ? `${violations.length} issue${violations.length > 1 ? "s" : ""}` : "clean"}
         </span>
+        <button className="btn" onClick={() => post({ type: "generateOptions", spec })}>
+          Generate options
+        </button>
         <button className="btn ghost" onClick={() => post({ type: "newDesign" })}>
           New
         </button>
@@ -226,6 +259,7 @@ export default function App() {
       </div>
 
       {toast && <div className="toast">{toast}</div>}
+      <OptionsModal state={options} onUse={useOption} onClose={() => setOptions(null)} />
     </div>
   );
 }

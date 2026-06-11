@@ -195,6 +195,10 @@ async function handleMessage(msg) {
       await runAssistantTurn(chat, catalog, deriveInstruction(msg.view), msg.spec);
       return;
 
+    case "generateOptions":
+      await generateOptions(ir, chat, catalog, msg.spec);
+      return;
+
     default:
       return;
   }
@@ -229,6 +233,57 @@ async function runAssistantTurn(chat, catalog, userText, spec) {
   });
   writeSpec(result.spec);
   post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace });
+}
+
+// Generate candidate architectures from the captured requirements — each built
+// in isolation (a fresh seed) so the live canvas isn't touched, optimized for a
+// different angle. The human is the judge; we present rationale + tradeoffs.
+const OPTION_ANGLES = [
+  { id: "pragmatic", label: "Pragmatic", desc: "the simplest design that fully meets the requirements, minimal moving parts" },
+  { id: "scalable", label: "Scalable", desc: "maximum scalability and resilience, even at higher complexity/cost" },
+  { id: "lean", label: "Lean / low-cost", desc: "lowest cost and operational overhead, managed services where possible" },
+];
+
+function requirementsText(spec) {
+  const reqs = (spec.notes || []).filter((n) => n.kind === "functional" || n.kind === "non_functional");
+  if (!reqs.length) return "(no explicit requirements captured — infer reasonable ones from the design title and any existing components)";
+  return reqs.map((n) => `- [${n.kind}${n.priority ? "/" + n.priority : ""}] ${n.title}${n.body ? ": " + n.body : ""}`).join("\n");
+}
+
+async function generateOptions(ir, chat, catalog, baseSpec) {
+  post({ type: "optionsStart", count: OPTION_ANGLES.length });
+  const { provider, key, model } = await resolveLlm();
+  if (!key) {
+    post({ type: "optionsError", message: "The assistant needs an API key. Run “ADR Studio: Set Anthropic API Key” or set a key." });
+    return;
+  }
+  const reqs = requirementsText(baseSpec);
+  const options = [];
+  for (let i = 0; i < OPTION_ANGLES.length; i++) {
+    const angle = OPTION_ANGLES[i];
+    post({ type: "optionsProgress", index: i, label: angle.label });
+    const seed = ir.emptySpec();
+    seed.decision = { ...baseSpec.decision };
+    seed.domain_model = baseSpec.domain_model;
+    seed.notes = baseSpec.notes || [];
+    const instr =
+      `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
+      `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
+      `When done, reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS approach.`;
+    try {
+      const result = await chat.runAssistant({ userText: instr, spec: seed, provider, model, apiKey: key, catalog: loadCatalog(catalog) });
+      options.push({
+        id: angle.id,
+        label: angle.label,
+        rationale: result.text,
+        architecture: result.spec.views.architecture,
+        components: result.spec.views.architecture.nodes.filter((n) => !n.parent).map((n) => n.label),
+      });
+    } catch (err) {
+      options.push({ id: angle.id, label: angle.label, rationale: `(generation failed: ${err.message})`, architecture: { nodes: [], edges: [] }, components: [] });
+    }
+  }
+  post({ type: "options", options });
 }
 
 // Per-view instruction for LLM derivation from the architecture.
