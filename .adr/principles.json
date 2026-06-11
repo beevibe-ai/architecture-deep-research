@@ -1,0 +1,301 @@
+{
+  "version": "0.3.0",
+  "source": {
+    "repo_path": "/Users/weijiasong/architecture-deep-research",
+    "scanned_at": "2026-05-26T01:02:37.360Z",
+    "interview_completed": false,
+    "mode": "refine",
+    "refined_id": "schema-validate-before-write"
+  },
+  "lenses": [
+    {
+      "slug": "llm-call-discipline",
+      "name": "LLM call discipline",
+      "rationale": "All LLM calls must go through a single helper function or provider abstraction to ensure consistent prompt formatting, error handling, and JSON parsing.",
+      "scan_signals": [
+        "adapters/langgraph-llm.mjs",
+        "adapters/google-adk-deep-research.mjs",
+        "src/kernel.mjs"
+      ]
+    },
+    {
+      "slug": "schema-validate-before-write",
+      "name": "Schema validate before write",
+      "rationale": "Every persisted artifact (e.g., research-report.json, comparison-matrix.json) must be validated against its JSON schema before writing to disk to prevent corrupt or invalid data.",
+      "scan_signals": [
+        "docs/schemas",
+        "src/kernel.mjs",
+        "scripts/check-json.mjs"
+      ]
+    },
+    {
+      "slug": "event-stream-shape",
+      "name": "Event stream shape",
+      "rationale": "Events appended to events.jsonl must follow a consistent shape and include necessary metadata like timestamps and event types for reliable auditing and replay.",
+      "scan_signals": [
+        "src/kernel.mjs",
+        "src/principles/index.mjs",
+        "src/discover/index.mjs"
+      ]
+    },
+    {
+      "slug": "cli-subcommand-pattern",
+      "name": "CLI subcommand pattern",
+      "rationale": "New CLI subcommands must attach in a consistent pattern in scripts/adr.mjs with clear parsing of positional arguments and flags.",
+      "scan_signals": [
+        "scripts/adr.mjs"
+      ]
+    },
+    {
+      "slug": "test-fixture-discipline",
+      "name": "Test fixture discipline",
+      "rationale": "Regression tests must mock LLM responses and external dependencies deterministically to ensure hermetic and reproducible test runs.",
+      "scan_signals": [
+        "scripts/kernel-regression-tests.mjs",
+        "scripts/search-provider-tests.mjs"
+      ]
+    },
+    {
+      "slug": "state-boundaries",
+      "name": "State boundaries",
+      "rationale": "Component-local state and global store state must be clearly separated, especially in the web UI and agent runtime, to avoid unintended side effects.",
+      "scan_signals": [
+        "web/src/App.jsx",
+        "web/src/views/NewRunForm.jsx"
+      ]
+    },
+    {
+      "slug": "error-handling-posture",
+      "name": "Error handling posture",
+      "rationale": "The codebase must consistently use either Result types or exceptions for error handling, avoiding silent failures or inconsistent patterns.",
+      "scan_signals": [
+        "src/kernel.mjs",
+        "scripts/adr-doctor.mjs",
+        "adapters/google-adk-deep-research.mjs"
+      ]
+    },
+    {
+      "slug": "artifact-boundary-enforcement",
+      "name": "Artifact boundary enforcement",
+      "rationale": "The ADR pipeline must enforce clear boundaries where the process stops (e.g., at execution handoff) and downstream agents consume artifacts, preventing leakage of internal state.",
+      "scan_signals": [
+        "adapters/beevibe.mjs",
+        "scripts/adr-web.mjs",
+        "README.md"
+      ]
+    }
+  ],
+  "principles": [
+    {
+      "id": "schema-validate-before-write",
+      "lens": "schema-validate-before-write",
+      "polarity": "do",
+      "rule": "Validate every persisted JSON artifact against its corresponding JSON schema before writing it to disk to prevent corrupt or invalid data.",
+      "rationale": "Ensuring all persisted artifacts conform to their JSON schemas maintains data integrity and prevents runtime errors caused by malformed data.",
+      "evidence_cite": [
+        "docs/schemas",
+        "src/kernel.mjs:9",
+        "src/kernel.mjs:79",
+        "src/principles/index.mjs:31",
+        "src/discover/index.mjs:31",
+        "scripts/check-json.mjs",
+        "src/guard/index.mjs:7",
+        "src/guard/index.mjs:18",
+        "adapters/beevibe.mjs:53",
+        "adapters/beevibe.mjs:56",
+        "adapters/beevibe.mjs:59"
+      ],
+      "examples_to_follow": [
+        "adapters/beevibe.mjs:53",
+        "adapters/beevibe.mjs:56",
+        "adapters/beevibe.mjs:59",
+        "src/kernel.mjs:79",
+        "src/principles/index.mjs:31",
+        "src/discover/index.mjs:31"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "medium"
+    },
+    {
+      "id": "schema-validate-before-write-ci-validation",
+      "lens": "schema-validate-before-write",
+      "polarity": "do",
+      "rule": "The scripts/check-json.mjs script must be run as part of CI or pre-commit hooks to validate JSON artifacts against their schemas before accepting changes.",
+      "rationale": "Running schema validation in CI ensures that invalid JSON artifacts are caught early and never merged.",
+      "evidence_cite": [
+        "scripts/check-json.mjs"
+      ],
+      "examples_to_follow": [
+        "scripts/check-json.mjs"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "cli-subcommand-pattern",
+      "lens": "cli-subcommand-pattern",
+      "polarity": "do",
+      "rule": "All CLI subcommands must be attached as subcommands in the main scripts/adr.mjs file, which parses the first positional argument as the subcommand, subsequent arguments as flags (parsed as --key value or --flag boolean), supports multiple values per flag, and provides explicit usage and help messages.",
+      "rationale": "Consistent CLI subcommand parsing and usage messages ensure predictable and user-friendly command line interface.",
+      "evidence_cite": [
+        "scripts/adr.mjs:10-110"
+      ],
+      "examples_to_follow": [
+        "scripts/adr.mjs:10-110"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "cli-subcommand-pattern-hydrate-env-before-execution",
+      "lens": "cli-subcommand-pattern",
+      "polarity": "do",
+      "rule": "Before running any CLI subcommand, environment variables must be loaded from a config file to ensure required keys are set and consistent runtime configuration.",
+      "rationale": "Hydrating environment config before command execution prevents runtime errors due to missing configuration.",
+      "evidence_cite": [
+        "scripts/adr.mjs:20-30",
+        "scripts/adr-doctor.mjs"
+      ],
+      "examples_to_follow": [
+        "scripts/adr.mjs:20-30",
+        "scripts/adr-doctor.mjs:1-120"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "test-fixture-discipline",
+      "lens": "test-fixture-discipline",
+      "polarity": "do",
+      "rule": "Regression tests must mock LLM responses and external dependencies deterministically by installing fixture providers and stubbing global fetch and environment variables, ensuring no network calls occur in local test suites.",
+      "rationale": "Mocking external dependencies ensures hermetic, reproducible, and stable test runs.",
+      "evidence_cite": [
+        "scripts/kernel-regression-tests.mjs:11-38",
+        "scripts/search-provider-tests.mjs:5-90"
+      ],
+      "examples_to_follow": [
+        "scripts/kernel-regression-tests.mjs:11-38",
+        "scripts/search-provider-tests.mjs:5-90"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "state-boundaries",
+      "lens": "state-boundaries",
+      "polarity": "do",
+      "rule": "Component-local UI state must be managed with React useState hooks for form inputs, while global runtime state and configuration such as domain, decision, outDir, and runtime flags must be passed explicitly as props or parameters and managed centrally in kernel or environment config, not mixed with UI local state.",
+      "rationale": "Clear separation of local UI state and global runtime state prevents unintended side effects and improves maintainability.",
+      "evidence_cite": [
+        "web/src/views/NewRunForm.jsx:1-100",
+        "src/kernel.mjs:1-200",
+        "scripts/adr-doctor.mjs:1-100",
+        "scripts/adr-mcp.mjs:1-100"
+      ],
+      "examples_to_follow": [
+        "web/src/views/NewRunForm.jsx:1-80",
+        "src/kernel.mjs:1-200"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "state-boundaries-web-ui-routing",
+      "lens": "state-boundaries",
+      "polarity": "do",
+      "rule": "Application navigation state must be managed by react-router-dom in web/src/App.jsx, not mixed with business or runtime state.",
+      "rationale": "Separating routing state from business state improves clarity and reduces coupling.",
+      "evidence_cite": [
+        "web/src/App.jsx:1-50"
+      ],
+      "examples_to_follow": [
+        "web/src/App.jsx:1-50"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "state-boundaries-output-artifacts-written-to-disk",
+      "lens": "state-boundaries",
+      "polarity": "do",
+      "rule": "Long-lived state such as research reports and execution handoff artifacts must be written to disk in dedicated output directories, not stored in UI or runtime memory.",
+      "rationale": "Persisting artifacts to disk enforces clear state boundaries and enables downstream consumption.",
+      "evidence_cite": [
+        "adapters/beevibe.mjs:1-100",
+        "src/discover/index.mjs:1-100"
+      ],
+      "examples_to_follow": [
+        "adapters/beevibe.mjs:1-100"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "artifact-boundary-enforcement",
+      "lens": "artifact-boundary-enforcement",
+      "polarity": "do",
+      "rule": "The ADR pipeline must enforce clear artifact boundaries by declaring output artifacts explicitly in agent runtime_config, producing execution-handoff.json as the pipeline boundary, storing artifacts in dedicated output directories per run, and ensuring downstream agents consume only structured JSON artifacts, not internal runtime state.",
+      "rationale": "Clear artifact boundaries prevent leakage of internal state and enforce a clean contract between pipeline stages.",
+      "evidence_cite": [
+        "adapters/beevibe.mjs:10-38",
+        "adapters/google-adk.mjs:40-55",
+        "adapters/beevibe.mjs:40-70",
+        "web/src/App.jsx:40-45",
+        "src/discover/index.mjs:40-80",
+        "scripts/adr.mjs:70-110",
+        "adapters/beevibe.mjs:50-90",
+        "src/discover/discovered-evidence.mjs:10-80"
+      ],
+      "examples_to_follow": [
+        "adapters/beevibe.mjs:10-90"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "artifact-boundary-enforcement-llm-json-strict-formatting",
+      "lens": "artifact-boundary-enforcement",
+      "polarity": "do",
+      "rule": "LLM providers used in the ADR pipeline must be configured to produce only single JSON objects without markdown fences or prose, ensuring artifact integrity and boundary enforcement.",
+      "rationale": "Strict JSON-only output prevents accidental leakage of internal state or extraneous information beyond the defined artifact schema.",
+      "evidence_cite": [
+        "adapters/langgraph-llm.mjs:10-80",
+        "adapters/google-adk-deep-research.mjs:10-80"
+      ],
+      "examples_to_follow": [
+        "adapters/langgraph-llm.mjs:10-80"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    },
+    {
+      "id": "artifact-boundary-enforcement-hydrate-env-before-runtime",
+      "lens": "artifact-boundary-enforcement",
+      "polarity": "do",
+      "rule": "Before running ADR commands or MCP server, environment variables must be hydrated from a config file (~/.adr/config.json) to ensure consistent runtime configuration and prevent leakage of secrets or internal state.",
+      "rationale": "Hydrating environment config enforces a well-defined runtime boundary and prevents accidental leakage.",
+      "evidence_cite": [
+        "scripts/adr-doctor.mjs:1-120",
+        "scripts/adr-mcp.mjs:1-80",
+        "scripts/adr.mjs:20-50"
+      ],
+      "examples_to_follow": [
+        "scripts/adr-doctor.mjs:1-120"
+      ],
+      "examples_to_avoid": [],
+      "confirmed_by_interview": false,
+      "confidence": "high"
+    }
+  ],
+  "interview_log": []
+}
