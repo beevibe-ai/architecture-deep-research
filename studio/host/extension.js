@@ -25,6 +25,9 @@ function shared() {
       schema: await import("./schema.mjs"),
       catalog: await import("../shared/catalog.mjs"),
       chat: await import("./chat.mjs"),
+      drift: await import("../shared/drift.mjs"),
+      repoScan: await import("./repo-scan.mjs"),
+      infer: await import("./infer.mjs"),
     }))();
   }
   return sharedPromise;
@@ -199,6 +202,10 @@ async function handleMessage(msg) {
       await generateOptions(ir, chat, catalog, msg.spec);
       return;
 
+    case "scanRepo":
+      await scanAndDrift(msg.spec);
+      return;
+
     default:
       return;
   }
@@ -284,6 +291,58 @@ async function generateOptions(ir, chat, catalog, baseSpec) {
     }
   }
   post({ type: "options", options });
+}
+
+// Reality-binding: scan the real repo, infer the architecture the code actually
+// implements, and diff it against the design on the canvas. The inferred ("actual")
+// architecture is built in an isolated seed — it never overwrites the user's
+// design; we only surface the drift between the two.
+async function scanAndDrift(designSpec) {
+  const { ir, chat, catalog, drift, repoScan, infer } = await shared();
+  const repoPath = config().get("repoPath") || workspaceRoot();
+  post({ type: "scanStart", repo: vscode.workspace.asRelativePath(repoPath) || repoPath });
+
+  const { provider, key, model } = await resolveLlm();
+  if (!key) {
+    post({ type: "scanError", message: "The assistant needs an API key to read the repo. Run “ADR Studio: Set API Key”." });
+    return;
+  }
+
+  let scan;
+  try {
+    scan = await repoScan.scanRepo(repoPath);
+  } catch (err) {
+    post({ type: "scanError", message: `Could not scan ${repoPath}: ${err.message}` });
+    return;
+  }
+
+  const seed = ir.emptySpec();
+  seed.decision = { ...designSpec.decision };
+  const instruction = infer.inferenceInstruction(infer.digestForInference(scan));
+
+  let actual;
+  try {
+    // Stream tokens (so the user sees progress) but NOT specPatch — the inferred
+    // spec is isolated and must not touch the live canvas.
+    const result = await chat.runAssistant({
+      userText: instruction, spec: seed, provider, model, apiKey: key,
+      catalog: loadCatalog(catalog),
+      onEvent: (e) => { if (e.type === "chatToken") post({ type: "scanToken", text: e.text }); },
+    });
+    actual = result.spec;
+  } catch (err) {
+    post({ type: "scanError", message: `Inference failed: ${err.message}` });
+    return;
+  }
+
+  const report = drift.diffArchitecture(designSpec.views.architecture, actual.views.architecture);
+  post({
+    type: "driftReport",
+    report,
+    actual: actual.views.architecture,
+    repo: vscode.workspace.asRelativePath(repoPath) || repoPath,
+    fileCount: scan.summary?.file_count ?? null,
+  });
 }
 
 // Per-view instruction for LLM derivation from the architecture.

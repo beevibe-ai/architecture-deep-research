@@ -61,6 +61,11 @@
           "type": "string",
           "default": "gpt-4o",
           "description": "OpenAI model the design assistant uses (when provider is openai)."
+        },
+        "adrStudio.repoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the repo whose real architecture 'Scan repo' infers and checks for drift. Empty = the open workspace folder."
         }
       }
     }
