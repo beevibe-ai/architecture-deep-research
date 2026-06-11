@@ -18,3 +18,9 @@ web/dist/
 .adr/principles.html
 .adr/principles-health.json
 .adr/principle-stats.json
+.adr/architecture.spec.json
+
+# Build output and local tooling artifacts (regenerated, not source)
+studio/out/
+.gstack/
+crystal-ball/
