@@ -309,6 +309,7 @@ body {
 .react-flow__renderer { background: var(--bg); }
 
 .arch-node {
+  position: relative;
   background: #1d2030;
   border: 1.5px solid var(--accent);
   border-radius: 10px;
@@ -507,3 +508,36 @@ body {
   border-radius: 8px;
   font-size: 12px;
 }
+
+/* ---- drift (reality-binding) ---- */
+.drift-modal { max-width: 720px; }
+.drift-body { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+.drift-summary { font-size: 13px; color: var(--ink-dim); }
+.drift-insync { color: #57d28a; }
+.drift-red { color: #ff6b6b; }
+.drift-amber { color: #e2b24a; }
+.drift-blue { color: #6fa8ff; }
+.drift-section h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.drift-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px;
+  background: var(--bg);
+}
+.drift-row-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.drift-label { font-weight: 600; font-size: 13px; }
+.drift-tech { font-size: 11px; color: var(--accent); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; }
+.drift-tech.strike { text-decoration: line-through; color: var(--ink-dim); }
+.drift-arrow { color: var(--ink-dim); }
+.drift-cite { font-size: 11px; color: var(--ink-dim); font-family: ui-monospace, monospace; }
+.drift-note { font-size: 11px; color: var(--ink-dim); font-style: italic; }
+.drift-stream { margin-top: 6px; font-size: 11px; color: var(--ink-dim); font-family: ui-monospace, monospace; opacity: .7; }
+
+/* drifted nodes on the canvas */
+.arch-node.drift-phantom { border-style: dashed !important; opacity: .72; }
+.arch-node.drift-mismatch { box-shadow: 0 0 0 2px #6fa8ff66; }
+.arch-drift-tag {
+  position: absolute; top: -8px; right: -6px;
+  font-size: 9px; padding: 1px 5px; border-radius: 6px;
+  background: #6fa8ff; color: #0b1020; font-weight: 700; white-space: nowrap;
+}
+.arch-node.drift-phantom .arch-drift-tag { background: #e2b24a; }

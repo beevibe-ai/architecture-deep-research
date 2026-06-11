@@ -8,8 +8,9 @@ import ClassView from "./views/ClassView.jsx";
 import SequenceView from "./views/SequenceView.jsx";
 import RightDock from "./RightDock.jsx";
 import OptionsModal from "./OptionsModal.jsx";
+import DriftModal from "./DriftModal.jsx";
 import { post, onMessage } from "./vscode.js";
-import { emptySpec } from "../../shared/ir.mjs";
+import { emptySpec, applyMutation } from "../../shared/ir.mjs";
 import { lint } from "../../shared/constraints.mjs";
 import { CATALOG } from "../../shared/catalog.mjs";
 
@@ -21,6 +22,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
   const [options, setOptions] = useState(null); // { status, count, progress, options }
+  const [drift, setDrift] = useState(null); // { status, repo, report, actual, stream }
   // Mirror `busy` into a ref so the (stable) commit callback can gate edits
   // while a stream is in flight without re-creating itself.
   const busyRef = useRef(false);
@@ -95,6 +97,19 @@ export default function App() {
           break;
         case "optionsError":
           setOptions(null);
+          flash(msg.message);
+          break;
+        case "scanStart":
+          setDrift({ status: "scanning", repo: msg.repo, stream: "" });
+          break;
+        case "scanToken":
+          setDrift((d) => (d ? { ...d, stream: (d.stream || "") + msg.text } : d));
+          break;
+        case "driftReport":
+          setDrift({ status: "ready", repo: msg.repo, report: msg.report, actual: msg.actual });
+          break;
+        case "scanError":
+          setDrift(null);
           flash(msg.message);
           break;
         case "chatStart":
@@ -203,6 +218,39 @@ export default function App() {
     [spec, commit]
   );
 
+  // Reconcile drift: pull a real component into the design, fix a tech mismatch,
+  // or drop a box the code never built. Each edit flows through the normal commit
+  // path (undoable, persisted).
+  const addFromCode = useCallback(
+    (d) => {
+      const note = d.evidence?.length ? `In code: ${d.evidence.join(", ")}` : "";
+      commit(applyMutation(spec, { op: "add_node", view: "architecture", type: d.type, label: d.label, tech: d.tech, notes: note }));
+      flash(`Added “${d.label}” from the code`);
+    },
+    [spec, commit]
+  );
+  const fixTech = useCallback(
+    (d) => {
+      commit(applyMutation(spec, { op: "update_node", view: "architecture", id: d.id, tech: d.actual_tech }));
+      flash(`${d.label} → ${d.actual_tech}`);
+    },
+    [spec, commit]
+  );
+  const removePhantom = useCallback(
+    (d) => {
+      commit(applyMutation(spec, { op: "remove_node", view: "architecture", ref: d.id }));
+      flash(`Removed “${d.label}”`);
+    },
+    [spec, commit]
+  );
+
+  // Per-node drift status for canvas coloring, derived from the latest report.
+  const driftStatus = {};
+  if (drift?.report) {
+    for (const m of drift.report.designed_not_in_code) driftStatus[m.id] = "phantom";
+    for (const m of drift.report.tech_mismatch) driftStatus[m.id] = "mismatch";
+  }
+
   const { violations } = lint(spec);
   const counts = {
     architecture: spec.views.architecture.nodes.length,
@@ -221,6 +269,9 @@ export default function App() {
         <span className={`lint-badge ${violations.length ? "bad" : "ok"}`}>
           {violations.length ? `${violations.length} issue${violations.length > 1 ? "s" : ""}` : "clean"}
         </span>
+        <button className="btn" onClick={() => post({ type: "scanRepo", spec })} title="Infer the real architecture from the repo and show drift">
+          Scan repo
+        </button>
         <button className="btn" onClick={() => post({ type: "generateOptions", spec })}>
           Generate options
         </button>
@@ -239,7 +290,7 @@ export default function App() {
         <div className="view-col">
           <ViewTabs active={activeView} onChange={setActiveView} counts={counts} />
           <div className="view-stage">
-            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} />}
+            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} />}
             {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
             {activeView === "infra" && <InfrastructureView spec={spec} commit={commit} />}
@@ -260,6 +311,7 @@ export default function App() {
 
       {toast && <div className="toast">{toast}</div>}
       <OptionsModal state={options} onUse={useOption} onClose={() => setOptions(null)} />
+      <DriftModal state={drift} onAdd={addFromCode} onFixTech={fixTech} onRemove={removePhantom} onClose={() => setDrift(null)} />
     </div>
   );
 }

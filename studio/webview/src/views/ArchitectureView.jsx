@@ -5,12 +5,12 @@ import Canvas from "../Canvas.jsx";
 
 // The architecture view: catalog palette + the swimlane canvas, in its own
 // provider so it doesn't share fit/zoom state with the other views.
-export default function ArchitectureView({ spec, commit, catalog }) {
+export default function ArchitectureView({ spec, commit, catalog, driftStatus }) {
   return (
     <ReactFlowProvider>
       <div className="view-area">
         <CatalogPalette catalog={catalog} />
-        <Canvas spec={spec} commit={commit} catalog={catalog} />
+        <Canvas spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} />
       </div>
     </ReactFlowProvider>
   );

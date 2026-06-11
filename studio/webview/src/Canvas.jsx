@@ -48,11 +48,13 @@ function ArchGroupNode({ data }) {
 }
 
 function ArchNode({ data, selected }) {
-  const { node, bad } = data;
+  const { node, bad, drift } = data;
   const color = CAT_COLOR[node.category] || "#cccccc";
   const plane = node.plane || "execution";
+  // drift: "phantom" = drawn but not in code; "mismatch" = tech differs from code.
+  const driftClass = drift ? `drift-${drift}` : "";
   return (
-    <div className={`arch-node ${bad ? "bad" : ""} ${selected ? "sel" : ""}`} style={{ borderColor: bad ? "#ff6b6b" : color }}>
+    <div className={`arch-node ${bad ? "bad" : ""} ${driftClass} ${selected ? "sel" : ""}`} style={{ borderColor: bad ? "#ff6b6b" : color }}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-kind" style={{ color }}>
         {getType(node.type)?.label || node.type || node.kind}
@@ -60,6 +62,7 @@ function ArchNode({ data, selected }) {
       </div>
       <div className="arch-label">{node.label}</div>
       {node.tech ? <div className="arch-tech">{node.tech}</div> : null}
+      {drift ? <span className="arch-drift-tag">{drift === "phantom" ? "not in code" : "tech drift"}</span> : null}
       <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
   );
@@ -86,7 +89,7 @@ function computeLayered(topLevel) {
   return { used, bandY, pos };
 }
 
-export default function Canvas({ spec, commit, catalog }) {
+export default function Canvas({ spec, commit, catalog, driftStatus }) {
   const vIndex = useMemo(() => violationIndex(spec).byView.architecture, [spec]);
   const archNodes = spec.views.architecture.nodes;
   const archEdges = spec.views.architecture.edges;
@@ -126,7 +129,7 @@ export default function Canvas({ spec, commit, catalog }) {
         id: n.id,
         type: container ? "archGroup" : "arch",
         position: pos,
-        data: { node: n, bad: vIndex.nodes.has(n.id), ...(container ? containerSize(n.type) : {}) },
+        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], ...(container ? containerSize(n.type) : {}) },
         selected: n.id === selectedId,
       };
       if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }
@@ -141,7 +144,7 @@ export default function Canvas({ spec, commit, catalog }) {
         className: `${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"}`,
       }))
     );
-  }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, driftStatus, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) => commit(applyMutation(spec, { op: "connect", view: "architecture", from: c.source, to: c.target, kind: "calls", protocol: "http" })),
