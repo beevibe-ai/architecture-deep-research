@@ -26,6 +26,7 @@ function shared() {
       catalog: await import("../shared/catalog.mjs"),
       chat: await import("./chat.mjs"),
       drift: await import("../shared/drift.mjs"),
+      derive: await import("../shared/derive.mjs"),
       repoScan: await import("./repo-scan.mjs"),
       infer: await import("./infer.mjs"),
     }))();
@@ -293,12 +294,13 @@ async function generateOptions(ir, chat, catalog, baseSpec) {
   post({ type: "options", options });
 }
 
-// Reality-binding: scan the real repo, infer the architecture the code actually
-// implements, and diff it against the design on the canvas. The inferred ("actual")
-// architecture is built in an isolated seed — it never overwrites the user's
-// design; we only surface the drift between the two.
+// Reality-binding: scan the real repo and reconstruct the system it actually
+// implements. The primary output is the DIAGRAMS — the architecture inferred
+// from code, plus the other views derived from it. On an empty canvas we just
+// load it (the canvas IS the real system). On an existing design we diff instead,
+// and offer to load the real system. Inference runs in an isolated seed.
 async function scanAndDrift(designSpec) {
-  const { ir, chat, catalog, drift, repoScan, infer } = await shared();
+  const { ir, chat, catalog, drift, derive, repoScan, infer } = await shared();
   const repoPath = config().get("repoPath") || workspaceRoot();
   post({ type: "scanStart", repo: vscode.workspace.asRelativePath(repoPath) || repoPath });
 
@@ -335,14 +337,28 @@ async function scanAndDrift(designSpec) {
     return;
   }
 
+  // Build the full inferred system: the real architecture + the structurally
+  // derivable views (infra, data model, sequences, classes) projected from it.
+  let full = actual;
+  for (const view of derive.DERIVABLE_VIEWS) {
+    try { full = ir.applyMutation(full, { op: "derive", view }); } catch { /* skip a view that can't derive */ }
+  }
+  const repo = vscode.workspace.asRelativePath(repoPath) || repoPath;
+  const componentCount = actual.views.architecture.nodes.filter((n) => !n.parent).length;
+
+  const designed = designSpec.views.architecture.nodes.filter((n) => !n.parent);
+  if (designed.length === 0) {
+    // Empty canvas → discover: the canvas becomes the real system.
+    full.decision = { ...designSpec.decision, title: designSpec.decision?.title || `${repo} — reverse-engineered` };
+    writeSpec(full);
+    post({ type: "spec", spec: full });
+    post({ type: "scanDone", repo, count: componentCount });
+    return;
+  }
+
+  // Existing design → diff, with the full inferred system available to load.
   const report = drift.diffArchitecture(designSpec.views.architecture, actual.views.architecture);
-  post({
-    type: "driftReport",
-    report,
-    actual: actual.views.architecture,
-    repo: vscode.workspace.asRelativePath(repoPath) || repoPath,
-    fileCount: scan.summary?.file_count ?? null,
-  });
+  post({ type: "driftReport", report, actual: actual.views.architecture, full, repo, count: componentCount });
 }
 
 // Per-view instruction for LLM derivation from the architecture.

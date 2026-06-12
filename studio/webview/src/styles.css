@@ -541,3 +541,4 @@ body {
   background: #6fa8ff; color: #0b1020; font-weight: 700; white-space: nowrap;
 }
 .arch-node.drift-phantom .arch-drift-tag { background: #e2b24a; }
+.drift-head-actions { display: flex; align-items: center; gap: 8px; }

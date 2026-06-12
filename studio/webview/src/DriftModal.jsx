@@ -4,7 +4,7 @@ import React from "react";
 // real repo. The human reconciles: pull a real component into the design, fix a
 // tech mismatch, or drop a box the code never built. Every "in code" claim shows
 // the file it came from — cite-or-die, on the canvas.
-export default function DriftModal({ state, onAdd, onFixTech, onRemove, onClose }) {
+export default function DriftModal({ state, onAdd, onFixTech, onRemove, onLoadActual, onClose }) {
   if (!state) return null;
   const scanning = state.status === "scanning";
   const r = state.report;
@@ -14,7 +14,14 @@ export default function DriftModal({ state, onAdd, onFixTech, onRemove, onClose 
       <div className="modal drift-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span>Drift vs the real repo{state.repo ? ` · ${state.repo}` : ""}</span>
-          <button className="mini-btn ghost" onClick={onClose}>✕</button>
+          <div className="drift-head-actions">
+            {!scanning && state.full ? (
+              <button className="btn" onClick={() => onLoadActual(state.full)} title="Replace the canvas with the system reverse-engineered from the repo">
+                Load the real system →
+              </button>
+            ) : null}
+            <button className="mini-btn ghost" onClick={onClose}>✕</button>
+          </div>
         </div>
 
         {scanning && (

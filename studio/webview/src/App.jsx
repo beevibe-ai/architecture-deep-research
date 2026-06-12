@@ -106,7 +106,13 @@ export default function App() {
           setDrift((d) => (d ? { ...d, stream: (d.stream || "") + msg.text } : d));
           break;
         case "driftReport":
-          setDrift({ status: "ready", repo: msg.repo, report: msg.report, actual: msg.actual });
+          setDrift({ status: "ready", repo: msg.repo, report: msg.report, actual: msg.actual, full: msg.full });
+          break;
+        case "scanDone":
+          // Discover mode: the host loaded the reverse-engineered system into the
+          // canvas (a "spec" message). Just acknowledge and close any scan UI.
+          setDrift(null);
+          flash(`Reverse-engineered ${msg.count} component${msg.count === 1 ? "" : "s"} from ${msg.repo}`);
           break;
         case "scanError":
           setDrift(null);
@@ -243,6 +249,15 @@ export default function App() {
     },
     [spec, commit]
   );
+  // Replace the whole design with the system reverse-engineered from the repo.
+  const loadActual = useCallback(
+    (full) => {
+      if (full) commit(full);
+      setDrift(null);
+      flash("Loaded the real system from the repo");
+    },
+    [commit]
+  );
 
   // Per-node drift status for canvas coloring, derived from the latest report.
   const driftStatus = {};
@@ -311,7 +326,7 @@ export default function App() {
 
       {toast && <div className="toast">{toast}</div>}
       <OptionsModal state={options} onUse={useOption} onClose={() => setOptions(null)} />
-      <DriftModal state={drift} onAdd={addFromCode} onFixTech={fixTech} onRemove={removePhantom} onClose={() => setDrift(null)} />
+      <DriftModal state={drift} onAdd={addFromCode} onFixTech={fixTech} onRemove={removePhantom} onLoadActual={loadActual} onClose={() => setDrift(null)} />
     </div>
   );
 }
