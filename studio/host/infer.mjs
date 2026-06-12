@@ -10,6 +10,8 @@
 // Condense a full repo scan into a compact, high-signal prompt. The scanner's
 // digest is rich; we keep the parts that reveal components and trim verbose docs
 // so a single inference call stays well within context.
+import { routeFactsFromSources } from "./extract.mjs";
+
 export function digestForInference(scan) {
   const lines = [];
   lines.push(`Repo: ${scan.repo_path}`);
@@ -33,6 +35,23 @@ export function digestForInference(scan) {
     }
   }
 
+  const routes = routeFactsFromSources(scan.route_sources || []);
+  if (routes.length) {
+    lines.push(`\nActual HTTP/API routes (grounded in server source; tables/dependencies show real behavior):`);
+    for (const r of routes.slice(0, 60)) {
+      const tables = summarizeSqlOps(r.sql_ops || []);
+      const deps = (r.dependencies || []).map((d) => `${d.target}.${d.method}()`);
+      const extra = [
+        r.auth ? "auth" : "",
+        tables.length ? `db=${tables.join(",")}` : "",
+        deps.length ? `deps=${deps.slice(0, 5).join(",")}` : "",
+        r.notifications?.length ? `notify=${r.notifications.join(",")}` : "",
+        `source=${r.file}`,
+      ].filter(Boolean).join("; ");
+      lines.push(`  - ${r.method} ${r.path}${extra ? ` (${extra})` : ""}`);
+    }
+  }
+
   if (scan.observability_signals?.length) {
     lines.push(`\nObservability libraries detected: ${scan.observability_signals.map((o) => `${o.name} (${o.evidence_cite.join(", ")})`).join("; ")}`);
   }
@@ -46,6 +65,16 @@ export function digestForInference(scan) {
 function trim(s, max) {
   const str = String(s || "");
   return str.length <= max ? str : str.slice(0, max) + "\n[…truncated]";
+}
+
+function summarizeSqlOps(ops) {
+  const byTable = new Map();
+  for (const o of ops || []) {
+    const set = byTable.get(o.table) || new Set();
+    set.add(o.op);
+    byTable.set(o.table, set);
+  }
+  return [...byTable.entries()].map(([table, verbs]) => `${[...verbs].join("/")}:${table}`);
 }
 
 // The instruction handed to the assistant. It must build ONLY the architecture

@@ -4,7 +4,14 @@
 // from the architecture when no real source does. Shared by the extension host
 // and the debug CLI so the terminal and VS Code produce identical specs.
 import { applyMutation } from "../shared/ir.mjs";
-import { infraFromCompose, infraFromK8s, dataModelFromSql, classesFromSource } from "./extract.mjs";
+import {
+  infraFromCompose,
+  infraFromK8s,
+  dataModelFromSql,
+  classesFromSource,
+  flowsFromRoutes,
+  sequencesFromRoutes,
+} from "./extract.mjs";
 
 export function buildAllViews(archSpec, scan) {
   let full = archSpec;
@@ -35,13 +42,21 @@ export function buildAllViews(archSpec, scan) {
   if (schema.length) { dataModelFromSql(schema).forEach(apply); apply({ op: "auto_layout", view: "data_model" }); }
   else apply({ op: "derive", view: "data_model" });
 
+  // Flows ← real API route handlers (endpoint, auth, validation, deps, SQL).
+  const routeSrc = scan.route_sources || [];
+  const flowMuts = routeSrc.length ? flowsFromRoutes(routeSrc) : [];
+  if (flowMuts.length) { flowMuts.forEach(apply); apply({ op: "auto_layout", view: "flows" }); }
+
   // Classes ← real TS/JS/Python source (declarations + inheritance/implements).
   const classSrc = scan.class_sources || [];
   const classMuts = classSrc.length ? classesFromSource(classSrc) : [];
   if (classMuts.length) { classMuts.forEach(apply); apply({ op: "auto_layout", view: "classes" }); }
   else apply({ op: "derive", view: "classes" });
 
-  // Sequences: still projected from the architecture (real call-trace is Stage C).
-  apply({ op: "derive", view: "sequences" });
+  // Sequences ← real API route handlers. If a repo has no recognizable route
+  // source, fall back to architecture wiring so the view is never blank.
+  const sequenceMuts = routeSrc.length ? sequencesFromRoutes(routeSrc) : [];
+  if (sequenceMuts.length) sequenceMuts.forEach(apply);
+  else apply({ op: "derive", view: "sequences" });
   return full;
 }

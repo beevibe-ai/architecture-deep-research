@@ -96,18 +96,39 @@ function parseTable(name, body) {
 }
 
 // Parse `ALTER TABLE t ADD COLUMN c TYPE …` so later migrations enrich entities.
+// Handles both one-column statements and comma-separated ADD COLUMN blocks.
 function parseAlterAdds(sql) {
   const adds = [];
-  const re = /alter\s+table\s+(?:if\s+exists\s+)?"?([a-z0-9_.]+)"?\s+add\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)"?\s+([a-z0-9_]+(?:\s*\([^)]*\))?)([^;]*)/gi;
+  const re = /alter\s+table\s+(?:if\s+exists\s+)?"?([a-z0-9_.]+)"?\s+([\s\S]*?);/gi;
   let m;
   while ((m = re.exec(sql))) {
-    adds.push({
-      table: unqualify(m[1]),
-      field: { name: m[2], type: dmType(m[3]), pk: /\bprimary\s+key\b/i.test(m[4]), nullable: !/\bnot\s+null\b/i.test(m[4]) },
-      ref: (/\breferences\s+"?([a-z0-9_.]+)"?/i.exec(m[4]) || [])[1],
-    });
+    const table = unqualify(m[1]);
+    for (const item of splitTopLevel(m[2])) {
+      const add = /^add\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)"?\s+([a-z0-9_]+(?:\s*\([^)]*\))?)([\s\S]*)$/i.exec(item);
+      if (!add) continue;
+      adds.push({
+        table,
+        field: { name: add[1], type: dmType(add[2]), pk: /\bprimary\s+key\b/i.test(add[3]), nullable: !/\bnot\s+null\b/i.test(add[3]) },
+        ref: (/\breferences\s+"?([a-z0-9_.]+)"?/i.exec(add[3]) || [])[1],
+      });
+    }
   }
   return adds;
+}
+
+// Parse `ALTER TABLE child ADD CONSTRAINT ... FOREIGN KEY (...) REFERENCES parent`.
+function parseAlterForeignKeys(sql) {
+  const fks = [];
+  const re = /alter\s+table\s+(?:if\s+exists\s+)?"?([a-z0-9_.]+)"?\s+([\s\S]*?);/gi;
+  let m;
+  while ((m = re.exec(sql))) {
+    const table = unqualify(m[1]);
+    for (const item of splitTopLevel(m[2])) {
+      const fk = /(?:add\s+)?(?:constraint\s+"?[a-z0-9_]+"?\s+)?foreign\s+key\s*\(\s*"?([a-z0-9_]+)"?\s*\)\s*references\s+"?([a-z0-9_.]+)"?/i.exec(item);
+      if (fk) fks.push({ table, to: unqualify(fk[2]), fk_field: fk[1] });
+    }
+  }
+  return fks;
 }
 
 // Build data-model IR mutations from one or more SQL sources (migrations).
@@ -129,6 +150,10 @@ export function dataModelFromSql(sources) {
       if (!t) continue;
       if (!t.fields.some((f) => f.name === a.field.name)) t.fields.push(a.field);
       if (a.ref) t.relations.push({ to: unqualify(a.ref), fk_field: a.field.name });
+    }
+    for (const fk of parseAlterForeignKeys(sql)) {
+      const t = tables.get(fk.table);
+      if (t) t.relations.push({ to: fk.to, fk_field: fk.fk_field });
     }
   }
 
@@ -295,6 +320,269 @@ export function infraFromK8s(text, filePath) {
     const t = TYPE[d.kind];
     if (!t) continue;
     muts.push({ op: "add_infra", view: "infra", type: t, label: d.metadata?.name || d.kind, props: { source: filePath } });
+  }
+  return muts;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Express / API source → flows + sequences
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROUTE_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function routePrefixForPath(filePath) {
+  const p = String(filePath || "").replace(/\\/g, "/");
+  if (/\/runtime\/router\.[tj]s$/.test(p)) return "/runtime";
+  const m = /\/routes\/([^/.]+)\.[tj]s$/.exec(p);
+  if (!m) return "";
+  return {
+    mcp: "/mcp",
+    task: "/task",
+    escalation: "/escalation",
+    stream: "/api",
+    chat: "/chat",
+    runtimes: "/runtimes",
+    room: "/room",
+  }[m[1]] || "";
+}
+
+function joinRoute(prefix, route) {
+  const p = String(prefix || "").replace(/\/+$/g, "");
+  const r = String(route || "/").replace(/^\/+/g, "");
+  if (!p && !r) return "/";
+  if (!r) return p || "/";
+  return `${p}/${r}`.replace(/\/+/g, "/");
+}
+
+function sqlOpsIn(text) {
+  const clean = stripSqlComments(text || "");
+  const ops = [];
+  const patterns = [
+    ["INSERT", /\binsert\s+into\s+"?([a-z0-9_]+)"?/gi],
+    ["UPDATE", /\bupdate\s+(?!set\b)"?([a-z0-9_]+)"?/gi],
+    ["DELETE", /\bdelete\s+from\s+"?([a-z0-9_]+)"?/gi],
+    ["SELECT", /\bfrom\s+"?([a-z0-9_]+)"?/gi],
+    ["JOIN", /\bjoin\s+"?([a-z0-9_]+)"?/gi],
+  ];
+  const seen = new Set();
+  for (const [op, re] of patterns) {
+    let m;
+    while ((m = re.exec(clean))) {
+      const table = m[1].toLowerCase();
+      const key = `${op}:${table}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        ops.push({ op, table });
+      }
+    }
+  }
+  return ops.slice(0, 12);
+}
+
+function dependencyCallsIn(text) {
+  const deps = [];
+  const seen = new Set();
+  const add = (target, method) => {
+    if (!target || !method || target === "pool") return;
+    const key = `${target}.${method}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deps.push({ target, method });
+    }
+  };
+  let m;
+  const depsRe = /\bdeps\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(/g;
+  while ((m = depsRe.exec(text))) add(m[1], m[2]);
+  const repoRe = /\b([A-Za-z_$][\w$]*(?:Repo|Service|Manager|Hub|Resolver|Registry|Agent))\.([A-Za-z_$][\w$]*)\s*\(/g;
+  while ((m = repoRe.exec(text))) add(m[1], m[2]);
+  return deps.slice(0, 12);
+}
+
+function notificationsIn(text) {
+  const out = [];
+  const seen = new Set();
+  const patterns = [
+    /pg_notify\s*\(\s*['"`]([A-Za-z0-9_.:-]+)['"`]/g,
+    /\bLISTEN\s+([A-Za-z0-9_.:-]+)/gi,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(text))) {
+      if (!seen.has(m[1])) {
+        seen.add(m[1]);
+        out.push(m[1]);
+      }
+    }
+  }
+  return out.slice(0, 8);
+}
+
+function hasAuthBefore(text, index) {
+  return /router\.use\s*\(\s*deps\.authMiddleware\s*\)/.test(text.slice(0, index));
+}
+
+function isRouteLikePath(route) {
+  return String(route || "").startsWith("/");
+}
+
+function routeScore(f) {
+  return (
+    (MUTATING_METHODS.has(f.method) ? 5 : 0) +
+    (f.sql_ops?.length || 0) * 4 +
+    (f.dependencies?.length || 0) * 2 +
+    (f.notifications?.length || 0) * 3 +
+    (f.auth ? 1 : 0)
+  );
+}
+
+function selectedRoutes(facts, max) {
+  return [...facts]
+    .filter((f) => f.kind === "server_route")
+    .sort((a, b) => routeScore(b) - routeScore(a) || a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .slice(0, max);
+}
+
+export function routeFactsFromSource(src) {
+  const text = src.content || "";
+  const file = src.path || "";
+  const prefix = routePrefixForPath(file);
+  const facts = [];
+  const re = /\b(?:router|app)\.(get|post|put|patch|delete)\s*\(\s*(["'`])([^"'`]+)\2\s*,/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const method = m[1].toUpperCase();
+    const localPath = m[3];
+    if (!ROUTE_METHODS.has(method) || !isRouteLikePath(localPath)) continue;
+    const open = text.indexOf("{", re.lastIndex);
+    const semi = text.indexOf(";", re.lastIndex);
+    const body = open >= 0 && (semi < 0 || open < semi) ? readBraceBody(text, open).body : "";
+    facts.push({
+      kind: "server_route",
+      method,
+      path: joinRoute(prefix, localPath),
+      local_path: localPath,
+      file,
+      auth: hasAuthBefore(text, m.index) || /\brequire(?:Human|Daemon)\s*\(/.test(body),
+      validation: /\bres\.status\s*\(\s*40[034]\s*\)|\binvalid_body\b|\bif\s*\([^)]*!/.test(body),
+      sql_ops: sqlOpsIn(body),
+      dependencies: dependencyCallsIn(body),
+      notifications: notificationsIn(body),
+    });
+  }
+  return facts;
+}
+
+export function routeFactsFromSources(sources) {
+  const byKey = new Map();
+  for (const src of sources || []) {
+    for (const f of routeFactsFromSource(src)) {
+      const key = `${f.method} ${f.path}`;
+      const prev = byKey.get(key);
+      if (!prev || routeScore(f) > routeScore(prev)) byKey.set(key, f);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
+}
+
+function summarizeSqlOps(ops) {
+  const byTable = new Map();
+  for (const o of ops || []) {
+    const set = byTable.get(o.table) || new Set();
+    set.add(o.op);
+    byTable.set(o.table, set);
+  }
+  return [...byTable.entries()].map(([table, verbs]) => `${[...verbs].join("/")} ${table}`);
+}
+
+function humanTarget(s) {
+  return String(s || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniqueLabel(base, used) {
+  let label = base;
+  let i = 2;
+  while (used.has(label.toLowerCase())) label = `${base} ${i++}`;
+  used.add(label.toLowerCase());
+  return label;
+}
+
+function routeFlowSteps(fact) {
+  const used = new Set();
+  const steps = [
+    { type: "start", label: uniqueLabel(`${fact.method} ${fact.path}`, used) },
+  ];
+  if (fact.auth) steps.push({ type: "process", label: uniqueLabel("Authenticate caller", used) });
+  if (fact.validation) steps.push({ type: "decision", label: uniqueLabel("Validate request", used) });
+  const deps = (fact.dependencies || []).slice(0, 4).map((d) => `${humanTarget(d.target)}.${d.method}()`);
+  if (deps.length) steps.push({ type: "process", label: uniqueLabel(`Call ${deps.join(", ")}`, used) });
+  const sql = summarizeSqlOps(fact.sql_ops || []).slice(0, 5);
+  if (sql.length) steps.push({ type: "process", label: uniqueLabel(`Postgres: ${sql.join(", ")}`, used) });
+  if (fact.notifications?.length) steps.push({ type: "process", label: uniqueLabel(`Publish ${fact.notifications.join(", ")}`, used) });
+  if (steps.length === 1) steps.push({ type: "process", label: uniqueLabel(`Run handler (${fact.file})`, used) });
+  steps.push({ type: "end", label: uniqueLabel("HTTP response", used) });
+  return steps;
+}
+
+export function flowsFromRoutes(sources, { max = 30 } = {}) {
+  const muts = [];
+  for (const fact of selectedRoutes(routeFactsFromSources(sources), max)) {
+    const name = `${fact.method} ${fact.path}`;
+    const steps = routeFlowSteps(fact);
+    muts.push({ op: "add_flow", view: "flows", name });
+    for (const step of steps) muts.push({ op: "add_step", view: "flows", flow: name, ...step });
+    for (let i = 0; i < steps.length - 1; i++) {
+      muts.push({
+        op: "add_transition",
+        view: "flows",
+        flow: name,
+        from: steps[i].label,
+        to: steps[i + 1].label,
+        label: steps[i].type === "decision" ? "valid" : "",
+      });
+    }
+  }
+  return muts;
+}
+
+function addParticipant(list, label) {
+  if (!list.some((x) => x.toLowerCase() === label.toLowerCase())) list.push(label);
+}
+
+export function sequencesFromRoutes(sources, { max = 20 } = {}) {
+  const muts = [];
+  for (const fact of selectedRoutes(routeFactsFromSources(sources), max)) {
+    const name = `${fact.method} ${fact.path}`;
+    const participants = ["Client", "API Route"];
+    if (fact.auth) addParticipant(participants, "Auth");
+    const depParticipants = new Map();
+    for (const d of (fact.dependencies || []).slice(0, 5)) {
+      const label = humanTarget(d.target);
+      depParticipants.set(d.target, label);
+      addParticipant(participants, label);
+    }
+    if (fact.sql_ops?.length) addParticipant(participants, "Postgres");
+    if (fact.notifications?.length) addParticipant(participants, "Event Bus");
+
+    muts.push({ op: "add_sequence", view: "sequences", name });
+    for (const p of participants) muts.push({ op: "add_participant", view: "sequences", seq: name, label: p });
+    muts.push({ op: "add_message", view: "sequences", seq: name, from: "Client", to: "API Route", label: `${fact.method} ${fact.path}`, type: "sync" });
+    if (fact.auth) {
+      muts.push({ op: "add_message", view: "sequences", seq: name, from: "API Route", to: "Auth", label: "verify caller", type: "sync" });
+      muts.push({ op: "add_message", view: "sequences", seq: name, from: "Auth", to: "API Route", label: "caller", type: "return" });
+    }
+    for (const d of (fact.dependencies || []).slice(0, 5)) {
+      muts.push({ op: "add_message", view: "sequences", seq: name, from: "API Route", to: depParticipants.get(d.target), label: `${d.method}()`, type: "sync" });
+    }
+    const sql = summarizeSqlOps(fact.sql_ops || []).slice(0, 6);
+    if (sql.length) muts.push({ op: "add_message", view: "sequences", seq: name, from: "API Route", to: "Postgres", label: sql.join(", "), type: "sync" });
+    if (fact.notifications?.length) muts.push({ op: "add_message", view: "sequences", seq: name, from: "Postgres", to: "Event Bus", label: `NOTIFY ${fact.notifications.join(", ")}`, type: "async" });
+    muts.push({ op: "add_message", view: "sequences", seq: name, from: "API Route", to: "Client", label: "JSON response", type: "return" });
   }
   return muts;
 }

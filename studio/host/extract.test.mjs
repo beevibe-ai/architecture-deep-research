@@ -2,7 +2,15 @@
 // compose snippets (a pure-parser boundary, where small fixtures are fine).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dataModelFromSql, infraFromCompose, infraFromK8s, classesFromSource } from "./extract.mjs";
+import {
+  dataModelFromSql,
+  infraFromCompose,
+  infraFromK8s,
+  classesFromSource,
+  routeFactsFromSources,
+  flowsFromRoutes,
+  sequencesFromRoutes,
+} from "./extract.mjs";
 import { emptySpec, applyMutation } from "../shared/ir.mjs";
 
 function buildDataModel(sources) {
@@ -63,6 +71,29 @@ test("ALTER TABLE ADD COLUMN in a later migration enriches the entity", () => {
   ]);
   const task = dm.entities.find((e) => e.name === "task");
   assert.ok(task.fields.some((f) => f.name === "status"));
+});
+
+test("ALTER TABLE with multiple ADD COLUMN entries enriches the entity", () => {
+  const dm = buildDataModel([
+    { path: "1.sql", content: `CREATE TABLE session ( id TEXT PRIMARY KEY ); CREATE TABLE runtime ( id TEXT PRIMARY KEY );` },
+    { path: "2.sql", content: `
+      ALTER TABLE session
+        ADD COLUMN runtime_id TEXT REFERENCES runtime(id),
+        ADD COLUMN spawn_mode TEXT NOT NULL DEFAULT 'daemon',
+        ADD COLUMN last_event_at TIMESTAMPTZ;` },
+  ]);
+  const session = dm.entities.find((e) => e.name === "session");
+  assert.ok(session.fields.some((f) => f.name === "runtime_id"));
+  assert.ok(session.fields.some((f) => f.name === "spawn_mode"));
+  assert.ok(dm.relations.some((r) => dm.entities.find((e) => e.id === r.from)?.name === "runtime" && dm.entities.find((e) => e.id === r.to)?.name === "session"));
+});
+
+test("ALTER TABLE ADD CONSTRAINT FOREIGN KEY creates a relation", () => {
+  const dm = buildDataModel([
+    { path: "1.sql", content: `CREATE TABLE person ( id TEXT PRIMARY KEY ); CREATE TABLE account ( id TEXT PRIMARY KEY, person_id TEXT );` },
+    { path: "2.sql", content: `ALTER TABLE account ADD CONSTRAINT account_person_fk FOREIGN KEY (person_id) REFERENCES person(id);` },
+  ]);
+  assert.ok(dm.relations.some((r) => r.label === "person_id"));
 });
 
 test("self-reference (a tree) resolves to a self 1:N relation", () => {
@@ -141,4 +172,60 @@ metadata: { name: web-svc }
 `, "k8s/web.yaml"));
   assert.ok(inf.nodes.some((n) => n.type === "deployment" && n.label === "web"));
   assert.ok(inf.nodes.some((n) => n.type === "service" && n.label === "web-svc"));
+});
+
+const routeSource = {
+  path: "packages/api/src/routes/newsletter.ts",
+  content: `
+    import { Router } from "express";
+    export function createNewsletterRouter(deps) {
+      const router = Router();
+      router.post("/newsletter/subscribe", async (req, res) => {
+        if (!req.body.email) {
+          res.status(400).json({ error: "invalid_email" });
+          return;
+        }
+        await deps.pool.query(
+          \`INSERT INTO newsletter_subscriber (id, email, source)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (email) DO UPDATE SET updated_at = now()\`,
+          []
+        );
+        await deps.hub.broadcast("newsletter");
+        await deps.pool.query("SELECT pg_notify('bv_event', $1)", ["{}"]);
+        res.json({ ok: true });
+      });
+      return router;
+    }`,
+};
+
+test("route facts recover real endpoint, db tables, dependencies, and notifications", () => {
+  const facts = routeFactsFromSources([routeSource]);
+  assert.equal(facts.length, 1);
+  const f = facts[0];
+  assert.equal(f.method, "POST");
+  assert.equal(f.path, "/newsletter/subscribe");
+  assert.equal(f.validation, true);
+  assert.ok(f.sql_ops.some((o) => o.op === "INSERT" && o.table === "newsletter_subscriber"));
+  assert.ok(f.dependencies.some((d) => d.target === "hub" && d.method === "broadcast"));
+  assert.deepEqual(f.notifications, ["bv_event"]);
+});
+
+test("route-derived flows are built from handler behavior", () => {
+  let s = emptySpec();
+  for (const m of flowsFromRoutes([routeSource])) s = applyMutation(s, m);
+  const flow = s.views.flows.find((f) => f.name === "POST /newsletter/subscribe");
+  assert.ok(flow);
+  assert.ok(flow.nodes.some((n) => n.type === "decision" && /Validate/.test(n.label)));
+  assert.ok(flow.nodes.some((n) => /Postgres/.test(n.label) && /newsletter_subscriber/.test(n.label)));
+});
+
+test("route-derived sequences use real participants and messages", () => {
+  let s = emptySpec();
+  for (const m of sequencesFromRoutes([routeSource])) s = applyMutation(s, m);
+  const seq = s.views.sequences.find((x) => x.name === "POST /newsletter/subscribe");
+  assert.ok(seq);
+  assert.ok(seq.participants.some((p) => p.label === "Postgres"));
+  assert.ok(seq.participants.some((p) => p.label === "Hub"));
+  assert.ok(seq.messages.some((m) => /newsletter_subscriber/.test(m.label)));
 });

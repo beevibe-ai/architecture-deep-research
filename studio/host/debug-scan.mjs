@@ -18,6 +18,7 @@ import { DERIVABLE_VIEWS } from "../shared/derive.mjs";
 import { scanRepo } from "./repo-scan.mjs";
 import { buildAllViews } from "./build-views.mjs";
 import { digestForInference, inferenceInstruction } from "./infer.mjs";
+import { routeFactsFromSources } from "./extract.mjs";
 
 const [cmd, target] = process.argv.slice(2);
 if (!cmd || !target) {
@@ -36,7 +37,7 @@ function report(spec, title) {
   console.log(
     `arch=${v.architecture.nodes.length}/${v.architecture.edges.length}e  ` +
     `infra=${v.infra.nodes.length}/${v.infra.edges.length}e  ` +
-    `data_model=${v.data_model.entities.length}  classes=${v.classes.nodes.length}  ` +
+    `data_model=${v.data_model.entities.length}  flows=${v.flows.length}  classes=${v.classes.nodes.length}  ` +
     `sequences=${v.sequences.length}  cross_refs=${(spec.cross_refs || []).length}`
   );
 
@@ -84,6 +85,9 @@ async function main() {
     console.log("summary:", JSON.stringify(scan.summary));
     console.log("manifests:", scan.manifests.map((m) => m.path).join(", "));
     console.log("deploy_configs:", scan.deploy_configs.map((c) => `${c.path}(${c.platform})`).join(", "));
+    const routes = routeFactsFromSources(scan.route_sources || []);
+    console.log("route_sources:", (scan.route_sources || []).map((r) => r.path).join(", "));
+    console.log("routes:", routes.slice(0, 24).map((r) => `${r.method} ${r.path}`).join(", "));
     console.log("dirs:", scan.tree.filter((t) => t.kind === "dir").map((t) => t.path).slice(0, 40).join(", "));
     console.log("\n--- digest fed to inference ---\n" + digestForInference(scan).slice(0, 2000));
     return;
@@ -115,6 +119,8 @@ async function main() {
     const dm = full.views.data_model;
     console.log(`data model: ${dm.entities.length} entities, ${dm.relations.length} relations → ${dm.entities.slice(0, 12).map((e) => e.name).join(", ")}${dm.entities.length > 12 ? "…" : ""}`);
     console.log(`infra: ${full.views.infra.nodes.map((n) => `${n.label}(${n.type})`).join(", ")}`);
+    console.log(`flows: ${full.views.flows.slice(0, 8).map((f) => `${f.name}(${f.nodes.length})`).join(", ")}${full.views.flows.length > 8 ? "…" : ""}`);
+    console.log(`sequences: ${full.views.sequences.slice(0, 8).map((s) => `${s.name}(${s.messages.length})`).join(", ")}${full.views.sequences.length > 8 ? "…" : ""}`);
     const out = path.join(target, ".adr", "debug-scan.spec.json");
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, JSON.stringify(full, null, 2));

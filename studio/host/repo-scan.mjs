@@ -18,6 +18,7 @@ const MAX_TODO_HITS = 40;
 const MAX_DOC_FILES = 12;
 const MAX_DIR_DEPTH = 5;
 const MAX_DIR_ENTRIES_PER_LEVEL = 30;
+const MAX_DEPLOY_DIR_FILES = 80;
 const IGNORED_DIRS = new Set([
   "node_modules",
   ".git",
@@ -248,11 +249,35 @@ async function collectDeployConfigs(repoPath) {
   }
   for (const dir of DEPLOY_CONFIG_DIRS) {
     const target = path.join(repoPath, dir);
-    if (await pathExists(target)) {
-      configs.push({ path: dir, platform: dir, content: "[directory present]" });
+    if (!(await pathExists(target))) continue;
+    const files = await collectFilesUnder(repoPath, dir, (rel) => /\.(ya?ml|json)$/i.test(rel));
+    for (const rel of files.slice(0, MAX_DEPLOY_DIR_FILES)) {
+      const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: 18_000 });
+      if (content) configs.push({ path: rel, platform: dir, content });
     }
   }
   return configs;
+}
+
+async function collectFilesUnder(repoPath, relDir, accept) {
+  const out = [];
+  async function walk(abs) {
+    let entries;
+    try {
+      entries = await readdir(abs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (IGNORED_DIRS.has(entry.name)) continue;
+      const child = path.join(abs, entry.name);
+      const rel = relativeTo(repoPath, child);
+      if (entry.isDirectory()) await walk(child);
+      else if (entry.isFile() && accept(rel)) out.push(rel);
+    }
+  }
+  await walk(path.join(repoPath, relDir));
+  return out;
 }
 
 async function collectCodeowners(repoPath) {
@@ -277,6 +302,21 @@ async function gitLog(repoPath, args, maxBytes = 4_000) {
   } catch {
     return null;
   }
+}
+
+async function gitLsFiles(repoPath, pathspecs, extraArgs = []) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", repoPath, "ls-files", ...extraArgs, "--", ...pathspecs], {
+      maxBuffer: 4 * 1024 * 1024
+    });
+    return stdout.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function dedupeSorted(files) {
+  return [...new Set(files)].sort((a, b) => a.localeCompare(b));
 }
 
 async function collectGitSignals(repoPath) {
@@ -402,10 +442,12 @@ const SCHEMA_FILE_RE = /(^|\/)(migrations?|db|database|sql|prisma|schema)\/.*\.(
 async function collectSchemaSources(repoPath) {
   let files = [];
   if (await pathExists(path.join(repoPath, ".git"))) {
-    try {
-      const { stdout } = await execFileAsync("git", ["-C", repoPath, "ls-files", "*.sql", "*.prisma"], { maxBuffer: 4 * 1024 * 1024 });
-      files = stdout.split("\n").filter(Boolean);
-    } catch { /* fall through */ }
+    files = [
+      ...(await gitLsFiles(repoPath, ["*.sql", "*.prisma"])),
+      ...(await gitLsFiles(repoPath, ["*.sql", "*.prisma"], ["--others", "--exclude-standard"])),
+    ];
+  } else {
+    files = await collectFilesUnder(repoPath, ".", (rel) => /\.(sql|prisma)$/i.test(rel));
   }
   files = files.filter((f) => SCHEMA_FILE_RE.test(f)).sort().slice(0, MAX_SCHEMA_FILES);
   const out = [];
@@ -421,20 +463,64 @@ async function collectSchemaSources(repoPath) {
 // aware) and read only the matching files, capped.
 const MAX_CLASS_FILES = 300;
 async function collectClassSources(repoPath) {
-  if (!(await pathExists(path.join(repoPath, ".git")))) return [];
   let files = [];
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", repoPath, "grep", "-lE", "^(export )?(default )?(abstract )?(class|interface) ", "--", "*.ts", "*.tsx", "*.js", "*.mjs", "*.py"],
-      { maxBuffer: 4 * 1024 * 1024 }
-    );
-    files = stdout.split("\n").filter(Boolean).filter((f) => !/\.(test|spec)\./.test(f));
-  } catch { return []; }
-  files = files.sort().slice(0, MAX_CLASS_FILES);
+  const isGit = await pathExists(path.join(repoPath, ".git"));
+  if (isGit) {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["-C", repoPath, "grep", "-lE", "^[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(abstract[[:space:]]+)?(class|interface)[[:space:]]+", "--", "*.ts", "*.tsx", "*.js", "*.mjs", "*.py"],
+        { maxBuffer: 4 * 1024 * 1024 }
+      );
+      files = stdout.split("\n").filter(Boolean).filter((f) => !/\.(test|spec)\./.test(f));
+    } catch { /* no tracked declaration hits */ }
+  }
+  const untracked = isGit
+    ? await gitLsFiles(repoPath, ["*.ts", "*.tsx", "*.js", "*.mjs", "*.py"], ["--others", "--exclude-standard"])
+    : await collectFilesUnder(repoPath, ".", (rel) => /\.(ts|tsx|js|mjs|py)$/i.test(rel));
+  for (const rel of untracked) {
+    if (/\.(test|spec)\./.test(rel)) continue;
+    const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: 24_000 });
+    if (content && /(^|\n)\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:class|interface)\s+[A-Za-z_$]/.test(content)) files.push(rel);
+  }
+  files = dedupeSorted(files).slice(0, MAX_CLASS_FILES);
   const out = [];
   for (const rel of files) {
     const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: 24_000 });
+    if (content) out.push({ path: rel, content });
+  }
+  return out;
+}
+
+// Collect API route/server sources for route-derived flowcharts and sequences.
+// The parser reads only source files that actually declare HTTP routes, skipping
+// tests, so the diagrams stay grounded without dumping the whole application.
+const MAX_ROUTE_FILES = 180;
+async function collectRouteSources(repoPath) {
+  let files = [];
+  const isGit = await pathExists(path.join(repoPath, ".git"));
+  if (isGit) {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["-C", repoPath, "grep", "-lE", "(router|app)\\.(get|post|put|patch|delete)[[:space:]]*\\(", "--", "*.ts", "*.tsx", "*.js", "*.mjs"],
+        { maxBuffer: 4 * 1024 * 1024 }
+      );
+      files = stdout.split("\n").filter(Boolean).filter((f) => !/\.(test|spec)\./.test(f));
+    } catch { /* no tracked route hits */ }
+  }
+  const untracked = isGit
+    ? await gitLsFiles(repoPath, ["*.ts", "*.tsx", "*.js", "*.mjs"], ["--others", "--exclude-standard"])
+    : await collectFilesUnder(repoPath, ".", (rel) => /\.(ts|tsx|js|mjs)$/i.test(rel));
+  for (const rel of untracked) {
+    if (/\.(test|spec)\./.test(rel)) continue;
+    const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: 42_000 });
+    if (content && /\b(?:router|app)\.(?:get|post|put|patch|delete)\s*\(/.test(content)) files.push(rel);
+  }
+  files = dedupeSorted(files).slice(0, MAX_ROUTE_FILES);
+  const out = [];
+  for (const rel of files) {
+    const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: 42_000 });
     if (content) out.push({ path: rel, content });
   }
   return out;
@@ -458,6 +544,7 @@ async function scanRepo(repoPath) {
   const observability = detectObservability(manifests, docs);
   const schemaSources = await collectSchemaSources(absRepo);
   const classSources = await collectClassSources(absRepo);
+  const routeSources = await collectRouteSources(absRepo);
 
   return {
     repo_path: absRepo,
@@ -468,6 +555,7 @@ async function scanRepo(repoPath) {
     deploy_configs: deployConfigs,
     schema_sources: schemaSources,
     class_sources: classSources,
+    route_sources: routeSources,
     codeowners,
     git_signals: gitSignals,
     todo_hits: todos,
@@ -479,6 +567,7 @@ async function scanRepo(repoPath) {
       deploy_config_count: deployConfigs.length,
       schema_source_count: schemaSources.length,
       class_source_count: classSources.length,
+      route_source_count: routeSources.length,
       todo_hit_count: todos.length,
       prior_adr_count: docs.filter((d) => d.kind === "prior_adr").length
     }
