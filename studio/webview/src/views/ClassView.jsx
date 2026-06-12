@@ -156,6 +156,7 @@ function Inner({ spec, commit }) {
         <ReactFlow
           nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes}
           defaultEdgeOptions={{ type: "smoothstep" }}
+          deleteKeyCode={["Backspace", "Delete"]}
           onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
           onNodeDragStop={onNodeDragStop} onNodesDelete={onNodesDelete} onEdgesDelete={onEdgesDelete}
           onNodeClick={(_e, n) => { setSelectedId(n.id); setSelectedEdgeId(null); }}

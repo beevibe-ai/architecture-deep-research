@@ -21,6 +21,8 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  const [saveState, setSaveState] = useState("saved");
+  const [, setHistoryVersion] = useState(0);
   const [options, setOptions] = useState(null); // { status, count, progress, options }
   const [drift, setDrift] = useState(null); // { status, repo, report, actual, stream }
   // Mirror `busy` into a ref so the (stable) commit callback can gate edits
@@ -42,27 +44,42 @@ export default function App() {
     pastRef.current.push(specRef.current);
     if (pastRef.current.length > 50) pastRef.current.shift();
     futureRef.current = [];
+    setHistoryVersion((v) => v + 1);
+  }, []);
+  const persistSpec = useCallback((next) => {
+    setSaveState("saving");
+    post({ type: "persist", spec: next });
   }, []);
   const restore = useCallback((next) => {
     setSpec(next);
-    post({ type: "persist", spec: next });
-  }, []);
+    persistSpec(next);
+  }, [persistSpec]);
   const undo = useCallback(() => {
-    if (!pastRef.current.length) return;
+    if (busyRef.current || !pastRef.current.length) return;
     futureRef.current.push(specRef.current);
-    restore(pastRef.current.pop());
+    const next = pastRef.current.pop();
+    setHistoryVersion((v) => v + 1);
+    restore(next);
   }, [restore]);
   const redo = useCallback(() => {
-    if (!futureRef.current.length) return;
+    if (busyRef.current || !futureRef.current.length) return;
     pastRef.current.push(specRef.current);
-    restore(futureRef.current.pop());
+    const next = futureRef.current.pop();
+    setHistoryVersion((v) => v + 1);
+    restore(next);
   }, [restore]);
 
   useEffect(() => {
     const onKey = (e) => {
+      const tag = e.target?.tagName;
+      const editingText = e.target?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (editingText) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -78,7 +95,12 @@ export default function App() {
           // a state that no longer matches disk.
           pastRef.current = [];
           futureRef.current = [];
+          setHistoryVersion((v) => v + 1);
+          setSaveState("saved");
           setSpec(msg.spec);
+          break;
+        case "saved":
+          setSaveState("saved");
           break;
         case "catalog":
           if (Array.isArray(msg.catalog) && msg.catalog.length) setCatalog(msg.catalog);
@@ -132,6 +154,7 @@ export default function App() {
           setSpec(msg.spec);
           setMessages((m) => finalizeLast(m, msg.text));
           setBusy(false);
+          setSaveState("saved");
           break;
         case "exported":
           flash(`Handoff written → ${msg.path}`);
@@ -185,9 +208,9 @@ export default function App() {
       if (busyRef.current) return;
       recordHistory();
       setSpec(nextSpec);
-      post({ type: "persist", spec: nextSpec });
+      persistSpec(nextSpec);
     },
-    [recordHistory]
+    [persistSpec, recordHistory]
   );
 
   const sendChat = useCallback(
@@ -201,11 +224,12 @@ export default function App() {
   );
 
   const suggestOptions = useCallback(
-    (idea) => {
-      const text = idea.trim();
+    (request) => {
+      const text = (typeof request === "string" ? request : request?.idea || "").trim();
+      const context = (typeof request === "string" ? "" : request?.context || "").trim();
       if (!text) return;
       setMessages((m) => [...m, { role: "user", text: `Explore: ${text}` }]);
-      post({ type: "generateOptions", spec, idea: text });
+      post({ type: "generateOptions", spec, idea: text, context });
     },
     [spec]
   );
@@ -278,6 +302,9 @@ export default function App() {
   }
 
   const { violations } = lint(spec);
+  const canUndo = !busy && pastRef.current.length > 0;
+  const canRedo = !busy && futureRef.current.length > 0;
+  const saveLabel = saveState === "saving" ? "Saving" : "Saved";
   const counts = {
     architecture: spec.views.architecture.nodes.length,
     data_model: spec.views.data_model.entities.length,
@@ -292,6 +319,17 @@ export default function App() {
       <header className="topbar">
         <div className="title">{spec.decision?.title || "Untitled architecture"}</div>
         <div className="spacer" />
+        <div className="edit-actions" aria-label="Edit history">
+          <button className="mini-btn edit-btn" onClick={undo} disabled={!canUndo} title="Undo canvas edit (Cmd/Ctrl+Z)">
+            Undo
+          </button>
+          <button className="mini-btn edit-btn" onClick={redo} disabled={!canRedo} title="Redo canvas edit (Cmd/Ctrl+Y or Cmd/Ctrl+Shift+Z)">
+            Redo
+          </button>
+        </div>
+        <span className={`save-badge ${saveState}`} title="Architecture spec autosaves after each edit">
+          {saveLabel}
+        </span>
         <span className={`lint-badge ${violations.length ? "bad" : "ok"}`}>
           {violations.length ? `${violations.length} issue${violations.length > 1 ? "s" : ""}` : "clean"}
         </span>
@@ -316,7 +354,7 @@ export default function App() {
         <div className="view-col">
           <ViewTabs active={activeView} onChange={setActiveView} counts={counts} />
           <div className="view-stage">
-            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} />}
+            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} onSuggest={suggestOptions} />}
             {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
             {activeView === "infra" && <InfrastructureView spec={spec} commit={commit} />}

@@ -1,5 +1,8 @@
 import React, { useState, useMemo } from "react";
-import { CATEGORIES, typesByCategory } from "../../../shared/catalog.mjs";
+import { CATEGORIES, PLANES, typesByCategory } from "../../../shared/catalog.mjs";
+
+const PLANE_LABEL = Object.fromEntries(PLANES.map((p) => [p.id, p.label]));
+const PLANE_BADGE = { control: "Control", execution: "Exec", data: "Data" };
 
 // Catalog-driven palette: every component type the design language knows,
 // grouped by category and searchable. Drag a chip onto the canvas — it carries
@@ -26,7 +29,7 @@ export default function CatalogPalette({ catalog }) {
                   key={t.id}
                   className="cat-chip"
                   draggable
-                  title={t.tech?.length ? `tech: ${t.tech.join(", ")}` : t.label}
+                  title={`${PLANE_LABEL[t.plane] || t.plane}${t.tech?.length ? ` · tech: ${t.tech.join(", ")}` : ""}`}
                   onDragStart={(e) => {
                     e.dataTransfer.setData("application/adr-type", t.id);
                     e.dataTransfer.effectAllowed = "move";
@@ -34,7 +37,9 @@ export default function CatalogPalette({ catalog }) {
                 >
                   <span className="cat-dot" style={{ background: cat.color }} />
                   <span className="cat-chip-label">{t.label}</span>
-                  <span className={`cat-plane cp-${t.plane}`}>{t.plane[0].toUpperCase()}</span>
+                  <span className={`cat-plane cp-${t.plane}`} title={PLANE_LABEL[t.plane] || t.plane}>
+                    {PLANE_BADGE[t.plane] || t.plane}
+                  </span>
                 </div>
               ))}
             </div>

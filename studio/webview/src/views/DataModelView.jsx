@@ -289,6 +289,7 @@ function Inner({ spec, commit }) {
           edges={rfEdges}
           nodeTypes={nodeTypes}
           defaultEdgeOptions={{ type: "smoothstep" }}
+          deleteKeyCode={["Backspace", "Delete"]}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}

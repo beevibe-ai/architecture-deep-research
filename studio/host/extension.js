@@ -138,6 +138,7 @@ async function handleMessage(msg) {
 
     case "persist":
       writeSpec(msg.spec);
+      post({ type: "saved" });
       return;
 
     case "export": {
@@ -202,7 +203,7 @@ async function handleMessage(msg) {
       return;
 
     case "generateOptions":
-      await generateOptions(ir, chat, catalog, msg.spec, msg.idea || "");
+      await generateOptions(ir, chat, catalog, msg.spec, msg.idea || "", msg.context || "");
       return;
 
     case "scanRepo":
@@ -260,8 +261,9 @@ function requirementsText(spec) {
   return reqs.map((n) => `- [${n.kind}${n.priority ? "/" + n.priority : ""}] ${n.title}${n.body ? ": " + n.body : ""}`).join("\n");
 }
 
-async function generateOptions(ir, chat, catalog, baseSpec, idea = "") {
+async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context = "") {
   const cleanIdea = String(idea || "").trim();
+  const cleanContext = String(context || "").trim();
   post({ type: "optionsStart", count: OPTION_ANGLES.length, idea: cleanIdea });
   const { provider, key, model } = await resolveLlm();
   if (!key) {
@@ -279,8 +281,11 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "") {
       seed.domain_model = baseSpec.domain_model;
       seed.notes = baseSpec.notes || [];
     }
+    const ideaBlock = cleanIdea
+      ? `User idea:\n${cleanIdea}${cleanContext ? `\n\nAdditional architecture guidance:\n${cleanContext}` : ""}`
+      : "";
     const instr = cleanIdea
-      ? `Current design is loaded in the canvas. User idea:\n${cleanIdea}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Use apply_skill and arch_* tools to add, remove, connect, or refine architecture elements; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS changed version.`
+      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Use apply_skill and arch_* tools to add, remove, connect, or refine architecture elements; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS changed version.`
       : `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
         `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
         `When done, reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS approach.`;

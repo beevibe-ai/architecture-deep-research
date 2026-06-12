@@ -16,6 +16,8 @@ import { SKILLS } from "../../shared/skills.mjs";
 
 const CAT_COLOR = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.color]));
 const PLANE_COLOR = Object.fromEntries(PLANES.map((p) => [p.id, p.color]));
+const PLANE_LABEL = Object.fromEntries(PLANES.map((p) => [p.id, p.label]));
+const PLANE_BADGE = { control: "Control", execution: "Exec", data: "Data" };
 
 const BANDS = { control: { y: 0, h: 250 }, execution: { y: 270, h: 270 }, data: { y: 560, h: 270 } };
 const bandCenterY = (plane) => (BANDS[plane] ? BANDS[plane].y + BANDS[plane].h / 2 - 30 : 380);
@@ -58,7 +60,7 @@ function ArchNode({ data, selected }) {
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-kind" style={{ color }}>
         {getType(node.type)?.label || node.type || node.kind}
-        <span className="arch-plane" style={{ background: PLANE_COLOR[plane] }}>{plane[0].toUpperCase()}</span>
+        <span className="arch-plane" title={PLANE_LABEL[plane] || plane} style={{ background: PLANE_COLOR[plane] }}>{PLANE_BADGE[plane] || plane}</span>
       </div>
       <div className="arch-label">{node.label}</div>
       {node.tech ? <div className="arch-tech">{node.tech}</div> : null}
@@ -69,6 +71,24 @@ function ArchNode({ data, selected }) {
 }
 
 const nodeTypes = { arch: ArchNode, zone: ZoneNode, archGroup: ArchGroupNode };
+
+function patternSuggestion(skill, spec) {
+  const topLevel = spec.views.architecture.nodes
+    .filter((n) => !n.parent)
+    .slice(0, 24)
+    .map((n) => `${n.label} (${n.type})`)
+    .join(", ");
+  return {
+    idea: `Apply the ${skill.label} pattern`,
+    context: [
+      `Pattern intent: ${skill.description}`,
+      "Treat this as an architecture change suggestion, not a raw template paste.",
+      "Reuse, rename, or rewire matching existing components instead of creating duplicates.",
+      "Call out what would be added, reused, removed, or left unchanged.",
+      topLevel ? `Existing top-level components to reconcile with: ${topLevel}.` : "",
+    ].filter(Boolean).join("\n"),
+  };
+}
 
 // Edge color by kind (matches a small legend) — request/data vs event vs internal.
 const EDGE_KIND_CLASS = { calls: "ek-call", streams: "ek-event", publishes: "ek-event", subscribes: "ek-event", owns: "ek-own" };
@@ -89,7 +109,7 @@ function computeLayered(topLevel) {
   return { used, bandY, pos };
 }
 
-export default function Canvas({ spec, commit, catalog, driftStatus }) {
+export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }) {
   const vIndex = useMemo(() => violationIndex(spec).byView.architecture, [spec]);
   const archNodes = spec.views.architecture.nodes;
   const archEdges = spec.views.architecture.edges;
@@ -226,6 +246,19 @@ export default function Canvas({ spec, commit, catalog, driftStatus }) {
   const containers = archNodes.filter((n) => isContainer(n.type) && n.id !== selectedId);
   const setNode = (patch) => commit(applyMutation(spec, { op: "update_node", view: "architecture", id: selectedId, ...patch }));
   const setEdgeSem = (patch) => commit(applyMutation(spec, { op: "set_edge_semantics", view: "architecture", id: selectedEdgeId, ...patch }));
+  const architectureSkills = SKILLS.filter((s) => s.view === "architecture");
+  const pickPattern = (value) => {
+    if (!value) return;
+    const direct = value.startsWith("direct:");
+    const skillId = direct ? value.slice("direct:".length) : value;
+    const skill = architectureSkills.find((s) => s.id === skillId);
+    if (!skill) return;
+    if (direct || !onSuggest) {
+      commit(applyMutation(spec, { op: "apply_skill", skill: skill.id }));
+      return;
+    }
+    onSuggest(patternSuggestion(skill, spec));
+  };
 
   return (
     <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
@@ -234,9 +267,14 @@ export default function Canvas({ spec, commit, catalog, driftStatus }) {
           <button className={`seg-btn ${layout === "free" ? "on" : ""}`} onClick={() => setLayout("free")}>Free</button>
           <button className={`seg-btn ${layout === "layered" ? "on" : ""}`} onClick={() => setLayout("layered")}>Layered</button>
         </div>
-        <select className="mini-btn skill-select" value="" onChange={(e) => { if (e.target.value) commit(applyMutation(spec, { op: "apply_skill", skill: e.target.value })); e.target.value = ""; }}>
-          <option value="">+ Skill…</option>
-          {SKILLS.filter((s) => s.view === "architecture").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+        <select className="mini-btn skill-select" value="" onChange={(e) => { pickPattern(e.target.value); e.target.value = ""; }}>
+          <option value="">+ Pattern…</option>
+          <optgroup label="Suggest architecture change">
+            {architectureSkills.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </optgroup>
+          <optgroup label="Add template directly">
+            {architectureSkills.map((s) => <option key={`direct-${s.id}`} value={`direct:${s.id}`}>{s.label}</option>)}
+          </optgroup>
         </select>
         {layout === "free" && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "architecture", direction: "TB" }))}>Auto-arrange</button>}
         {layout === "free" && <button className={`mini-btn ${showPlanes ? "on" : ""}`} onClick={() => setShowPlanes((v) => !v)}>Planes</button>}
@@ -247,6 +285,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus }) {
         edges={rfEdges}
         nodeTypes={nodeTypes}
         defaultEdgeOptions={{ type: "smoothstep" }}
+        deleteKeyCode={["Backspace", "Delete"]}
         nodesDraggable={layout === "free"}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

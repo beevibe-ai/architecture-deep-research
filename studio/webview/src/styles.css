@@ -35,6 +35,30 @@ body {
 }
 .topbar .title { font-weight: 600; }
 .topbar .spacer { flex: 1; }
+.edit-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.edit-btn {
+  min-width: 48px;
+}
+.save-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.save-badge.saved {
+  color: #9ee3c6;
+  border-color: #2e5a47;
+}
+.save-badge.saving {
+  color: #ffd7a3;
+  border-color: #5f5133;
+}
 
 .lint-badge {
   font-size: 11px;
@@ -213,7 +237,15 @@ body {
 .cat-chip:active { cursor: grabbing; }
 .cat-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .cat-chip-label { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cat-plane { font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 3px; color: #14161f; }
+.cat-plane {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: #14161f;
+}
 .cp-control { background: #c8a7ff; }
 .cp-execution { background: #b9c5ff; }
 .cp-data { background: #9ee3c6; }
@@ -258,7 +290,17 @@ body {
   font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
   padding: 2px 9px; border-radius: 999px;
 }
-.arch-plane { font-size: 8px; font-weight: 700; padding: 0 4px; border-radius: 3px; color: #14161f; margin-left: 6px; }
+.arch-plane {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: #14161f;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
 
 /* ---- architecture container (agent runtime) ---- */
 .arch-group {
