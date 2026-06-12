@@ -239,7 +239,7 @@ async function collectDeployConfigs(repoPath) {
   for (const [name, platform] of DEPLOY_CONFIG_FILES) {
     const target = path.join(repoPath, name);
     if (!(await pathExists(target))) continue;
-    const content = await safeReadFile(target, { maxBytes: 2_000 });
+    const content = await safeReadFile(target, { maxBytes: 12_000 });
     configs.push({
       path: relativeTo(repoPath, target),
       platform,
@@ -393,6 +393,29 @@ function detectObservability(manifests, docs) {
   return [...byName.values()];
 }
 
+// Collect the real schema sources the data model is reverse-engineered from:
+// SQL migrations / DDL and ORM schema files (Prisma, etc.). These are parsed
+// deterministically (not sent to an LLM), so we can take more of them.
+const MAX_SCHEMA_FILES = 120;
+const MAX_SCHEMA_BYTES = 40_000;
+const SCHEMA_FILE_RE = /(^|\/)(migrations?|db|database|sql|prisma|schema)\/.*\.(sql|prisma)$|(^|\/)schema\.(sql|prisma)$|\.(sql|prisma)$/i;
+async function collectSchemaSources(repoPath) {
+  let files = [];
+  if (await pathExists(path.join(repoPath, ".git"))) {
+    try {
+      const { stdout } = await execFileAsync("git", ["-C", repoPath, "ls-files", "*.sql", "*.prisma"], { maxBuffer: 4 * 1024 * 1024 });
+      files = stdout.split("\n").filter(Boolean);
+    } catch { /* fall through */ }
+  }
+  files = files.filter((f) => SCHEMA_FILE_RE.test(f)).sort().slice(0, MAX_SCHEMA_FILES);
+  const out = [];
+  for (const rel of files) {
+    const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: MAX_SCHEMA_BYTES });
+    if (content) out.push({ path: rel, content });
+  }
+  return out;
+}
+
 async function scanRepo(repoPath) {
   const absRepo = path.resolve(repoPath);
   const exists = await pathExists(absRepo);
@@ -409,6 +432,7 @@ async function scanRepo(repoPath) {
   const gitSignals = await collectGitSignals(absRepo);
   const todos = await collectTodoHits(absRepo);
   const observability = detectObservability(manifests, docs);
+  const schemaSources = await collectSchemaSources(absRepo);
 
   return {
     repo_path: absRepo,
@@ -417,6 +441,7 @@ async function scanRepo(repoPath) {
     docs,
     manifests,
     deploy_configs: deployConfigs,
+    schema_sources: schemaSources,
     codeowners,
     git_signals: gitSignals,
     todo_hits: todos,
@@ -426,6 +451,7 @@ async function scanRepo(repoPath) {
       doc_count: docs.length,
       manifest_count: manifests.length,
       deploy_config_count: deployConfigs.length,
+      schema_source_count: schemaSources.length,
       todo_hit_count: todos.length,
       prior_adr_count: docs.filter((d) => d.kind === "prior_adr").length
     }

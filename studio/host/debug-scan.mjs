@@ -16,6 +16,7 @@ import { emptySpec, applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
 import { DERIVABLE_VIEWS } from "../shared/derive.mjs";
 import { scanRepo } from "./repo-scan.mjs";
+import { buildAllViews } from "./build-views.mjs";
 import { digestForInference, inferenceInstruction } from "./infer.mjs";
 
 const [cmd, target] = process.argv.slice(2);
@@ -109,9 +110,11 @@ async function main() {
       userText: inferenceInstruction(digestForInference(scan)),
       spec: seed, provider: auth.provider, apiKey: auth.key, catalog: CATALOG,
     });
-    let full = result.spec;
-    full = deriveAll(full);
+    const full = buildAllViews(result.spec, scan); // real extraction per view
     report(full, `inferred: ${target}`);
+    const dm = full.views.data_model;
+    console.log(`data model: ${dm.entities.length} entities, ${dm.relations.length} relations → ${dm.entities.slice(0, 12).map((e) => e.name).join(", ")}${dm.entities.length > 12 ? "…" : ""}`);
+    console.log(`infra: ${full.views.infra.nodes.map((n) => `${n.label}(${n.type})`).join(", ")}`);
     const out = path.join(target, ".adr", "debug-scan.spec.json");
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, JSON.stringify(full, null, 2));

@@ -26,7 +26,7 @@ function shared() {
       catalog: await import("../shared/catalog.mjs"),
       chat: await import("./chat.mjs"),
       drift: await import("../shared/drift.mjs"),
-      derive: await import("../shared/derive.mjs"),
+      buildViews: await import("./build-views.mjs"),
       repoScan: await import("./repo-scan.mjs"),
       infer: await import("./infer.mjs"),
     }))();
@@ -300,7 +300,7 @@ async function generateOptions(ir, chat, catalog, baseSpec) {
 // load it (the canvas IS the real system). On an existing design we diff instead,
 // and offer to load the real system. Inference runs in an isolated seed.
 async function scanAndDrift(designSpec) {
-  const { ir, chat, catalog, drift, derive, repoScan, infer } = await shared();
+  const { ir, chat, catalog, drift, buildViews, repoScan, infer } = await shared();
   const repoPath = config().get("repoPath") || workspaceRoot();
   post({ type: "scanStart", repo: vscode.workspace.asRelativePath(repoPath) || repoPath });
 
@@ -337,12 +337,10 @@ async function scanAndDrift(designSpec) {
     return;
   }
 
-  // Build the full inferred system: the real architecture + the structurally
-  // derivable views (infra, data model, sequences, classes) projected from it.
-  let full = actual;
-  for (const view of derive.DERIVABLE_VIEWS) {
-    try { full = ir.applyMutation(full, { op: "derive", view }); } catch { /* skip a view that can't derive */ }
-  }
+  // Build the full system: real architecture + the other views reverse-engineered
+  // from their REAL sources where they exist (SQL → data model, compose/k8s →
+  // infra), falling back to projection-from-architecture only when no source does.
+  const full = buildViews.buildAllViews(actual, scan);
   const repo = vscode.workspace.asRelativePath(repoPath) || repoPath;
   const componentCount = actual.views.architecture.nodes.filter((n) => !n.parent).length;
 
