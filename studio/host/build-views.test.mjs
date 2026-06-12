@@ -40,3 +40,16 @@ volumes:
   assert.equal(gap.props.reason, "No docker-compose/k8s resource found");
   assert.equal(lint(full).violations.filter((v) => v.constraintId === "cross_ref_targets_exist").length, 0);
 });
+
+test("buildAllViews repairs collapsed architecture positions from repo inference", () => {
+  const full = buildAllViews(archSpec(), {
+    deploy_configs: [],
+    schema_sources: [],
+    class_sources: [],
+    route_sources: [],
+  });
+
+  const top = full.views.architecture.nodes.filter((n) => !n.parent);
+  const distinct = new Set(top.map((n) => `${n.position.x},${n.position.y}`));
+  assert.equal(distinct.size, top.length, "inferred architecture must not reload as a single pile");
+});

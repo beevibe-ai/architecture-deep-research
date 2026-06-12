@@ -88,3 +88,37 @@ export function applyAutoLayout(spec, view, direction) {
   }
   return spec;
 }
+
+function layoutNodes(spec, view) {
+  if (view === "architecture") return spec.views.architecture.nodes;
+  if (view === "infra") return spec.views.infra.nodes;
+  if (view === "data_model") return spec.views.data_model.entities;
+  if (view === "classes") return spec.views.classes.nodes;
+  return [];
+}
+
+export function hasCollapsedLayout(nodes) {
+  const topLevel = nodes.filter((n) => !n.parent);
+  if (topLevel.length <= 1) return false;
+  const counts = new Map();
+  for (const n of topLevel) {
+    const p = n.position || { x: 0, y: 0 };
+    const x = Number.isFinite(p.x) ? Math.round(p.x) : 0;
+    const y = Number.isFinite(p.y) ? Math.round(p.y) : 0;
+    const key = `${x},${y}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const maxStack = Math.max(...counts.values());
+  return maxStack === topLevel.length || (topLevel.length >= 3 && maxStack >= 3);
+}
+
+export function repairCollapsedLayouts(spec, views = ["architecture", "infra"]) {
+  let changed = false;
+  for (const view of views) {
+    if (hasCollapsedLayout(layoutNodes(spec, view))) {
+      applyAutoLayout(spec, view, view === "architecture" ? "TB" : undefined);
+      changed = true;
+    }
+  }
+  return changed;
+}

@@ -22,6 +22,7 @@ function shared() {
       constraints: await import("../shared/constraints.mjs"),
       handoff: await import("../shared/handoff.mjs"),
       plan: await import("../shared/plan.mjs"),
+      layout: await import("../shared/layout.mjs"),
       schema: await import("./schema.mjs"),
       catalog: await import("../shared/catalog.mjs"),
       chat: await import("./chat.mjs"),
@@ -95,12 +96,13 @@ async function openCanvas(context) {
     new vscode.RelativePattern(workspaceRoot(), vscode.workspace.asRelativePath(specPath()))
   );
   const onExternal = async () => {
-    const { ir } = await shared();
+    const { ir, layout } = await shared();
     try {
       const content = fs.readFileSync(specPath(), "utf8");
       if (content === lastWritten) return; // our own write — ignore
       const { spec } = ir.migrate(JSON.parse(content));
-      lastWritten = JSON.stringify(spec, null, 2);
+      if (layout.repairCollapsedLayouts(spec, ["architecture"])) writeSpec(spec);
+      else lastWritten = JSON.stringify(spec, null, 2);
       post({ type: "spec", spec });
       post({ type: "externalReload" });
     } catch {
@@ -127,10 +129,10 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, plan, schema, catalog, chat } = await shared();
+  const { ir, handoff, plan, schema, catalog, chat, layout } = await shared();
   switch (msg.type) {
     case "ready":
-      post({ type: "spec", spec: readSpec(ir, schema) });
+      post({ type: "spec", spec: readSpec(ir, schema, layout) });
       post({ type: "catalog", catalog: loadCatalog(catalog) });
       return;
 
@@ -419,7 +421,7 @@ function loadCatalog(catalogMod) {
 // writes apart from genuine external edits (no infinite reload loop).
 let lastWritten = null;
 
-function readSpec(ir, schema) {
+function readSpec(ir, schema, layout) {
   const p = specPath();
   if (!fs.existsSync(p)) return ir.emptySpec();
   try {
@@ -427,9 +429,11 @@ function readSpec(ir, schema) {
     // Migrate any legacy shape (0.1.0 research spec, 0.2.0 studio MVP) up to the
     // current multi-view IR. Persist the upgrade so it happens once.
     const { spec, changed, from } = ir.migrate(disk);
-    if (changed) {
+    const repaired = layout?.repairCollapsedLayouts(spec, ["architecture"]);
+    if (changed || repaired) {
       writeSpec(spec);
-      vscode.window.showInformationMessage(`Upgraded design spec ${from} → ${spec.version}.`);
+      if (changed) vscode.window.showInformationMessage(`Upgraded design spec ${from} → ${spec.version}.`);
+      else vscode.window.showInformationMessage("Repaired collapsed architecture layout.");
     }
     // Validate after migration — a clean signal if a hand-edited file drifts.
     const { ok, errors } = schema.validateSpec(spec);

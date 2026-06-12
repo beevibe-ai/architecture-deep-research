@@ -4,6 +4,7 @@
 // from the architecture when no real source does. Shared by the extension host
 // and the debug CLI so the terminal and VS Code produce identical specs.
 import { applyMutation } from "../shared/ir.mjs";
+import { repairCollapsedLayouts } from "../shared/layout.mjs";
 import {
   infraFromCompose,
   infraFromK8s,
@@ -16,6 +17,7 @@ import {
 export function buildAllViews(archSpec, scan) {
   let full = archSpec;
   const apply = (m) => { try { full = applyMutation(full, m); } catch { /* skip a mutation that can't apply */ } };
+  repairCollapsedLayouts(full, ["architecture"]);
 
   // Infra ← docker-compose / k8s manifests.
   const infraMuts = [];

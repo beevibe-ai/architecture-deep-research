@@ -2,6 +2,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { emptySpec, applyMutation, __resetIds } from "./ir.mjs";
+import { hasCollapsedLayout, repairCollapsedLayouts } from "./layout.mjs";
 
 beforeEach(() => __resetIds(0));
 
@@ -34,4 +35,16 @@ test("auto_layout positions data-model and flow views too", () => {
   s = applyMutation(s, { op: "auto_layout", view: "data_model", direction: "LR" });
   const user = s.views.data_model.entities.find((e) => e.name === "User");
   assert.ok(Number.isFinite(user.position.x) && Number.isFinite(user.position.y));
+});
+
+test("repairCollapsedLayouts fixes architecture nodes stacked at the origin", () => {
+  let s = emptySpec();
+  for (const label of ["API", "Daemon", "Scheduler", "Postgres"]) {
+    s = applyMutation(s, { op: "add_node", view: "architecture", type: "service", label, position: { x: 0, y: 0 } });
+  }
+  assert.equal(hasCollapsedLayout(s.views.architecture.nodes), true);
+  assert.equal(repairCollapsedLayouts(s, ["architecture"]), true);
+  assert.equal(hasCollapsedLayout(s.views.architecture.nodes), false);
+  const distinct = new Set(s.views.architecture.nodes.map((n) => `${n.position.x},${n.position.y}`));
+  assert.equal(distinct.size, s.views.architecture.nodes.length);
 });
