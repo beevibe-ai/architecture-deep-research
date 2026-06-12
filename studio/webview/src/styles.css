@@ -216,7 +216,7 @@ body {
 .cp-data { background: #9ee3c6; }
 
 /* ---- canvas ---- */
-.canvas-wrap { position: relative; flex: 1; min-width: 0; }
+.canvas-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; }
 .canvas-toolbar { position: absolute; top: 10px; right: 12px; z-index: 6; display: flex; gap: 6px; align-items: center; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .seg-btn { background: #191c27; color: var(--ink-dim); border: none; padding: 4px 10px; font: inherit; font-size: 11px; cursor: pointer; }
@@ -261,8 +261,23 @@ body {
 }
 
 /* ---- sequence view ---- */
-.seq-wrap { overflow: hidden; }
-.seq-scroll { position: absolute; inset: 0; overflow: auto; padding-top: 4px; }
+.seq-wrap { display: flex; flex-direction: column; overflow: hidden; }
+.seq-wrap .flow-bar {
+  position: relative;
+  top: auto;
+  left: auto;
+  z-index: 5;
+  flex: 0 0 auto;
+  margin: 10px 12px 0;
+  max-width: calc(100% - 24px);
+}
+.seq-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 16px 28px;
+}
 .seq-svg { display: block; }
 
 /* ---- UML class node ---- */
