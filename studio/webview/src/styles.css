@@ -159,6 +159,7 @@ body {
 .mini-btn { background: #232734; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
 .mini-btn.ghost { background: transparent; color: var(--ink-dim); }
 .mini-btn.on { background: var(--accent); color: #14161f; border-color: var(--accent); font-weight: 600; }
+.mini-meta { color: var(--ink-dim); font-size: 11px; padding: 0 4px; white-space: nowrap; }
 .skill-select { font: inherit; font-size: 11px; appearance: auto; }
 .mini-btn.danger { color: #ffb4b4; border-color: #5a2e2e; margin-top: 8px; width: 100%; }
 .mini-btn.danger:hover { background: #3a2a2a; }
@@ -221,6 +222,15 @@ body {
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .seg-btn { background: #191c27; color: var(--ink-dim); border: none; padding: 4px 10px; font: inherit; font-size: 11px; cursor: pointer; }
 .seg-btn.on { background: var(--accent); color: #14161f; font-weight: 600; }
+.react-flow__controls { background: #1b1e2a; border: 1px solid var(--line); box-shadow: none; }
+.react-flow__controls-button {
+  background: #232734;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  fill: var(--ink);
+}
+.react-flow__controls-button:hover { background: #2a3040; }
+.react-flow__controls-button svg { fill: currentColor; }
 
 /* edge colors by kind */
 .react-flow__edge.ek-call .react-flow__edge-path { stroke: #7fa8ff; }

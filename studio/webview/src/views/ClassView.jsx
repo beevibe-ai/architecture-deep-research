@@ -38,6 +38,31 @@ function ClassNode({ data, selected }) {
   );
 }
 const nodeTypes = { uml: ClassNode };
+const OVERVIEW_LIMIT = 24;
+const GRID_COLS = 4;
+const GRID_X = 260;
+const GRID_Y = 170;
+const GRID_POS = { x: 60, y: 80 };
+
+function classRank(classes, edges) {
+  const degree = new Map();
+  for (const e of edges) {
+    degree.set(e.from, (degree.get(e.from) || 0) + 1);
+    degree.set(e.to, (degree.get(e.to) || 0) + 1);
+  }
+  return [...classes].sort((a, b) => {
+    const ar = (degree.get(a.id) || 0) * 20 + (a.members?.length || 0) + (a.stereotype === "interface" ? -2 : 0);
+    const br = (degree.get(b.id) || 0) * 20 + (b.members?.length || 0) + (b.stereotype === "interface" ? -2 : 0);
+    return br - ar || a.name.localeCompare(b.name);
+  });
+}
+
+function overviewPosition(i) {
+  return {
+    x: GRID_POS.x + (i % GRID_COLS) * GRID_X,
+    y: GRID_POS.y + Math.floor(i / GRID_COLS) * GRID_Y,
+  };
+}
 
 function Inner({ spec, commit }) {
   const classes = spec.views.classes.nodes;
@@ -46,28 +71,59 @@ function Inner({ spec, commit }) {
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const [mode, setMode] = useState("overview"); // "overview" | "all"
+  const { screenToFlowPosition, fitView } = useReactFlow();
+  const overview = mode === "overview" && classes.length > OVERVIEW_LIMIT;
+  const rankedClasses = useMemo(() => classRank(classes, edges), [classes, edges]);
+  const shownClasses = useMemo(
+    () => (overview ? rankedClasses.slice(0, OVERVIEW_LIMIT) : classes),
+    [overview, rankedClasses, classes]
+  );
+  const shownIds = useMemo(() => new Set(shownClasses.map((c) => c.id)), [shownClasses]);
+  const shownEdges = useMemo(() => edges.filter((e) => shownIds.has(e.from) && shownIds.has(e.to)), [edges, shownIds]);
 
   useEffect(() => {
-    setRfNodes(classes.map((c) => ({ id: c.id, type: "uml", position: c.position || { x: 0, y: 0 }, data: { node: c }, selected: c.id === selectedId })));
-    setRfEdges(edges.map((e) => ({
+    if (selectedId && !shownIds.has(selectedId)) setSelectedId(null);
+    if (selectedEdgeId && !shownEdges.some((e) => e.id === selectedEdgeId)) setSelectedEdgeId(null);
+  }, [selectedId, selectedEdgeId, shownIds, shownEdges]);
+
+  useEffect(() => {
+    setRfNodes(shownClasses.map((c, i) => ({
+      id: c.id,
+      type: "uml",
+      position: overview ? overviewPosition(i) : c.position || { x: 0, y: 0 },
+      data: { node: c },
+      selected: c.id === selectedId,
+    })));
+    setRfEdges(shownEdges.map((e) => ({
       id: e.id, source: e.from, target: e.to, label: e.kind,
       // Inheritance points to the parent with a hollow triangle (Mermaid-style).
       markerEnd: { type: e.kind === "inherits" || e.kind === "implements" ? MarkerType.ArrowClosed : MarkerType.Arrow },
       className: `cl-${e.kind}`,
     })));
-  }, [spec, selectedId, classes, edges, setRfNodes, setRfEdges]);
+  }, [spec, selectedId, shownClasses, shownEdges, overview, setRfNodes, setRfEdges]);
 
-  const onConnect = useCallback((c) => commit(applyMutation(spec, { op: "connect_class", view: "classes", from: c.source, to: c.target, kind: "inherits" })), [spec, commit]);
-  const onNodeDragStop = useCallback((_e, n) => commit(applyMutation(spec, { op: "update_class", view: "classes", id: n.id, position: n.position })), [spec, commit]);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => fitView({ padding: 0.22, maxZoom: 1, duration: 160 }));
+    return () => cancelAnimationFrame(raf);
+  }, [fitView, mode, shownClasses.length]);
+
+  const onConnect = useCallback((c) => {
+    if (overview) return;
+    commit(applyMutation(spec, { op: "connect_class", view: "classes", from: c.source, to: c.target, kind: "inherits" }));
+  }, [spec, commit, overview]);
+  const onNodeDragStop = useCallback((_e, n) => {
+    if (!overview) commit(applyMutation(spec, { op: "update_class", view: "classes", id: n.id, position: n.position }));
+  }, [spec, commit, overview]);
   const onNodesDelete = useCallback((dl) => { let s = spec; for (const d of dl) s = applyMutation(s, { op: "remove_class", view: "classes", ref: d.id }); setSelectedId(null); commit(s); }, [spec, commit]);
   const onEdgesDelete = useCallback((dl) => { let s = spec; for (const d of dl) s = applyMutation(s, { op: "disconnect_class", view: "classes", id: d.id }); commit(s); }, [spec, commit]);
   const onDrop = useCallback((event) => {
     event.preventDefault();
+    if (overview) return;
     if (event.dataTransfer.getData("application/adr-class") !== "1") return;
     const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
     commit(applyMutation(spec, { op: "add_class", view: "classes", name: "NewClass", position, members: [{ kind: "attribute", name: "field", type: "string" }] }));
-  }, [spec, commit, screenToFlowPosition]);
+  }, [spec, commit, screenToFlowPosition, overview]);
   const onDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }, []);
 
   const selected = classes.find((c) => c.id === selectedId) || null;
@@ -87,6 +143,13 @@ function Inner({ spec, commit }) {
 
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
+          {classes.length > OVERVIEW_LIMIT && (
+            <div className="seg" title="Choose how many extracted classes are shown on the canvas">
+              <button className={`seg-btn ${mode === "overview" ? "on" : ""}`} onClick={() => setMode("overview")}>Overview</button>
+              <button className={`seg-btn ${mode === "all" ? "on" : ""}`} onClick={() => setMode("all")}>All</button>
+            </div>
+          )}
+          {classes.length > OVERVIEW_LIMIT && <span className="mini-meta">{shownClasses.length}/{classes.length}</span>}
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "derive", view: "classes" }))}>Sync from architecture</button>
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "classes", direction: "TB" }))}>Auto-arrange</button>
         </div>
@@ -98,7 +161,13 @@ function Inner({ spec, commit }) {
           onNodeClick={(_e, n) => { setSelectedId(n.id); setSelectedEdgeId(null); }}
           onEdgeClick={(_e, ed) => { setSelectedEdgeId(ed.id); setSelectedId(null); }}
           onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); }}
-          fitView proOptions={{ hideAttribution: true }}
+          fitView fitViewOptions={{ padding: 0.22, maxZoom: 1 }}
+          minZoom={0.16}
+          nodesDraggable={!overview}
+          nodesConnectable={!overview}
+          nodesDeletable={!overview}
+          edgesDeletable={!overview}
+          proOptions={{ hideAttribution: true }}
         >
           <Background gap={18} color="#2a2d3a" />
           <Controls />
