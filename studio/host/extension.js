@@ -202,7 +202,7 @@ async function handleMessage(msg) {
       return;
 
     case "generateOptions":
-      await generateOptions(ir, chat, catalog, msg.spec);
+      await generateOptions(ir, chat, catalog, msg.spec, msg.idea || "");
       return;
 
     case "scanRepo":
@@ -260,8 +260,9 @@ function requirementsText(spec) {
   return reqs.map((n) => `- [${n.kind}${n.priority ? "/" + n.priority : ""}] ${n.title}${n.body ? ": " + n.body : ""}`).join("\n");
 }
 
-async function generateOptions(ir, chat, catalog, baseSpec) {
-  post({ type: "optionsStart", count: OPTION_ANGLES.length });
+async function generateOptions(ir, chat, catalog, baseSpec, idea = "") {
+  const cleanIdea = String(idea || "").trim();
+  post({ type: "optionsStart", count: OPTION_ANGLES.length, idea: cleanIdea });
   const { provider, key, model } = await resolveLlm();
   if (!key) {
     post({ type: "optionsError", message: "The assistant needs an API key. Run “ADR Studio: Set Anthropic API Key” or set a key." });
@@ -272,14 +273,17 @@ async function generateOptions(ir, chat, catalog, baseSpec) {
   for (let i = 0; i < OPTION_ANGLES.length; i++) {
     const angle = OPTION_ANGLES[i];
     post({ type: "optionsProgress", index: i, label: angle.label });
-    const seed = ir.emptySpec();
-    seed.decision = { ...baseSpec.decision };
-    seed.domain_model = baseSpec.domain_model;
-    seed.notes = baseSpec.notes || [];
-    const instr =
-      `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
-      `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
-      `When done, reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS approach.`;
+    const seed = cleanIdea ? JSON.parse(JSON.stringify(baseSpec)) : ir.emptySpec();
+    if (!cleanIdea) {
+      seed.decision = { ...baseSpec.decision };
+      seed.domain_model = baseSpec.domain_model;
+      seed.notes = baseSpec.notes || [];
+    }
+    const instr = cleanIdea
+      ? `Current design is loaded in the canvas. User idea:\n${cleanIdea}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Use apply_skill and arch_* tools to add, remove, connect, or refine architecture elements; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS changed version.`
+      : `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
+        `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
+        `When done, reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS approach.`;
     try {
       const result = await chat.runAssistant({ userText: instr, spec: seed, provider, model, apiKey: key, catalog: loadCatalog(catalog) });
       options.push({
@@ -287,13 +291,14 @@ async function generateOptions(ir, chat, catalog, baseSpec) {
         label: angle.label,
         rationale: result.text,
         architecture: result.spec.views.architecture,
+        notes: result.spec.notes || [],
         components: result.spec.views.architecture.nodes.filter((n) => !n.parent).map((n) => n.label),
       });
     } catch (err) {
       options.push({ id: angle.id, label: angle.label, rationale: `(generation failed: ${err.message})`, architecture: { nodes: [], edges: [] }, components: [] });
     }
   }
-  post({ type: "options", options });
+  post({ type: "options", options, idea: cleanIdea });
 }
 
 // Reality-binding: scan the real repo and reconstruct the system it actually

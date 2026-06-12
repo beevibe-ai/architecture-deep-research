@@ -87,13 +87,13 @@ export default function App() {
           flash("Spec reloaded from disk");
           break;
         case "optionsStart":
-          setOptions({ status: "generating", count: msg.count, progress: null, options: [] });
+          setOptions({ status: "generating", count: msg.count, progress: null, options: [], idea: msg.idea || "" });
           break;
         case "optionsProgress":
           setOptions((o) => (o ? { ...o, progress: { index: msg.index, label: msg.label } } : o));
           break;
         case "options":
-          setOptions({ status: "ready", options: msg.options });
+          setOptions({ status: "ready", options: msg.options, idea: msg.idea || "" });
           break;
         case "optionsError":
           setOptions(null);
@@ -200,6 +200,16 @@ export default function App() {
     [spec, recordHistory]
   );
 
+  const suggestOptions = useCallback(
+    (idea) => {
+      const text = idea.trim();
+      if (!text) return;
+      setMessages((m) => [...m, { role: "user", text: `Explore: ${text}` }]);
+      post({ type: "generateOptions", spec, idea: text });
+    },
+    [spec]
+  );
+
   const exportHandoff = useCallback(() => {
     post({ type: "export", spec });
   }, [spec]);
@@ -215,6 +225,7 @@ export default function App() {
       const next = {
         ...spec,
         views: { ...spec.views, architecture: opt.architecture },
+        notes: opt.notes || spec.notes,
         cross_refs: (spec.cross_refs || []).filter((x) => x.from.view !== "architecture" && x.to.view !== "architecture"),
       };
       commit(next);
@@ -319,6 +330,7 @@ export default function App() {
           messages={messages}
           busy={busy}
           onSend={sendChat}
+          onSuggest={suggestOptions}
           violations={violations}
           onWritePlan={writePlan}
         />
