@@ -48,10 +48,11 @@ function GroupNode({ data }) {
 }
 function LeafNode({ data, selected }) {
   return (
-    <div className={`infra-leaf ${data.bad ? "bad" : ""} ${selected ? "sel" : ""}`}>
+    <div className={`infra-leaf ${data.type === "deploy_gap" ? "gap" : ""} ${data.bad ? "bad" : ""} ${selected ? "sel" : ""}`}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="infra-leaf-type">{data.typeLabel}</div>
       <div className="infra-leaf-label">{data.label}</div>
+      {data.reason ? <div className="infra-leaf-note">{data.reason}</div> : null}
       <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
   );
@@ -88,7 +89,15 @@ function Inner({ spec, commit }) {
           id: n.id,
           type: container ? "infraGroup" : "infraLeaf",
           position: n.position || { x: 0, y: 0 },
-          data: { label: n.label, typeLabel: t?.label || n.type, level: t?.level, bad: vIndex.nodes.has(n.id), ...(container ? size : {}) },
+          data: {
+            label: n.label,
+            type: n.type,
+            typeLabel: t?.label || n.type,
+            level: t?.level,
+            bad: vIndex.nodes.has(n.id),
+            reason: n.props?.reason,
+            ...(container ? size : {}),
+          },
           selected: n.id === selectedId,
         };
         if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }

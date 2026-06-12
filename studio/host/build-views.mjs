@@ -26,15 +26,15 @@ export function buildAllViews(archSpec, scan) {
   }
   if (infraMuts.length) {
     infraMuts.forEach(apply);
-    apply({ op: "auto_layout", view: "infra" });
     // Link each real infra node back to the architecture component it deploys
     // (traceability), matching on normalized label containment.
-    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     for (const inf of full.views.infra.nodes) {
       if (inf.parent) continue;
-      const comp = full.views.architecture.nodes.find((n) => !n.parent && (norm(n.label).includes(norm(inf.label)) || norm(inf.label).includes(norm(n.label))));
+      const comp = full.views.architecture.nodes.find((n) => !n.parent && sameThing(n.label, inf.label));
       if (comp) apply({ op: "realize", component: comp.label, infra: inf.label });
     }
+    addMissingDeployGaps(full).forEach(apply);
+    apply({ op: "auto_layout", view: "infra" });
   } else apply({ op: "derive", view: "infra" });
 
   // Data model ← SQL migrations / schema files.
@@ -60,3 +60,41 @@ export function buildAllViews(archSpec, scan) {
   else apply({ op: "derive", view: "sequences" });
   return full;
 }
+
+function addMissingDeployGaps(spec) {
+  const realized = new Set(
+    (spec.cross_refs || [])
+      .filter((x) => x.kind === "deployed_as" && x.from.view === "architecture")
+      .map((x) => x.from.ref)
+  );
+  const muts = [];
+  for (const c of spec.views.architecture.nodes) {
+    if (c.parent || realized.has(c.id)) continue;
+    if (c.kind === "client" || c.kind === "external") continue;
+    muts.push({
+      op: "add_infra",
+      view: "infra",
+      type: "deploy_gap",
+      label: c.label,
+      props: {
+        source: "architecture",
+        component: c.label,
+        reason: "No docker-compose/k8s resource found",
+      },
+    });
+    muts.push({
+      op: "link",
+      from: { view: "architecture", ref: c.id },
+      to: { view: "infra", ref: c.label },
+      kind: "runs_on",
+    });
+  }
+  return muts;
+}
+
+function sameThing(a, b) {
+  const x = norm(a), y = norm(b);
+  return x && y && (x.includes(y) || y.includes(x));
+}
+
+const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");

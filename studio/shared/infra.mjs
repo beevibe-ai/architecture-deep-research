@@ -38,6 +38,7 @@ export const INFRA_CATALOG = [
   I("node", "cluster", "Node", "node", { props: { instance_type: "m6i.large" } }),
   // ---- workloads ----
   I("deployment", "workload", "Deployment", "workload", { contains: ["pod"], k8sKind: "Deployment", props: { image: "app:latest", replicas: 2, cpu: "500m", memory: "512Mi", gpu: 0, port: 8080 } }),
+  I("deploy_gap", "workload", "Missing Deploy Config", "leaf", { props: { source: "architecture", reason: "No docker-compose/k8s resource found" } }),
   I("statefulset", "workload", "StatefulSet", "workload", { contains: ["pod"], k8sKind: "StatefulSet", props: { image: "app:latest", replicas: 3, cpu: "1", memory: "2Gi", port: 8080 } }),
   I("daemonset", "workload", "DaemonSet", "workload", { contains: ["pod"], k8sKind: "DaemonSet", props: { image: "agent:latest" } }),
   I("job", "workload", "Job / CronJob", "workload", { k8sKind: "Job", props: { image: "job:latest", schedule: "" } }),

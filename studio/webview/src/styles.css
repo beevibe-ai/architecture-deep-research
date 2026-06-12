@@ -322,9 +322,11 @@ body {
   padding: 6px 11px; min-width: 110px; color: var(--ink);
 }
 .infra-leaf.sel { box-shadow: 0 0 0 2px #7fd7ff; }
+.infra-leaf.gap { border-color: #ffd7a3; border-style: dashed; background: rgba(255, 215, 163, 0.06); }
 .infra-leaf.bad { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad), 0 0 16px #ff6b6b55; }
 .infra-leaf-type { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-dim); }
 .infra-leaf-label { font-weight: 600; font-size: 12px; }
+.infra-leaf-note { color: #ffd7a3; font-size: 10px; line-height: 1.25; margin-top: 4px; max-width: 190px; }
 .prop-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .prop-key { flex: 0 0 92px; font-size: 11px; color: var(--ink-dim); }
 .prop-row input[type="text"], .prop-row input:not([type]), .prop-row input[type="number"] {
