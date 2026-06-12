@@ -150,6 +150,20 @@ function nextId(prefix) {
   _seq += 1;
   return `${prefix}_${_seq}`;
 }
+function syncIdCounter(spec) {
+  let max = 0;
+  const walk = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.id === "string") {
+      const match = value.id.match(/_(\d+)$/);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+    if (Array.isArray(value)) for (const item of value) walk(item);
+    else for (const item of Object.values(value)) walk(item);
+  };
+  walk(spec);
+  if (max > _seq) _seq = max;
+}
 // Test-only reset so suites don't leak counter state into each other.
 export function __resetIds(n = 0) {
   _seq = n;
@@ -325,6 +339,7 @@ function resolveStep(flow, ref) {
 // Apply one structured mutation, returning a NEW spec (no in-place edits on the
 // input). Drag-drop commits and assistant tool-calls both come through here.
 export function applyMutation(spec, m) {
+  syncIdCounter(spec);
   // The skill harness: expand a recipe into its mutations, apply them in order,
   // then auto-lay-out the affected view. Coherent-by-construction.
   if (m.op === "apply_skill") {

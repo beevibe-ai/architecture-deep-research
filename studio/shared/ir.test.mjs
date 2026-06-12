@@ -24,6 +24,14 @@ test("applyMutation returns a new spec and never mutates the input", () => {
   assert.equal(s2.views.architecture.nodes.length, 1);
 });
 
+test("applyMutation seeds ids from a loaded spec before creating new elements", () => {
+  let s = emptySpec();
+  s.views.infra.nodes.push({ id: "inf_12", type: "service", label: "loaded", props: {}, position: { x: 0, y: 0 } });
+  __resetIds(0); // simulate a fresh webview/extension process opening an existing spec
+  s = applyMutation(s, { op: "add_infra", view: "infra", type: "service", label: "new" });
+  assert.equal(s.views.infra.nodes.at(-1).id, "inf_13");
+});
+
 test("architecture: add + connect builds a wired graph; remove cascades to edges", () => {
   let s = emptySpec();
   s = applyMutation(s, { op: "add_node", view: "architecture", kind: "service", label: "API" });

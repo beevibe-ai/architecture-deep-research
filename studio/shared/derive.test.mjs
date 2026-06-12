@@ -37,6 +37,22 @@ test("derive infra is idempotent — re-deriving adds nothing", () => {
   assert.equal(s.views.infra.nodes.length, n1);
 });
 
+test("derive infra treats scan deploy gaps as represented components", () => {
+  let s = arch();
+  const api = s.views.architecture.nodes.find((n) => n.label === "API");
+  s = applyMutation(s, { op: "add_infra", view: "infra", type: "deploy_gap", label: "API", props: { component: "API" } });
+  const gap = s.views.infra.nodes.find((n) => n.label === "API");
+  s = applyMutation(s, {
+    op: "add_cross_ref",
+    from: { view: "architecture", ref: api.id },
+    to: { view: "infra", ref: gap.id },
+    kind: "runs_on",
+  });
+  s = applyMutation(s, { op: "derive", view: "infra" });
+  assert.equal(s.views.infra.nodes.filter((n) => n.label === "API").length, 1);
+  assert.equal(s.views.infra.nodes.some((n) => n.label === "API svc"), false);
+});
+
 test("derive sequences: components become participants, wiring becomes messages", () => {
   const s = applyMutation(arch(), { op: "derive", view: "sequences" });
   const seq = s.views.sequences.find((x) => x.name === "Interactions");

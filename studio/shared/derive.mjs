@@ -21,20 +21,30 @@ function infraFor(node) {
 // linked with a deployed_as cross_ref. Skips components already deployed.
 function deriveInfra(spec) {
   const arch = spec.views.architecture.nodes;
+  const infra = spec.views.infra.nodes;
   const muts = [];
-  const haveCluster = spec.views.infra.nodes.some((n) => n.type === "cluster");
-  if (!haveCluster) {
+  const represented = new Set(
+    (spec.cross_refs || [])
+      .filter((x) => (x.kind === "deployed_as" || x.kind === "runs_on") && x.from.view === "architecture")
+      .map((x) => x.from.ref)
+  );
+  const representedLabels = new Set(
+    infra.flatMap((n) => [n.label, n.props?.component]).filter(Boolean).map((x) => String(x).toLowerCase())
+  );
+  const candidates = [];
+  for (const c of arch) {
+    if (c.parent) continue; // skip nested internals (the runtime maps as a whole)
+    if (represented.has(c.id) || representedLabels.has(String(c.label).toLowerCase())) continue;
+    const map = infraFor(c);
+    if (map) candidates.push({ component: c, map });
+  }
+
+  const haveCluster = infra.some((n) => n.type === "cluster");
+  if (!haveCluster && candidates.some(({ map }) => !map.cloud)) {
     muts.push({ op: "add_infra", view: "infra", type: "cluster", label: "cluster" });
     muts.push({ op: "add_infra", view: "infra", type: "namespace", label: "app", parent: "cluster", props: { name: "app" } });
   }
-  const deployed = new Set(
-    (spec.cross_refs || []).filter((x) => x.kind === "deployed_as" && x.from.view === "architecture").map((x) => x.from.ref)
-  );
-  for (const c of arch) {
-    if (c.parent) continue; // skip nested internals (the runtime maps as a whole)
-    if (deployed.has(c.id)) continue;
-    const map = infraFor(c);
-    if (!map) continue;
+  for (const { component: c, map } of candidates) {
     const label = c.label;
     muts.push({ op: "add_infra", view: "infra", type: map.type, label, ...(map.cloud ? {} : { parent: "app" }), props: map.cloud ? {} : { image: `${slug(label)}:latest` } });
     muts.push({ op: "realize", component: c.label, infra: label }); // deployed_as cross_ref
