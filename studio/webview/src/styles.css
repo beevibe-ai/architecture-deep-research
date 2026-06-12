@@ -186,6 +186,8 @@ body {
   background: #191c27;
 }
 .chip:active { cursor: grabbing; }
+.chip.disabled { cursor: default; opacity: 0.55; }
+.chip.disabled:active { cursor: default; }
 .dot { width: 9px; height: 9px; border-radius: 50%; }
 .dot-service { background: #b9c5ff; }
 .dot-datastore { background: #9ee3c6; }
