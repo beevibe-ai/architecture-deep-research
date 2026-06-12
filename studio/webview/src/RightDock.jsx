@@ -16,6 +16,10 @@ const TABS = [
 
 export default function RightDock({ spec, commit, messages, busy, onSend, violations, onWritePlan }) {
   const [tab, setTab] = useState("assistant");
+  const sendFromNotes = (text) => {
+    setTab("assistant");
+    onSend(text);
+  };
   return (
     <aside className="dock">
       <div className="dock-tabs">
@@ -29,7 +33,7 @@ export default function RightDock({ spec, commit, messages, busy, onSend, violat
         {tab === "assistant" && (
           <ChatSidebar messages={messages} busy={busy} onSend={onSend} violations={violations} />
         )}
-        {tab === "notes" && <NotesPanel spec={spec} commit={commit} />}
+        {tab === "notes" && <NotesPanel spec={spec} commit={commit} busy={busy} onSend={sendFromNotes} />}
         {tab === "ir" && <IrJsonPanel spec={spec} />}
         {tab === "plan" && <PlanPanel spec={spec} onWritePlan={onWritePlan} />}
       </div>
