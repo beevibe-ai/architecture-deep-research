@@ -26,6 +26,7 @@ function shared() {
       schema: await import("./schema.mjs"),
       catalog: await import("../shared/catalog.mjs"),
       chat: await import("./chat.mjs"),
+      providers: await import("./providers.mjs"),
       drift: await import("../shared/drift.mjs"),
       buildViews: await import("./build-views.mjs"),
       repoScan: await import("./repo-scan.mjs"),
@@ -48,11 +49,14 @@ function activate(context) {
 // Prompt for a provider + key and store it in VS Code SecretStorage — no JSON
 // editing, no key in settings, survives restarts.
 async function setApiKey() {
+  const { providers } = await shared();
   const pick = await vscode.window.showQuickPick(
-    [
-      { label: "Anthropic", id: "anthropic", placeHolder: "sk-ant-…" },
-      { label: "OpenAI", id: "openai", placeHolder: "sk-…" },
-    ],
+    providers.providerDefinitions().map((p) => ({
+      label: p.label,
+      id: p.id,
+      description: p.id === "openai-compatible" ? "Use your own OpenAI-compatible base URL" : p.baseURL || "",
+      placeHolder: p.id === "anthropic" ? "sk-ant-…" : "API key",
+    })),
     { placeHolder: "Which provider's API key?" }
   );
   if (!pick) return;
@@ -129,7 +133,7 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, plan, schema, catalog, chat, layout } = await shared();
+  const { ir, handoff, plan, schema, catalog, chat, layout, constraints } = await shared();
   switch (msg.type) {
     case "ready":
       post({ type: "spec", spec: readSpec(ir, schema, layout) });
@@ -193,13 +197,17 @@ async function handleMessage(msg) {
     }
 
     case "chat":
-      await runAssistantTurn(chat, catalog, msg.text, msg.spec);
+      await runAssistantTurn(chat, catalog, constraints, msg.text, msg.spec);
+      return;
+
+    case "architectReview":
+      await runArchitectReview(chat, catalog, msg.text, msg.spec);
       return;
 
     case "deriveLLM":
       // Use the LLM to derive a view from the architecture where there's no clean
       // structural mapping (e.g. flows). It edits via the real tools.
-      await runAssistantTurn(chat, catalog, deriveInstruction(msg.view), msg.spec);
+      await runAssistantTurn(chat, catalog, constraints, deriveInstruction(msg.view), msg.spec);
       return;
 
     case "generateOptions":
@@ -220,30 +228,101 @@ function post(message) {
 }
 
 // Resolve the active provider + key + model, auto-switching to whichever provider
-// actually has a key (so an existing OpenAI key works without touching settings).
+// actually has a key (so quota exhaustion can be handled by saving another key).
 async function resolveLlm() {
-  let provider = config().get("provider") || "anthropic";
-  let key = await apiKey(provider);
-  if (!key) {
-    const other = provider === "anthropic" ? "openai" : "anthropic";
-    const otherKey = await apiKey(other);
-    if (otherKey) { provider = other; key = otherKey; }
+  const candidates = await resolveLlmCandidates();
+  return candidates[0] || { provider: config().get("provider") || "anthropic", key: null, model: "" };
+}
+
+async function resolveLlmCandidates() {
+  const { providers } = await shared();
+  const configured = config().get("provider") || "anthropic";
+  const ids = providers.providerDefinitions().map((p) => p.id);
+  const preferred = ids.includes(configured) ? configured : "anthropic";
+  const ordered = [preferred, ...ids.filter((id) => id !== preferred)];
+  const candidates = [];
+  for (const provider of ordered) {
+    const key = await apiKey(provider);
+    if (!key) continue;
+    const baseURL = provider === "openai-compatible" ? customBaseUrl() : undefined;
+    if (provider === "openai-compatible" && !baseURL) continue;
+    const modelSetting = providers.modelSetting(provider);
+    const model = config().get(modelSetting) || providers.defaultModel(provider);
+    candidates.push({ provider, key, model, baseURL });
   }
-  const model = provider === "openai" ? config().get("openaiModel") : config().get("model");
-  return { provider, key, model };
+  return candidates;
+}
+
+function isProviderQuotaError(err) {
+  const text = String(err?.message || err || "").toLowerCase();
+  return /quota|insufficient_quota|rate.?limit|billing|credit|429|too many requests/.test(text);
+}
+
+async function withLlmFallback(run) {
+  const { providers } = await shared();
+  const candidates = await resolveLlmCandidates();
+  if (!candidates.length) return run({ provider: config().get("provider") || "anthropic", key: null, model: "" });
+  let lastErr = null;
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    try {
+      if (i > 0) {
+        post({ type: "chatToken", text: `\n\nSwitching to ${providers.providerLabel(candidate.provider)} because the previous provider hit a quota or rate-limit issue...\n` });
+      }
+      return await run(candidate);
+    } catch (err) {
+      lastErr = err;
+      if (!isProviderQuotaError(err) || i === candidates.length - 1) throw err;
+    }
+  }
+  throw lastErr;
 }
 
 // Run one streaming assistant turn (used by chat and by LLM-derivation).
-async function runAssistantTurn(chat, catalog, userText, spec) {
+function violationKey(v) {
+  return [v.constraintId, v.view, v.nodeId || "", v.edgeId || "", v.message].join("|");
+}
+
+function addedViolations(constraints, beforeSpec, nextSpec) {
+  const before = new Set(constraints.lint(beforeSpec).violations.map(violationKey));
+  return constraints.lint(nextSpec).violations.filter((v) => !before.has(violationKey(v)));
+}
+
+async function runAssistantTurn(chat, catalog, constraints, userText, spec) {
   post({ type: "chatStart" });
-  const { provider, key, model } = await resolveLlm();
-  const result = await chat.runAssistant({
-    userText, spec, provider, model, apiKey: key,
-    catalog: loadCatalog(catalog),
-    onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
-  });
+  const result = await withLlmFallback(({ provider, key, model, baseURL }) => chat.runAssistant({
+      userText, spec, provider, model, apiKey: key, baseURL,
+      catalog: loadCatalog(catalog),
+      onEvent: post, // streams { type: "chatToken" | "specPatch", ... } to the webview
+    }));
+  const newIssues = addedViolations(constraints, spec, result.spec);
+  if (newIssues.length) {
+    const sample = newIssues.slice(0, 3).map((v) => `- ${v.message}`).join("\n");
+    post({
+      type: "chatDone",
+      text: `I stopped short because the direct edit would introduce ${newIssues.length} new issue${newIssues.length === 1 ? "" : "s"}:\n${sample}\n\nUse Preview for a safer option set, or revise the request with the constraint you want preserved.`,
+      spec,
+      trace: result.trace,
+    });
+    return;
+  }
   writeSpec(result.spec);
   post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace });
+}
+
+async function runArchitectReview(chat, catalog, userText, spec) {
+  post({ type: "chatStart" });
+  const result = await withLlmFallback(({ provider, key, model, baseURL }) => chat.runArchitectReview({
+      userText,
+      spec,
+      provider,
+      model,
+      apiKey: key,
+      baseURL,
+      catalog: loadCatalog(catalog),
+      onEvent: post,
+    }));
+  post({ type: "chatDone", text: result.text, spec, trace: [] });
 }
 
 // Generate candidate architectures from the captured requirements — each built
@@ -265,9 +344,9 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context =
   const cleanIdea = String(idea || "").trim();
   const cleanContext = String(context || "").trim();
   post({ type: "optionsStart", count: OPTION_ANGLES.length, idea: cleanIdea });
-  const { provider, key, model } = await resolveLlm();
-  if (!key) {
-    post({ type: "optionsError", message: "The assistant needs an API key. Run “ADR Studio: Set Anthropic API Key” or set a key." });
+  const candidates = await resolveLlmCandidates();
+  if (!candidates.length) {
+    post({ type: "optionsError", message: "The assistant needs an API key. Run “ADR Studio: Set LLM API Key” or set a provider env var." });
     return;
   }
   const reqs = requirementsText(baseSpec);
@@ -285,12 +364,14 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context =
       ? `User idea:\n${cleanIdea}${cleanContext ? `\n\nAdditional architecture guidance:\n${cleanContext}` : ""}`
       : "";
     const instr = cleanIdea
-      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Use apply_skill and arch_* tools to add, remove, connect, or refine architecture elements; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS changed version.`
+      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, update, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Keep this as a small diff: for a short/vague idea, add at most two top-level architecture components and four edges unless the idea explicitly needs more. Prefer removals, rewiring, notes, and edge semantics over new boxes. Use apply_skill and arch_* tools only when they produce a coherent minimal change; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS changed version.`
       : `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
         `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
         `When done, reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS approach.`;
     try {
-      const result = await chat.runAssistant({ userText: instr, spec: seed, provider, model, apiKey: key, catalog: loadCatalog(catalog) });
+      const result = await withLlmFallback(({ provider, key, model, baseURL }) =>
+        chat.runAssistant({ userText: instr, spec: seed, provider, model, apiKey: key, baseURL, catalog: loadCatalog(catalog) })
+      );
       options.push({
         id: angle.id,
         label: angle.label,
@@ -316,9 +397,9 @@ async function scanAndDrift(designSpec) {
   const repoPath = config().get("repoPath") || workspaceRoot();
   post({ type: "scanStart", repo: vscode.workspace.asRelativePath(repoPath) || repoPath });
 
-  const { provider, key, model } = await resolveLlm();
-  if (!key) {
-    post({ type: "scanError", message: "The assistant needs an API key to read the repo. Run “ADR Studio: Set API Key”." });
+  const candidates = await resolveLlmCandidates();
+  if (!candidates.length) {
+    post({ type: "scanError", message: "The assistant needs an API key to read the repo. Run “ADR Studio: Set LLM API Key” or set a provider env var." });
     return;
   }
 
@@ -338,11 +419,14 @@ async function scanAndDrift(designSpec) {
   try {
     // Stream tokens (so the user sees progress) but NOT specPatch — the inferred
     // spec is isolated and must not touch the live canvas.
-    const result = await chat.runAssistant({
-      userText: instruction, spec: seed, provider, model, apiKey: key,
-      catalog: loadCatalog(catalog),
-      onEvent: (e) => { if (e.type === "chatToken") post({ type: "scanToken", text: e.text }); },
-    });
+    const result = await withLlmFallback(({ provider, key, model, baseURL }) =>
+      chat.runAssistant({
+        userText: instruction, spec: seed, provider, model, apiKey: key,
+        baseURL,
+        catalog: loadCatalog(catalog),
+        onEvent: (e) => { if (e.type === "chatToken") post({ type: "scanToken", text: e.text }); },
+      })
+    );
     actual = result.spec;
   } catch (err) {
     post({ type: "scanError", message: `Inference failed: ${err.message}` });
@@ -388,6 +472,10 @@ function deriveInstruction(view) {
 
 function config() {
   return vscode.workspace.getConfiguration("adrStudio");
+}
+
+function customBaseUrl() {
+  return String(config().get("openaiCompatibleBaseUrl") || "").trim();
 }
 
 function workspaceRoot() {
@@ -467,6 +555,8 @@ function writeSpec(spec) {
 async function apiKey(provider = "anthropic") {
   // SecretStorage (set via the command) → env → ~/.adr/config.json. Falls back
   // to null so the assistant shows a clear setup hint rather than a mock reply.
+  const { providers } = await shared();
+  const envNames = providers.providerEnvNames(provider);
   try {
     if (secrets) {
       const stored = await secrets.get(`adrStudio.${provider}Key`);
@@ -475,14 +565,14 @@ async function apiKey(provider = "anthropic") {
   } catch {
     /* ignore */
   }
-  const envName = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
-  if (process.env[envName]) return process.env[envName];
+  for (const envName of envNames) if (process.env[envName]) return process.env[envName];
   try {
     const cfg = path.join(require("os").homedir(), ".adr", "config.json");
     if (fs.existsSync(cfg)) {
       const j = JSON.parse(fs.readFileSync(cfg, "utf8"));
-      if (provider === "openai") return j.OPENAI_API_KEY || j.ADR_OPENAI_API_KEY || null;
-      return j.ANTHROPIC_API_KEY || j.ADR_ANTHROPIC_API_KEY || j.anthropicApiKey || null;
+      for (const envName of envNames) if (j[envName]) return j[envName];
+      const camel = provider.replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+      return j[`${camel}ApiKey`] || null;
     }
   } catch {
     /* ignore */

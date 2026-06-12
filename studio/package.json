@@ -36,7 +36,7 @@
       },
       {
         "command": "adrStudio.setApiKey",
-        "title": "Set Anthropic API Key",
+        "title": "Set LLM API Key",
         "category": "ADR Studio"
       }
     ],
@@ -50,9 +50,9 @@
         },
         "adrStudio.provider": {
           "type": "string",
-          "enum": ["anthropic", "openai"],
+          "enum": ["anthropic", "openai", "openrouter", "groq", "together", "openai-compatible"],
           "default": "anthropic",
-          "description": "Which LLM provider powers the design assistant. Set the key via 'ADR Studio: Set Anthropic API Key'."
+          "description": "Which LLM provider powers the design assistant. Set the key via 'ADR Studio: Set LLM API Key'."
         },
         "adrStudio.model": {
           "type": "string",
@@ -63,6 +63,31 @@
           "type": "string",
           "default": "gpt-4o",
           "description": "OpenAI model the design assistant uses (when provider is openai)."
+        },
+        "adrStudio.openrouterModel": {
+          "type": "string",
+          "default": "openrouter/auto",
+          "description": "OpenRouter model used by the design assistant (when provider is openrouter)."
+        },
+        "adrStudio.groqModel": {
+          "type": "string",
+          "default": "llama-3.3-70b-versatile",
+          "description": "Groq model used by the design assistant (when provider is groq)."
+        },
+        "adrStudio.togetherModel": {
+          "type": "string",
+          "default": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          "description": "Together AI model used by the design assistant (when provider is together)."
+        },
+        "adrStudio.openaiCompatibleBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for a custom OpenAI-compatible chat completions API, e.g. a self-hosted gateway. Used when provider is openai-compatible."
+        },
+        "adrStudio.openaiCompatibleModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model name for the custom OpenAI-compatible provider."
         },
         "adrStudio.repoPath": {
           "type": "string",

@@ -14,6 +14,15 @@ import { emptySpec, applyMutation } from "../../shared/ir.mjs";
 import { lint } from "../../shared/constraints.mjs";
 import { CATALOG } from "../../shared/catalog.mjs";
 
+function violationKey(v) {
+  return [v.constraintId, v.view, v.nodeId || "", v.edgeId || "", v.message].join("|");
+}
+
+function addedViolations(beforeSpec, nextSpec) {
+  const before = new Set(lint(beforeSpec).violations.map(violationKey));
+  return lint(nextSpec).violations.filter((v) => !before.has(violationKey(v)));
+}
+
 export default function App() {
   const [spec, setSpec] = useState(emptySpec());
   const [catalog, setCatalog] = useState(CATALOG);
@@ -25,6 +34,7 @@ export default function App() {
   const [, setHistoryVersion] = useState(0);
   const [options, setOptions] = useState(null); // { status, count, progress, options }
   const [drift, setDrift] = useState(null); // { status, repo, report, actual, stream }
+  const pendingTurnRef = useRef(null);
   // Mirror `busy` into a ref so the (stable) commit callback can gate edits
   // while a stream is in flight without re-creating itself.
   const busyRef = useRef(false);
@@ -142,7 +152,7 @@ export default function App() {
           break;
         case "chatStart":
           // Open a streaming assistant bubble the tokens append into.
-          setMessages((m) => [...m, { role: "assistant", text: "", streaming: true }]);
+          setMessages((m) => [...m, { role: "assistant", text: "", streaming: true, ...(pendingTurnRef.current || {}) }]);
           break;
         case "chatToken":
           setMessages((m) => appendToLast(m, msg.text));
@@ -155,6 +165,7 @@ export default function App() {
           setMessages((m) => finalizeLast(m, msg.text));
           setBusy(false);
           setSaveState("saved");
+          pendingTurnRef.current = null;
           break;
         case "exported":
           flash(`Handoff written → ${msg.path}`);
@@ -168,6 +179,7 @@ export default function App() {
         case "error":
           setMessages((m) => [...m, { role: "system", text: `⚠ ${msg.message}` }]);
           setBusy(false);
+          pendingTurnRef.current = null;
           break;
         default:
           break;
@@ -218,9 +230,22 @@ export default function App() {
       recordHistory(); // one undo step reverts the whole assistant turn
       setMessages((m) => [...m, { role: "user", text }]);
       setBusy(true);
+      pendingTurnRef.current = { kind: "direct", sourceText: text };
       post({ type: "chat", text, spec });
     },
     [spec, recordHistory]
+  );
+
+  const askArchitect = useCallback(
+    (text) => {
+      const question = text.trim();
+      if (!question) return;
+      setMessages((m) => [...m, { role: "user", text: question }]);
+      setBusy(true);
+      pendingTurnRef.current = { kind: "architect", sourceText: question };
+      post({ type: "architectReview", text: question, spec });
+    },
+    [spec]
   );
 
   const suggestOptions = useCallback(
@@ -232,6 +257,37 @@ export default function App() {
       post({ type: "generateOptions", spec, idea: text, context });
     },
     [spec]
+  );
+
+  const previewRecommendation = useCallback(
+    (review) => {
+      const source = (review.sourceText || "the current architecture question").trim();
+      const text = (review.text || "").trim();
+      suggestOptions({
+        idea: `Turn the architect recommendation into a safe architecture change: ${source}`,
+        context: [
+          "Use the architect review below as the design brief.",
+          "Do not blindly apply every bullet. Preserve the current diagram unless the recommendation clearly requires a change.",
+          "Prefer the smallest diff that makes the recommendation concrete.",
+          `Architect review:\n${text}`,
+        ].join("\n\n"),
+      });
+    },
+    [suggestOptions]
+  );
+
+  const applyRecommendation = useCallback(
+    (review) => {
+      const source = (review.sourceText || "the current architecture question").trim();
+      const text = (review.text || "").trim();
+      sendChat([
+        `Apply the smallest safe architecture change implied by this architect review.`,
+        `Original request: ${source}`,
+        "Keep existing components where possible, avoid duplicates, and stop if the change would introduce new issues.",
+        `Architect review:\n${text}`,
+      ].join("\n\n"));
+    },
+    [sendChat]
   );
 
   const exportHandoff = useCallback(() => {
@@ -252,6 +308,13 @@ export default function App() {
         notes: opt.notes || spec.notes,
         cross_refs: (spec.cross_refs || []).filter((x) => x.from.view !== "architecture" && x.to.view !== "architecture"),
       };
+      const newIssues = addedViolations(spec, next);
+      if (newIssues.length) {
+        const sample = newIssues.slice(0, 2).map((v) => v.message).join(" ");
+        flash(`Suggestion blocked: ${newIssues.length} new issue${newIssues.length === 1 ? "" : "s"}`);
+        setMessages((m) => [...m, { role: "system", text: `Suggestion not applied because it introduces ${newIssues.length} new issue${newIssues.length === 1 ? "" : "s"}. ${sample}` }]);
+        return;
+      }
       commit(next);
       setOptions(null);
       flash(`Loaded the “${opt.label}” design`);
@@ -367,8 +430,11 @@ export default function App() {
           commit={commit}
           messages={messages}
           busy={busy}
+          onAsk={askArchitect}
           onSend={sendChat}
           onSuggest={suggestOptions}
+          onPreviewRecommendation={previewRecommendation}
+          onApplyRecommendation={applyRecommendation}
           violations={violations}
           onWritePlan={writePlan}
         />

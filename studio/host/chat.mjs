@@ -9,15 +9,16 @@ import { lint } from "../shared/constraints.mjs";
 import { catalogVocabulary } from "../shared/catalog.mjs";
 import { infraVocabulary } from "../shared/infra.mjs";
 import { skillVocabulary } from "../shared/skills.mjs";
-import { makeProvider, defaultModel } from "./providers.mjs";
+import { makeProvider, defaultModel, providerEnvNames, providerLabel } from "./providers.mjs";
 
 // View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
   // skills — the primary, architect-grade action
-  { name: "apply_skill", description: "Lay down a coherent design pattern in one step — places components on the right planes, wires them correctly, and auto-arranges. PREFER this over many low-level calls. Skills are listed in the system prompt.", input_schema: { type: "object", properties: { skill: { type: "string" }, params: { type: "object" } }, required: ["skill"] } },
+  { name: "apply_skill", description: "Lay down a coherent design pattern in one step. Use this when the user asks for a real subsystem/pattern, not for small edits that can be handled by updating or rewiring existing components. Skills are listed in the system prompt.", input_schema: { type: "object", properties: { skill: { type: "string" }, params: { type: "object" } }, required: ["skill"] } },
   { name: "derive_view", description: "Project the architecture into another view, keeping them in sync. infra = deployment for each component; data_model = entities for datastores; sequences = the wiring as an interaction; classes = a class per service. Idempotent. (e.g. 'from ui to infra' = derive_view infra.)", input_schema: { type: "object", properties: { view: { type: "string", enum: ["infra", "data_model", "sequences", "classes"] } }, required: ["view"] } },
   // architecture
   { name: "arch_add_node", description: "Add a component. Prefer a catalog `type` (orchestrator, semantic_gateway, vector_db, search_index, event_queue, otel_collector, rbac_policy, …) — it sets the category, plane, and tech options.", input_schema: { type: "object", properties: { type: { type: "string", description: "catalog component type id" }, label: { type: "string" }, tech: { type: "string", description: "specific tech, e.g. pgvector, SQLite FTS5, Kafka" }, plane: { type: "string", enum: ["control", "execution", "data"] }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["type", "label"] } },
+  { name: "arch_update_node", description: "Update an existing component by id or label. Prefer this for plane/layer/label/tech/intent changes instead of adding duplicate boxes.", input_schema: { type: "object", properties: { ref: { type: "string", description: "component id or label" }, label: { type: "string" }, tech: { type: "string" }, plane: { type: "string", enum: ["control", "execution", "data"] }, layer: { type: "string" }, context: { type: "string" }, notes: { type: "string" } }, required: ["ref"] } },
   { name: "arch_set_edge_semantics", description: "Set distributed/governance/observability properties on a wire.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, protocol: { type: "string" }, delivery: { type: "string", enum: ["best-effort", "at-least-once", "exactly-once", "ordered"] }, consistency: { type: "string", enum: ["none", "eventual", "linearizable", "vector_clock", "lamport"] }, required_role: { type: "string", description: "RBAC role required to traverse this edge" }, instrumented: { type: "boolean", description: "OTel-traced" } }, required: ["from", "to"] } },
   { name: "arch_remove_node", description: "Remove a component by id or label.", input_schema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] } },
   { name: "arch_connect", description: "Wire one component to another.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, kind: { type: "string", enum: ["calls", "streams", "owns", "publishes", "subscribes"] }, protocol: { type: "string", enum: ["http", "grpc", "sql", "event", "ws", "internal"] }, label: { type: "string" } }, required: ["from", "to"] } },
@@ -58,6 +59,8 @@ function toolToMutations(name, input) {
       return [{ op: "derive", view: input.view }];
     case "arch_add_node":
       return [{ op: "add_node", view: "architecture", ...input }];
+    case "arch_update_node":
+      return [{ op: "update_node", view: "architecture", ...input }];
     case "arch_set_edge_semantics":
       return [{ op: "set_edge_semantics", view: "architecture", ...input }];
     case "arch_remove_node":
@@ -122,14 +125,17 @@ function toolToMutations(name, input) {
 function systemPrompt(catalog) {
   return [
     "You are the design assistant inside a system-architecture canvas (views: architecture, data model,",
-    "flows, infrastructure, classes, sequences). You work like an architect: compose proven patterns, not",
-    "random boxes. Your PRIMARY action is apply_skill — it lays down a coherent, correctly-planed,",
-    "auto-arranged subgraph in one step. Decompose the user's intent into one or more skills and apply",
-    "them; use the low-level tools (arch_/dm_/flow_/infra_/class_) only to refine or connect skills.",
+    "flows, infrastructure, classes, sequences). You work like an architect: make the smallest coherent",
+    "change that satisfies the user's intent. Prefer updating, annotating, removing, or rewiring existing",
+    "components over adding new boxes. Use apply_skill only when the user is clearly asking for a whole",
+    "known subsystem/pattern; otherwise use arch_update_node, arch_connect/disconnect, and edge semantics.",
+    "For a short/vague request, add at most two top-level architecture components and four edges unless the",
+    "user explicitly asks for a broader design. Do not duplicate a component that already exists.",
     "The other views derive from the architecture — use derive_view to project it (infra, data_model,",
     "sequences, classes) rather than building them from scratch ('from ui to infra' = derive_view infra).",
     "You change the design ONLY by calling tools, in the same response — never reply with a plan and stop.",
-    "After the edits, give a one-line confirmation. You can set distributed/governance/observability edge",
+    "After the edits, run_constraint_check. If you introduced a violation, fix it before answering. Then",
+    "give a one-line confirmation. You can set distributed/governance/observability edge",
     "semantics (delivery, consistency incl. vector_clock, required_role for RBAC, instrumented for OTel),",
     "capture requirements/decisions with add_note, and tidy any view with auto_layout.",
     "\n\nSkills (prefer these):\n" + skillVocabulary(),
@@ -152,19 +158,95 @@ function specSummary(spec) {
 }
 const label = (nodes, id) => (nodes.find((n) => n.id === id) || {}).label || id;
 
+const ARCHITECT_KNOWLEDGE = [
+  "Control plane vs execution/data: control-plane components should usually be mediated by explicit gateways, policy boundaries, or trusted internal channels; direct execution-to-control crossings need a named reason.",
+  "External entry: clients and external APIs should generally cross an API gateway, semantic gateway, load balancer, or policy boundary before reaching services or stateful components.",
+  "State ownership: prefer one clear write owner for each datastore or domain entity; shared mutable writes across services need a coordination story.",
+  "Async boundaries: event queues are justified by fanout, retries, temporal decoupling, buffering, or independent scaling; do not add them as decorative middleware.",
+  "Agent systems: separate orchestration, tool execution, model routing, permissions, memory, and evaluation where those concerns can change independently.",
+  "RAG/memory: vector stores need an upstream embedding/upsert path, metadata strategy, freshness policy, and evaluation loop; memory layers need lifecycle and privacy boundaries.",
+  "Observability: service and agent boundaries should have traces/logs/metrics; LLM/tool calls often need domain-specific traces and eval signals, not only infrastructure metrics.",
+  "Human review: add human-in-the-loop checkpoints for irreversible, high-risk, policy-sensitive, or externally visible actions; otherwise keep humans out of the hot path.",
+  "Diagram discipline: prefer updating, reusing, removing, or rewiring existing components over adding boxes; every new component should own a responsibility that no existing component can reasonably own.",
+].join("\n- ");
+
+function architectSystemPrompt(catalog) {
+  return [
+    "You are an expert architecture mentor inside a living architecture canvas. You DO NOT edit the diagram.",
+    "Your job is to discuss, review, challenge assumptions, and propose small, evidence-grounded next steps.",
+    "Use four evidence types when relevant: Canvas evidence from the current model, Constraint evidence from lint/issues,",
+    "Repo evidence only when it appears in the supplied model/notes, and Knowledge evidence from the architecture principles below.",
+    "Separate known facts from assumptions. Do not invent source citations. If a point is a best-practice heuristic, say so.",
+    "Prefer small diffs and conceptual clarity over diagram growth. Every recommended new box must explain why an existing",
+    "component cannot own that responsibility. If no diagram change is needed, say so plainly.",
+    "Respond with short sections: Read, Best-practice lens, Options, Recommendation, Proposed diff, Open questions.",
+    "The Proposed diff is advisory only; it must not imply it has been applied. Make Proposed diff concrete enough",
+    "that a follow-up action could safely preview or apply it: list add/update/remove/rewire bullets with component labels.",
+    "\n\nArchitecture knowledge base:\n- " + ARCHITECT_KNOWLEDGE,
+    "\n\nComponent catalog vocabulary:\n" + catalogVocabulary(catalog),
+  ].join(" ");
+}
+
+function architectContext(spec) {
+  const { violations } = lint(spec);
+  const a = spec.views.architecture;
+  const byPlane = ["control", "execution", "data"].map((plane) => {
+    const labels = a.nodes.filter((n) => (n.plane || "execution") === plane && !n.parent).map((n) => `${n.label}(${n.type})`);
+    return `${plane}: ${labels.join(", ") || "none"}`;
+  }).join("\n");
+  const notes = (spec.notes || []).slice(-8).map((n) => `- [${n.kind}${n.priority ? "/" + n.priority : ""}] ${n.title}${n.body ? ": " + n.body : ""}`).join("\n") || "none";
+  const issues = violations.map((v) => `- ${v.message}`).join("\n") || "none";
+  return [
+    `Title: ${spec.decision?.title || "Untitled architecture"}`,
+    `Components (${a.nodes.length}): ${a.nodes.map((n) => `${n.label}(${n.type}, ${n.plane || "execution"})`).join(", ") || "none"}`,
+    `Wiring (${a.edges.length}): ${a.edges.map((e) => `${label(a.nodes, e.from)} -> ${label(a.nodes, e.to)} [${e.kind || "calls"}/${e.protocol || "unknown"}]`).join(", ") || "none"}`,
+    `Planes:\n${byPlane}`,
+    `Current issues:\n${issues}`,
+    `Recent notes:\n${notes}`,
+  ].join("\n\n");
+}
+
+function missingKeyHint(providerName) {
+  const label = providerLabel(providerName);
+  const envs = providerEnvNames(providerName).join(" or ");
+  const envHint = envs ? ` or set ${envs}` : "";
+  return `No ${label} API key found. Run “ADR Studio: Set LLM API Key”${envHint}.`;
+}
+
+export async function runArchitectReview({ userText, spec, model, apiKey, baseURL, onEvent = () => {}, client, catalog, provider }) {
+  const providerName = client ? "anthropic" : provider || "anthropic";
+  if (!apiKey && !client) {
+    return { text: missingKeyHint(providerName) + " (You can still edit the canvas manually.)" };
+  }
+
+  const prov = makeProvider(providerName, { apiKey, client, baseURL });
+  const useModel = model || defaultModel(providerName);
+  const history = [{
+    role: "user",
+    text: `Current architecture context:\n${architectContext(spec)}\n\nUser question or idea:\n${userText}`,
+  }];
+  const { blocks } = await prov.stream({
+    system: architectSystemPrompt(catalog),
+    tools: [],
+    model: useModel,
+    history,
+    maxTokens: 1800,
+    onText: (t) => onEvent({ type: "chatToken", text: t }),
+  });
+  const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+  return { text: text || "I do not see enough context to make a grounded recommendation yet." };
+}
+
 // onEvent receives { type: "chatToken"|"specPatch", ... }. The host wires it to
 // postMessage. `client` is injectable for tests (no network).
-export async function runAssistant({ userText, spec, model, apiKey, onEvent = () => {}, client, catalog, provider }) {
+export async function runAssistant({ userText, spec, model, apiKey, baseURL, onEvent = () => {}, client, catalog, provider }) {
   // An injected client (tests) always uses the Anthropic shape.
   const providerName = client ? "anthropic" : provider || "anthropic";
   if (!apiKey && !client) {
-    const hint = providerName === "openai"
-      ? "No OpenAI API key found. Run “ADR Studio: Set Anthropic API Key” (pick OpenAI) or set OPENAI_API_KEY."
-      : "No Anthropic API key found. Run “ADR Studio: Set Anthropic API Key”, or set ANTHROPIC_API_KEY.";
-    return { text: hint + " (Drag-and-drop editing works without a key.)", spec, trace: [] };
+    return { text: missingKeyHint(providerName) + " (Drag-and-drop editing works without a key.)", spec, trace: [] };
   }
 
-  const prov = makeProvider(providerName, { apiKey, client });
+  const prov = makeProvider(providerName, { apiKey, client, baseURL });
   const useModel = model || defaultModel(providerName);
   let working = spec;
   const trace = [];

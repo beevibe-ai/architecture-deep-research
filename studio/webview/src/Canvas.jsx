@@ -13,11 +13,21 @@ import { applyMutation, EDGE_KINDS, PROTOCOLS } from "../../shared/ir.mjs";
 import { violationIndex } from "../../shared/constraints.mjs";
 import { CATEGORIES, PLANES, DELIVERY, CONSISTENCY, LAYERS, nodeDefaults, getType, layerForNode, layerLabel } from "../../shared/catalog.mjs";
 import { SKILLS } from "../../shared/skills.mjs";
+import { composeArchitectureView } from "../../shared/composer.mjs";
 
 const CAT_COLOR = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.color]));
 const PLANE_COLOR = Object.fromEntries(PLANES.map((p) => [p.id, p.color]));
 const PLANE_LABEL = Object.fromEntries(PLANES.map((p) => [p.id, p.label]));
 const PLANE_BADGE = { control: "Control", execution: "Exec", data: "Data" };
+const ARCH_SKILLS = SKILLS.filter((s) => s.view === "architecture");
+const SKILL_FINGERPRINTS = {
+  agent_runtime: ["agent_runtime", "state_manager", "task_queue", "scheduler", "logger", "monitor"],
+  agentic_rag: ["semantic_gateway", "orchestrator", "service", "vector_db", "llm_provider"],
+  memory_subsystem: ["memory_manager", "working_memory", "long_term_memory", "episodic_store", "vector_db"],
+  three_tier_web: ["client", "gateway", "service", "relational_db"],
+  event_driven: ["event_queue", "worker", "service"],
+  observability_stack: ["otel_collector", "tracer", "metrics", "log_sink"],
+};
 
 const BANDS = { control: { y: 0, h: 250 }, execution: { y: 270, h: 270 }, data: { y: 560, h: 270 } };
 const bandCenterY = (plane) => (BANDS[plane] ? BANDS[plane].y + BANDS[plane].h / 2 - 30 : 380);
@@ -30,7 +40,7 @@ const containerSize = (type) => CONTAINER_SIZE[type] || { w: 220, h: 260 };
 
 function ZoneNode({ data }) {
   return (
-    <div className="plane-zone" style={{ width: data.w || ZONE_W, height: data.h, background: `${data.color}0c`, borderColor: `${data.color}2e` }}>
+    <div className={`plane-zone ${data.variant || ""}`} style={{ width: data.w || ZONE_W, height: data.h, background: `${data.color}0c`, borderColor: `${data.color}2e` }}>
       <span className="plane-zone-label" style={{ background: `${data.color}26`, color: data.color }}>{data.label}</span>
     </div>
   );
@@ -41,7 +51,7 @@ function ArchGroupNode({ data }) {
   const { node, bad } = data;
   const color = CAT_COLOR[node.category] || "#b9c5ff";
   return (
-    <div className={`arch-group ${bad ? "bad" : ""}`} style={{ width: data.w, height: data.h, borderColor: bad ? "#ff6b6b" : color }}>
+    <div className={`arch-group ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""}`} style={{ width: data.w, height: data.h, borderColor: bad ? "#ff6b6b" : color }}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-group-title" style={{ color }}>{node.label}</div>
       <Handle type="source" position={Position.Right} className="arch-handle" />
@@ -55,8 +65,12 @@ function ArchNode({ data, selected }) {
   const plane = node.plane || "execution";
   // drift: "phantom" = drawn but not in code; "mismatch" = tech differs from code.
   const driftClass = drift ? `drift-${drift}` : "";
+  const style = {
+    borderColor: bad ? "#ff6b6b" : color,
+    ...(data.w ? { width: data.w, minHeight: data.h } : {}),
+  };
   return (
-    <div className={`arch-node ${bad ? "bad" : ""} ${driftClass} ${selected ? "sel" : ""}`} style={{ borderColor: bad ? "#ff6b6b" : color }}>
+    <div className={`arch-node ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""} ${driftClass} ${selected ? "sel" : ""}`} style={style}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-kind" style={{ color }}>
         {getType(node.type)?.label || node.type || node.kind}
@@ -72,20 +86,99 @@ function ArchNode({ data, selected }) {
 
 const nodeTypes = { arch: ArchNode, zone: ZoneNode, archGroup: ArchGroupNode };
 
-function patternSuggestion(skill, spec) {
-  const topLevel = spec.views.architecture.nodes
-    .filter((n) => !n.parent)
-    .slice(0, 24)
-    .map((n) => `${n.label} (${n.type})`)
-    .join(", ");
+function summarizeCurrentLayout(nodes, layout) {
+  const topLevel = nodes.filter((n) => !n.parent);
+  const byLayer = new Map();
+  for (const n of topLevel) {
+    const layer = layerLabel(layerForNode(n));
+    const list = byLayer.get(layer) || [];
+    list.push(n.label);
+    byLayer.set(layer, list);
+  }
+  const bands = [...byLayer.entries()]
+    .slice(0, 8)
+    .map(([layer, labels]) => `${layer}: ${labels.slice(0, 5).join(", ")}${labels.length > 5 ? "..." : ""}`);
+  return [
+    `Current canvas mode: ${layout}.`,
+    `Top-level components: ${topLevel.length}.`,
+    bands.length ? `Current bands: ${bands.join(" | ")}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function analyzeSkill(skill, nodes, edges) {
+  const fingerprint = SKILL_FINGERPRINTS[skill.id] || [];
+  const byType = new Map();
+  for (const n of nodes) byType.set(n.type, (byType.get(n.type) || 0) + 1);
+  const present = fingerprint.filter((type) => byType.has(type));
+  const missing = fingerprint.filter((type) => !byType.has(type));
+  const duplicateTypes = fingerprint.filter((type) => (byType.get(type) || 0) > 1);
+  const coverage = fingerprint.length ? present.length / fingerprint.length : 0;
+  const serviceCount = nodes.filter((n) => n.type === "service" || n.kind === "service").length;
+  const hasExternalClient = nodes.some((n) => n.type === "client" || n.kind === "client");
+  const hasGateway = nodes.some((n) => n.kind === "gateway");
+  const hasDataStore = nodes.some((n) => n.kind === "datastore");
+  const hasEvents = nodes.some((n) => n.type === "event_queue") || edges.some((e) => ["publishes", "subscribes", "streams"].includes(e.kind));
+
+  let action = "Consider";
+  let reason = "not represented yet";
+  let score = 10;
+  if (coverage >= 0.75) {
+    action = duplicateTypes.length ? "Clean up" : "Review";
+    reason = duplicateTypes.length ? "duplicates likely" : "mostly present";
+    score = duplicateTypes.length ? 95 : 45;
+  } else if (coverage > 0) {
+    action = "Extend";
+    reason = `${present.length}/${fingerprint.length} pieces present`;
+    score = 80 + present.length;
+  }
+
+  if (skill.id === "observability_stack" && serviceCount >= 3 && coverage === 0) {
+    action = "Add";
+    reason = "services lack observability";
+    score = 70;
+  } else if (skill.id === "event_driven" && serviceCount >= 3 && !hasEvents) {
+    action = "Consider";
+    reason = "several services could decouple";
+    score = 62;
+  } else if (skill.id === "three_tier_web" && hasExternalClient && !hasGateway) {
+    action = "Review";
+    reason = "external entry lacks gateway";
+    score = 88;
+  } else if (skill.id === "memory_subsystem" && hasDataStore && coverage > 0 && coverage < 0.75) {
+    action = "Extend";
+    reason = "memory pieces are partial";
+    score = 86;
+  }
+
   return {
-    idea: `Apply the ${skill.label} pattern`,
+    skill,
+    action,
+    reason,
+    score,
+    coverage,
+    present,
+    missing,
+    duplicateTypes,
+    recommended: score >= 60,
+    label: `${action} ${skill.label} — ${reason}`,
+  };
+}
+
+function patternSuggestion(choice, spec, layout) {
+  const { skill, present, missing, duplicateTypes, reason } = choice;
+  return {
+    idea: `${choice.action} the ${skill.label} pattern`,
     context: [
       `Pattern intent: ${skill.description}`,
+      `Why this is suggested now: ${reason}.`,
+      present.length ? `Already present by type: ${present.join(", ")}.` : "No matching pattern pieces are clearly present yet.",
+      missing.length ? `Missing by type: ${missing.join(", ")}.` : "No obvious required pieces are missing.",
+      duplicateTypes.length ? `Possible duplicate types to reconcile: ${duplicateTypes.join(", ")}.` : "",
+      summarizeCurrentLayout(spec.views.architecture.nodes, layout),
       "Treat this as an architecture change suggestion, not a raw template paste.",
-      "Reuse, rename, or rewire matching existing components instead of creating duplicates.",
+      "Prefer updating, reusing, renaming, removing, or rewiring existing components over adding new boxes.",
+      "If the pattern is already mostly present, propose cleanup or a no-op rationale instead of growing the diagram.",
       "Call out what would be added, reused, removed, or left unchanged.",
-      topLevel ? `Existing top-level components to reconcile with: ${topLevel}.` : "",
     ].filter(Boolean).join("\n"),
   };
 }
@@ -117,7 +210,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
-  const [layout, setLayout] = useState("free"); // "free" | "layered"
+  const [layout, setLayout] = useState("free"); // "free" | "layered" | "composed"
   const [showPlanes, setShowPlanes] = useState(false); // plane swimlanes off by default
   const { screenToFlowPosition } = useReactFlow();
 
@@ -125,8 +218,16 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
   const depth = useCallback((n) => { let d = 0, c = n; while (c && c.parent) { c = byId.get(c.parent); d++; } return d; }, [byId]);
 
   useEffect(() => {
+    const composed = layout === "composed" ? composeArchitectureView(spec) : null;
     const layered = layout === "layered" ? computeLayered(archNodes.filter((n) => !n.parent)) : null;
-    const zones = layered
+    const zones = composed
+      ? composed.zones.map((z) => ({
+          id: `__smart_${z.id}`, type: "zone",
+          position: z.position,
+          data: { label: z.label, color: z.color, h: z.size.h, w: z.size.w, variant: "composed" },
+          draggable: false, selectable: false, connectable: false, zIndex: -1,
+        }))
+      : layered
       ? layered.used.map((l) => ({
           id: `__layer_${l.id}`, type: "zone",
           position: { x: -120, y: layered.bandY[l.id] },
@@ -143,15 +244,16 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
       : [];
     const sorted = [...archNodes].sort((a, b) => depth(a) - depth(b)); // parents before children
     const comps = sorted.map((n) => {
-      const container = isContainer(n.type);
-      const pos = layered && !n.parent ? layered.pos[n.id] : n.position || { x: 0, y: 0 };
+      const composedInfo = composed?.nodes.get(n.id);
+      const container = isContainer(n.type) && !composedInfo?.forceLeaf;
+      const pos = composedInfo?.position || (layered && !n.parent ? layered.pos[n.id] : n.position || { x: 0, y: 0 });
       // Prefer the size auto-layout computed to fit children; else the fixed box.
-      const size = container ? (n.size || containerSize(n.type)) : null;
+      const size = composedInfo?.size || (container ? (n.size || containerSize(n.type)) : null);
       const base = {
         id: n.id,
         type: container ? "archGroup" : "arch",
         position: pos,
-        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], ...(container ? size : {}) },
+        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], viewMode: layout, ...(size ? size : {}) },
         selected: n.id === selectedId,
       };
       if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }
@@ -162,8 +264,8 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
     setRfEdges(
       archEdges.map((e) => ({
         id: e.id, source: e.from, target: e.to,
-        label: edgeLabel(e),
-        className: `${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"}`,
+        label: layout === "composed" ? compactEdgeLabel(e) : edgeLabel(e),
+        className: `${layout === "composed" ? "composed-edge" : ""} ${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"}`,
       }))
     );
   }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, driftStatus, setRfNodes, setRfEdges]);
@@ -173,13 +275,13 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
     [spec, commit]
   );
   const onNodeDragStop = useCallback(
-    (_e, node) => { if (!node.id.startsWith("__zone")) commit(applyMutation(spec, { op: "update_node", view: "architecture", id: node.id, position: node.position })); },
+    (_e, node) => { if (!node.id.startsWith("__")) commit(applyMutation(spec, { op: "update_node", view: "architecture", id: node.id, position: node.position })); },
     [spec, commit]
   );
   const onNodesDelete = useCallback(
     (deleted) => {
       let s = spec;
-      for (const d of deleted) if (!d.id.startsWith("__zone")) s = applyMutation(s, { op: "remove_node", view: "architecture", ref: d.id });
+      for (const d of deleted) if (!d.id.startsWith("__")) s = applyMutation(s, { op: "remove_node", view: "architecture", ref: d.id });
       setSelectedId(null);
       commit(s);
     },
@@ -246,18 +348,18 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
   const containers = archNodes.filter((n) => isContainer(n.type) && n.id !== selectedId);
   const setNode = (patch) => commit(applyMutation(spec, { op: "update_node", view: "architecture", id: selectedId, ...patch }));
   const setEdgeSem = (patch) => commit(applyMutation(spec, { op: "set_edge_semantics", view: "architecture", id: selectedEdgeId, ...patch }));
-  const architectureSkills = SKILLS.filter((s) => s.view === "architecture");
+  const patternChoices = useMemo(() => {
+    const choices = ARCH_SKILLS.map((skill) => analyzeSkill(skill, archNodes, archEdges));
+    return {
+      recommended: choices.filter((c) => c.recommended).sort((a, b) => b.score - a.score),
+      other: choices.filter((c) => !c.recommended).sort((a, b) => b.score - a.score),
+    };
+  }, [archNodes, archEdges]);
   const pickPattern = (value) => {
     if (!value) return;
-    const direct = value.startsWith("direct:");
-    const skillId = direct ? value.slice("direct:".length) : value;
-    const skill = architectureSkills.find((s) => s.id === skillId);
-    if (!skill) return;
-    if (direct || !onSuggest) {
-      commit(applyMutation(spec, { op: "apply_skill", skill: skill.id }));
-      return;
-    }
-    onSuggest(patternSuggestion(skill, spec));
+    const choice = [...patternChoices.recommended, ...patternChoices.other].find((c) => c.skill.id === value);
+    if (!choice || !onSuggest) return;
+    onSuggest(patternSuggestion(choice, spec, layout));
   };
 
   return (
@@ -266,14 +368,17 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
         <div className="seg">
           <button className={`seg-btn ${layout === "free" ? "on" : ""}`} onClick={() => setLayout("free")}>Free</button>
           <button className={`seg-btn ${layout === "layered" ? "on" : ""}`} onClick={() => setLayout("layered")}>Layered</button>
+          <button className={`seg-btn ${layout === "composed" ? "on" : ""}`} onClick={() => setLayout("composed")}>Composed</button>
         </div>
         <select className="mini-btn skill-select" value="" onChange={(e) => { pickPattern(e.target.value); e.target.value = ""; }}>
-          <option value="">+ Pattern…</option>
-          <optgroup label="Suggest architecture change">
-            {architectureSkills.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </optgroup>
-          <optgroup label="Add template directly">
-            {architectureSkills.map((s) => <option key={`direct-${s.id}`} value={`direct:${s.id}`}>{s.label}</option>)}
+          <option value="">Suggest change…</option>
+          {patternChoices.recommended.length > 0 && (
+            <optgroup label="Recommended for this diagram">
+              {patternChoices.recommended.map((c) => <option key={c.skill.id} value={c.skill.id}>{c.label}</option>)}
+            </optgroup>
+          )}
+          <optgroup label={patternChoices.recommended.length ? "Other pattern reviews" : "Pattern reviews"}>
+            {patternChoices.other.map((c) => <option key={c.skill.id} value={c.skill.id}>{c.label}</option>)}
           </optgroup>
         </select>
         {layout === "free" && <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "architecture", direction: "TB" }))}>Auto-arrange</button>}
@@ -293,7 +398,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
         onNodeDragStop={onNodeDragStop}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
-        onNodeClick={(_e, n) => { if (!n.id.startsWith("__zone")) { setSelectedId(n.id); setSelectedEdgeId(null); } }}
+        onNodeClick={(_e, n) => { if (!n.id.startsWith("__")) { setSelectedId(n.id); setSelectedEdgeId(null); } }}
         onEdgeClick={(_e, ed) => { setSelectedEdgeId(ed.id); setSelectedId(null); }}
         onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); }}
         fitView
@@ -380,4 +485,10 @@ function edgeLabel(e) {
   if (e.required_role) bits.push("🔒" + e.required_role);
   if (e.instrumented) bits.push("otel");
   return bits.join(" · ");
+}
+
+function compactEdgeLabel(e) {
+  if (e.kind === "publishes" || e.kind === "subscribes" || e.kind === "streams") return e.protocol || "event";
+  if (e.kind === "owns") return "owns";
+  return e.protocol || "";
 }

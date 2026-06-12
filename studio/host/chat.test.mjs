@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { emptySpec } from "../shared/ir.mjs";
-import { runAssistant } from "./chat.mjs";
+import { runArchitectReview, runAssistant } from "./chat.mjs";
 
 // A fake stream that replays scripted text + a final message with tool_use blocks.
 function fakeStream({ text = "", content }) {
@@ -91,4 +91,20 @@ test("a model that narrates without calling tools is nudged to act", async () =>
 test("no api key and no client returns a helpful message, not a crash", async () => {
   const result = await runAssistant({ userText: "hi", spec: emptySpec() });
   assert.match(result.text, /No Anthropic API key/);
+});
+
+test("architect review discusses without mutating or emitting spec patches", async () => {
+  const turns = [
+    { text: "Read\nThe API crosses into control-plane work.\n\nRecommendation\nDiscuss the boundary before changing it.", content: [{ type: "text", text: "Read\nThe API crosses into control-plane work.\n\nRecommendation\nDiscuss the boundary before changing it." }] },
+  ];
+  const events = [];
+  const result = await runArchitectReview({
+    userText: "should we separate control and execution?",
+    spec: emptySpec(),
+    client: fakeClient(turns),
+    onEvent: (e) => events.push(e.type),
+  });
+  assert.match(result.text, /Recommendation/);
+  assert.ok(events.includes("chatToken"));
+  assert.equal(events.includes("specPatch"), false);
 });

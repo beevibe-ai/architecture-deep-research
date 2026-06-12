@@ -136,6 +136,7 @@ const TYPE_LAYER = {
   scheduler: "orchestration", state_manager: "orchestration", context_layer: "orchestration",
   agent_loop: "capabilities", tool_system: "capabilities", subagent: "capabilities", skill: "capabilities",
   task_queue: "capabilities", semantic_gateway: "capabilities", guardrail: "capabilities", permission_layer: "infrastructure",
+  gateway: "orchestration", load_balancer: "orchestration",
   mcp_server: "tools",
   model_router: "model", llm_provider: "model",
   vector_db: "knowledge", search_index: "knowledge",

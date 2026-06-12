@@ -285,10 +285,20 @@ body {
 .plane-zone {
   border: 1px solid; border-radius: 10px;
 }
+.plane-zone.composed {
+  border-radius: 8px;
+  background-color: rgba(29, 32, 48, 0.55);
+}
 .plane-zone-label {
   position: absolute; top: 8px; left: 12px;
   font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
   padding: 2px 9px; border-radius: 999px;
+}
+.plane-zone.composed .plane-zone-label {
+  top: 10px;
+  left: 14px;
+  border-radius: 5px;
+  background: #252938;
 }
 .arch-plane {
   display: inline-block;
@@ -308,10 +318,21 @@ body {
   background: rgba(185, 197, 255, 0.06);
   position: relative;
 }
+.arch-group.composed {
+  border-radius: 12px;
+  background: rgba(29, 32, 48, 0.75);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+}
 .arch-group.bad { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad); }
 .arch-group-title {
   position: absolute; top: 8px; left: 0; right: 0; text-align: center;
   font-weight: 700; font-size: 13px;
+}
+.arch-group.composed .arch-group-title {
+  top: 12px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* ---- sequence view ---- */
@@ -388,7 +409,14 @@ body {
   min-width: 130px;
   color: var(--ink);
 }
+.arch-node.composed {
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: #1b2030;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+}
 .arch-node.sel { box-shadow: 0 0 0 2px var(--accent); }
+.arch-node.composed.sel { box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgba(0, 0, 0, 0.16); }
 .arch-node.bad { box-shadow: 0 0 0 2px var(--bad), 0 0 18px #ff6b6b55; }
 .arch-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
 .arch-label { font-weight: 600; font-size: 13px; margin-top: 1px; }
@@ -397,6 +425,9 @@ body {
 
 .react-flow__edge.edge-bad .react-flow__edge-path { stroke: var(--bad); stroke-width: 2; }
 .react-flow__edge .react-flow__edge-text { fill: var(--ink-dim); font-size: 10px; }
+.react-flow__edge.composed-edge .react-flow__edge-path { stroke-width: 1.6; opacity: 0.72; }
+.react-flow__edge.composed-edge .react-flow__edge-text { fill: #c6cbe0; font-size: 9px; opacity: 0.86; }
+.react-flow__edge.composed-edge .react-flow__edge-textbg { fill: #14161f; opacity: 0.92; }
 
 .empty-hint {
   position: absolute;
@@ -580,6 +611,14 @@ body {
 .msg-user { background: var(--accent); color: #14161f; align-self: flex-end; }
 .msg-assistant { background: #232734; align-self: flex-start; }
 .msg-system { background: #3a2a2a; color: #ffd0d0; align-self: stretch; font-size: 12px; }
+.msg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
 .typing { color: var(--ink-dim); }
 .caret { opacity: 0.7; animation: blink 1s steps(2, start) infinite; }
 @keyframes blink { to { opacity: 0; } }
@@ -590,7 +629,7 @@ body {
 .chat-input { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--line); align-items: flex-end; }
 .chat-input textarea { flex: 1; }
 .chat-actions { display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
-.chat-actions .btn, .chat-actions .mini-btn { min-width: 68px; }
+.chat-actions .btn, .chat-actions .mini-btn { min-width: 108px; }
 
 /* ---- options modal ---- */
 .modal-backdrop {

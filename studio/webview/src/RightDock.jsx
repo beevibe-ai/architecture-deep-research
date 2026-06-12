@@ -14,7 +14,19 @@ const TABS = [
   { id: "plan", label: "Plan" },
 ];
 
-export default function RightDock({ spec, commit, messages, busy, onSend, onSuggest, violations, onWritePlan }) {
+export default function RightDock({
+  spec,
+  commit,
+  messages,
+  busy,
+  onAsk,
+  onSend,
+  onSuggest,
+  onPreviewRecommendation,
+  onApplyRecommendation,
+  violations,
+  onWritePlan,
+}) {
   const [tab, setTab] = useState("assistant");
   const sendFromNotes = (text) => {
     setTab("assistant");
@@ -31,7 +43,16 @@ export default function RightDock({ spec, commit, messages, busy, onSend, onSugg
       </div>
       <div className="dock-body">
         {tab === "assistant" && (
-          <ChatSidebar messages={messages} busy={busy} onSend={onSend} onSuggest={onSuggest} violations={violations} />
+          <ChatSidebar
+            messages={messages}
+            busy={busy}
+            onAsk={onAsk}
+            onSend={onSend}
+            onSuggest={onSuggest}
+            onPreviewRecommendation={onPreviewRecommendation}
+            onApplyRecommendation={onApplyRecommendation}
+            violations={violations}
+          />
         )}
         {tab === "notes" && <NotesPanel spec={spec} commit={commit} busy={busy} onSend={sendFromNotes} />}
         {tab === "ir" && <IrJsonPanel spec={spec} />}
