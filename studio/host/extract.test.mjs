@@ -2,7 +2,7 @@
 // compose snippets (a pure-parser boundary, where small fixtures are fine).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dataModelFromSql, infraFromCompose, infraFromK8s } from "./extract.mjs";
+import { dataModelFromSql, infraFromCompose, infraFromK8s, classesFromSource } from "./extract.mjs";
 import { emptySpec, applyMutation } from "../shared/ir.mjs";
 
 function buildDataModel(sources) {
@@ -94,6 +94,39 @@ volumes:
   assert.ok(inf.edges.some((e) => e.kind === "backs"));
   // api is a plain deployment (not a datastore image)
   assert.equal(inf.nodes.find((n) => n.label === "api").type, "deployment");
+});
+
+function buildClasses(sources) {
+  let s = emptySpec();
+  for (const m of classesFromSource(sources)) s = applyMutation(s, m);
+  return s.views.classes;
+}
+
+test("class with methods, abstract stereotype, extends + implements edges", () => {
+  const cv = buildClasses([{ path: "src/a.ts", content: `
+    export interface LlmProvider { complete(req: Req): Promise<Res>; }
+    export abstract class Base { abstract run(): void; }
+    export class AnthropicLlmProvider extends Base implements LlmProvider {
+      constructor(cfg) {}
+      async complete(req) { return 1; }
+      private helper() {}
+    }` }]);
+  const impl = cv.nodes.find((n) => n.name === "AnthropicLlmProvider");
+  assert.ok(impl);
+  assert.ok(impl.members.some((m) => m.name === "complete()"));
+  assert.equal(cv.nodes.find((n) => n.name === "Base").stereotype, "abstract");
+  assert.equal(cv.nodes.find((n) => n.name === "LlmProvider").stereotype, "interface");
+  assert.ok(cv.edges.some((e) => e.kind === "inherits"));
+  assert.ok(cv.edges.some((e) => e.kind === "implements"));
+});
+
+test("control-flow keywords inside methods aren't mistaken for methods", () => {
+  const cv = buildClasses([{ path: "a.ts", content: `
+    export class X {
+      run() { if (true) { for (let i=0;i<3;i++) { while (i) {} } } return 1; }
+    }` }]);
+  const x = cv.nodes.find((n) => n.name === "X");
+  assert.deepEqual(x.members.map((m) => m.name), ["run()"]);
 });
 
 test("k8s manifest kinds map to infra nodes", () => {

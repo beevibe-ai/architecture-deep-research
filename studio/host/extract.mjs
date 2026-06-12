@@ -198,6 +198,92 @@ export function infraFromCompose(text, filePath) {
   return muts;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TS/JS source → class diagram
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONTROL_KW = new Set(["if", "for", "while", "switch", "catch", "return", "throw", "await", "yield", "else", "do", "new", "typeof", "function", "super", "const", "let", "var", "case", "default", "import", "export"]);
+
+// Read the balanced-brace body starting at the `{` index `open`.
+function readBraceBody(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") { depth--; if (depth === 0) return { body: text.slice(open + 1, i), end: i }; }
+  }
+  return { body: text.slice(open + 1), end: text.length };
+}
+
+// Method names declared at the top level of a class/interface body (depth 0).
+function membersOf(body) {
+  const methods = [];
+  let depth = 0;
+  for (const line of body.split("\n")) {
+    if (depth === 0) {
+      const m = /^(?:public\s+|private\s+|protected\s+|static\s+|async\s+|readonly\s+|override\s+|get\s+|set\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*[(<]/.exec(line.trim());
+      if (m && !CONTROL_KW.has(m[1]) && !methods.includes(m[1])) methods.push(m[1]);
+    }
+    for (const ch of line) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+  }
+  return methods.slice(0, 12);
+}
+
+const baseName = (t) => String(t).split(/[<.]/)[0].trim();
+
+// Extract real classes + interfaces (with inheritance/implements edges) from
+// TS/JS sources. Deterministic, grounded — no LLM.
+export function classesFromSource(sources, { max = 90 } = {}) {
+  const decls = []; // { name, stereotype, members, extends:[], implements:[], cite }
+  const seen = new Set();
+
+  for (const src of sources) {
+    const text = src.content || "";
+    // Classes.
+    const classRe = /(?:export\s+)?(?:default\s+)?(abstract\s+)?class\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([\w.<>, ]+?))?(?:\s+implements\s+([\w.<>, ]+?))?\s*\{/g;
+    let m;
+    while ((m = classRe.exec(text))) {
+      const name = m[2];
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const { body } = readBraceBody(text, classRe.lastIndex - 1);
+      decls.push({
+        name, stereotype: m[1] ? "abstract" : null, members: membersOf(body), cite: src.path,
+        extends: m[3] ? [baseName(m[3])] : [],
+        implements: m[4] ? m[4].split(",").map(baseName).filter(Boolean) : [],
+      });
+    }
+    // Interfaces (so `implements X` resolves to a real node).
+    const ifaceRe = /(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([\w.<>, ]+?))?\s*\{/g;
+    while ((m = ifaceRe.exec(text))) {
+      const name = m[1];
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const { body } = readBraceBody(text, ifaceRe.lastIndex - 1);
+      decls.push({ name, stereotype: "interface", members: membersOf(body), cite: src.path, extends: m[2] ? m[2].split(",").map(baseName) : [], implements: [] });
+    }
+  }
+
+  // Signal over noise: keep the concrete classes (real behavior), then only the
+  // interfaces they actually extend/implement — so inheritance edges resolve and
+  // the view isn't drowned in config/DTO interfaces.
+  const classes = decls.filter((d) => d.stereotype !== "interface");
+  const interfaces = decls.filter((d) => d.stereotype === "interface");
+  const keptClasses = classes.slice(0, max);
+  const referenced = new Set();
+  for (const d of keptClasses) { d.extends.forEach((b) => referenced.add(b)); d.implements.forEach((i) => referenced.add(i)); }
+  const kept = [...keptClasses, ...interfaces.filter((i) => referenced.has(i.name))];
+  const names = new Set(kept.map((d) => d.name));
+  const muts = [];
+  for (const d of kept) {
+    muts.push({ op: "add_class", view: "classes", name: d.name, stereotype: d.stereotype, context: d.cite, members: d.members.map((nm) => ({ kind: "method", name: `${nm}()` })) });
+  }
+  for (const d of kept) {
+    for (const base of d.extends) if (names.has(base)) muts.push({ op: "connect_class", view: "classes", from: d.name, to: base, kind: "inherits" });
+    for (const iface of d.implements) if (names.has(iface)) muts.push({ op: "connect_class", view: "classes", from: d.name, to: iface, kind: "implements" });
+  }
+  return muts;
+}
+
 // Build infra IR mutations from k8s manifests (possibly multi-doc YAML).
 export function infraFromK8s(text, filePath) {
   let docs;

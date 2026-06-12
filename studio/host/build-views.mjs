@@ -4,7 +4,7 @@
 // from the architecture when no real source does. Shared by the extension host
 // and the debug CLI so the terminal and VS Code produce identical specs.
 import { applyMutation } from "../shared/ir.mjs";
-import { infraFromCompose, infraFromK8s, dataModelFromSql } from "./extract.mjs";
+import { infraFromCompose, infraFromK8s, dataModelFromSql, classesFromSource } from "./extract.mjs";
 
 export function buildAllViews(archSpec, scan) {
   let full = archSpec;
@@ -35,7 +35,13 @@ export function buildAllViews(archSpec, scan) {
   if (schema.length) { dataModelFromSql(schema).forEach(apply); apply({ op: "auto_layout", view: "data_model" }); }
   else apply({ op: "derive", view: "data_model" });
 
-  // Sequences + classes: still projected from the architecture (Stage B: real source).
-  for (const view of ["sequences", "classes"]) apply({ op: "derive", view });
+  // Classes ← real TS/JS/Python source (declarations + inheritance/implements).
+  const classSrc = scan.class_sources || [];
+  const classMuts = classSrc.length ? classesFromSource(classSrc) : [];
+  if (classMuts.length) { classMuts.forEach(apply); apply({ op: "auto_layout", view: "classes" }); }
+  else apply({ op: "derive", view: "classes" });
+
+  // Sequences: still projected from the architecture (real call-trace is Stage C).
+  apply({ op: "derive", view: "sequences" });
   return full;
 }

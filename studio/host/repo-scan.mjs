@@ -416,6 +416,30 @@ async function collectSchemaSources(repoPath) {
   return out;
 }
 
+// Collect the source files that declare classes/interfaces — the class diagram
+// is reverse-engineered from these. We grep for declarations (fast, gitignore-
+// aware) and read only the matching files, capped.
+const MAX_CLASS_FILES = 300;
+async function collectClassSources(repoPath) {
+  if (!(await pathExists(path.join(repoPath, ".git")))) return [];
+  let files = [];
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", repoPath, "grep", "-lE", "^(export )?(default )?(abstract )?(class|interface) ", "--", "*.ts", "*.tsx", "*.js", "*.mjs", "*.py"],
+      { maxBuffer: 4 * 1024 * 1024 }
+    );
+    files = stdout.split("\n").filter(Boolean).filter((f) => !/\.(test|spec)\./.test(f));
+  } catch { return []; }
+  files = files.sort().slice(0, MAX_CLASS_FILES);
+  const out = [];
+  for (const rel of files) {
+    const content = await safeReadFile(path.join(repoPath, rel), { maxBytes: 24_000 });
+    if (content) out.push({ path: rel, content });
+  }
+  return out;
+}
+
 async function scanRepo(repoPath) {
   const absRepo = path.resolve(repoPath);
   const exists = await pathExists(absRepo);
@@ -433,6 +457,7 @@ async function scanRepo(repoPath) {
   const todos = await collectTodoHits(absRepo);
   const observability = detectObservability(manifests, docs);
   const schemaSources = await collectSchemaSources(absRepo);
+  const classSources = await collectClassSources(absRepo);
 
   return {
     repo_path: absRepo,
@@ -442,6 +467,7 @@ async function scanRepo(repoPath) {
     manifests,
     deploy_configs: deployConfigs,
     schema_sources: schemaSources,
+    class_sources: classSources,
     codeowners,
     git_signals: gitSignals,
     todo_hits: todos,
@@ -452,6 +478,7 @@ async function scanRepo(repoPath) {
       manifest_count: manifests.length,
       deploy_config_count: deployConfigs.length,
       schema_source_count: schemaSources.length,
+      class_source_count: classSources.length,
       todo_hit_count: todos.length,
       prior_adr_count: docs.filter((d) => d.kind === "prior_adr").length
     }
