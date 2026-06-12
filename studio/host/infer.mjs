@@ -10,7 +10,121 @@
 // Condense a full repo scan into a compact, high-signal prompt. The scanner's
 // digest is rich; we keep the parts that reveal components and trim verbose docs
 // so a single inference call stays well within context.
+import { emptySpec, applyMutation } from "../shared/ir.mjs";
 import { routeFactsFromSources } from "./extract.mjs";
+
+export function architectureFromScan(scan, seed = emptySpec()) {
+  let spec = seed;
+  const apply = (m) => {
+    try {
+      spec = applyMutation(spec, m);
+    } catch {
+      /* best-effort baseline; skip facts that cannot map cleanly */
+    }
+  };
+
+  const text = evidenceText(scan);
+  const dirs = new Set((scan.tree || []).filter((t) => t.kind === "dir").map((t) => t.path.replace(/\\/g, "/")));
+  const packageNames = new Set([...dirs].map((d) => /^packages\/([^/]+)$/.exec(d)?.[1]).filter(Boolean));
+  const routes = routeFactsFromSources(scan.route_sources || []);
+  const source = (...paths) => paths.filter(Boolean).join(", ");
+
+  const add = (label, type, { tech = "", notes = "", context = "" } = {}) => {
+    if (!label || hasNode(spec, label)) return label;
+    apply({ op: "add_node", view: "architecture", type, label, tech, notes, context });
+    return label;
+  };
+  const connect = (from, to, { kind = "calls", protocol = "http", label = "" } = {}) => {
+    if (!from || !to || from === to || hasEdge(spec, from, to, kind, protocol)) return;
+    apply({ op: "connect", view: "architecture", from, to, kind, protocol, label });
+  };
+
+  const hasWeb = packageNames.has("web") || /\b(next|react)\b/i.test(text);
+  const hasApi = packageNames.has("api") || routes.length > 0 || /\b(express|fastify|hono)\b/i.test(text);
+  const hasDb = /\b(postgres|postgresql|pgvector|"pg"\s*:|node-postgres)\b/i.test(text);
+  const hasPgvector = /\b(pgvector|vector\s*\()/i.test(text);
+  const hasRedis = /\b(redis|ioredis)\b/i.test(text);
+  const queueTech = firstMatch(text, [
+    ["Kafka", /\b(kafkajs|kafka|redpanda)\b/i],
+    ["NATS", /\b(nats)\b/i],
+    ["RabbitMQ", /\b(rabbitmq|amqplib)\b/i],
+    ["SQS", /\b(@aws-sdk\/client-sqs|sqs)\b/i],
+  ]);
+  const llmTech = ["Anthropic", "OpenAI", "DeepSeek"]
+    .filter((name) => new RegExp(name === "OpenAI" ? "\\b(openai|gpt-)\\b" : name, "i").test(text));
+
+  const web = hasWeb ? add("Web Client", "client", { tech: /\bnext\b/i.test(text) ? "Next.js" : "React", notes: source("packages/web", "package.json") }) : null;
+  const api = hasApi ? add("API Service", "service", { tech: /\bexpress\b/i.test(text) ? "Express" : "Node.js", notes: source("packages/api", routes[0]?.file) }) : null;
+  const daemon = packageNames.has("daemon") ? add("Daemon", "worker", { tech: "Node.js", notes: "packages/daemon" }) : null;
+  const scheduler = packageNames.has("scheduler") ? add("Scheduler", "scheduler", { tech: "Node.js", notes: "packages/scheduler" }) : null;
+  const executor = packageNames.has("executor") ? add("Executor", "worker", { tech: "Node.js", notes: "packages/executor" }) : null;
+  const mcp = packageNames.has("mcp-server") ? add("MCP Server", "mcp_server", { tech: "MCP", notes: "packages/mcp-server" }) : null;
+  const sandbox = packageNames.has("sandbox") ? add("Sandbox", "worker", { tech: "Node.js", notes: "packages/sandbox" }) : null;
+  const db = hasDb ? add("Postgres Database", "relational_db", { tech: hasPgvector ? "pgvector" : "Postgres", notes: source("docker-compose.yml", "migrations", "package.json") }) : null;
+  const cache = hasRedis ? add("Redis Cache", "cache", { tech: "Redis", notes: "package/deploy config" }) : null;
+  const queue = queueTech ? add(`${queueTech} Queue`, "event_queue", { tech: queueTech, notes: "package/deploy config" }) : null;
+  const notifyBus = routes.some((r) => r.notifications?.length)
+    ? add("Postgres Event Bus", "event_queue", { tech: "LISTEN/NOTIFY", notes: "route SQL notifications" })
+    : null;
+  const llm = llmTech.length ? add("LLM Provider", "llm_provider", { tech: llmTech.join(" / "), notes: "package.json" }) : null;
+
+  connect(web, api, { protocol: "http" });
+  if (routes.some((r) => r.sql_ops?.length)) connect(api, db, { protocol: "sql" });
+  if (routes.some((r) => /^\/mcp\b/.test(r.path))) connect(api, mcp, { protocol: "http", label: "/mcp" });
+  if (routes.some((r) => r.notifications?.length)) {
+    connect(api, notifyBus, { kind: "publishes", protocol: "event", label: "pg_notify" });
+    connect(notifyBus, daemon, { kind: "subscribes", protocol: "event", label: "LISTEN" });
+    connect(notifyBus, scheduler, { kind: "subscribes", protocol: "event", label: "LISTEN" });
+  }
+  connect(api, cache, { protocol: "internal" });
+  connect(api, queue, { kind: "publishes", protocol: "event" });
+  connect(queue, daemon, { kind: "subscribes", protocol: "event" });
+  connect(api, llm, { protocol: "http" });
+  connect(daemon, db, { protocol: "sql" });
+  connect(scheduler, db, { protocol: "sql" });
+  connect(executor, sandbox, { protocol: "internal" });
+  connect(executor, mcp, { protocol: "internal" });
+
+  if (spec.views.architecture.nodes.filter((n) => !n.parent).length > 1) {
+    apply({ op: "auto_layout", view: "architecture", direction: "LR" });
+  }
+  return spec;
+}
+
+function evidenceText(scan) {
+  return [
+    ...(scan.manifests || []).map((m) => m.content || ""),
+    ...(scan.deploy_configs || []).map((c) => c.content || ""),
+    ...(scan.schema_sources || []).map((s) => s.content || ""),
+    ...(scan.route_sources || []).map((s) => s.content || ""),
+    ...(scan.docs || []).map((d) => d.content || ""),
+  ].join("\n");
+}
+
+function norm(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function hasNode(spec, label) {
+  const key = norm(label);
+  return spec.views.architecture.nodes.some((n) => norm(n.label) === key);
+}
+
+function nodeId(spec, label) {
+  const key = norm(label);
+  return spec.views.architecture.nodes.find((n) => norm(n.label) === key)?.id || null;
+}
+
+function hasEdge(spec, fromLabel, toLabel, kind, protocol) {
+  const from = nodeId(spec, fromLabel);
+  const to = nodeId(spec, toLabel);
+  if (!from || !to) return true;
+  return spec.views.architecture.edges.some((e) => e.from === from && e.to === to && e.kind === kind && e.protocol === protocol);
+}
+
+function firstMatch(text, entries) {
+  return entries.find(([, re]) => re.test(text))?.[0] || "";
+}
 
 export function digestForInference(scan) {
   const lines = [];
@@ -80,10 +194,13 @@ function summarizeSqlOps(ops) {
 // The instruction handed to the assistant. It must build ONLY the architecture
 // view, only from evidenced components, and cite the grounding file in `notes`
 // so drift can show where each claim came from.
-export function inferenceInstruction(digest) {
+export function inferenceInstruction(digest, { hasBaseline = false } = {}) {
   return [
     "You are reverse-engineering the architecture of a REAL codebase from its repo digest below.",
     "Reconstruct the system's actual architecture as it exists in the code — not an ideal design.",
+    hasBaseline
+      ? "A deterministic scanner has already seeded a coarse baseline in the current design. Refine, rename, annotate, remove, or rewire those existing components instead of duplicating them."
+      : "",
     "",
     "Rules:",
     "- Add ONLY components you can ground in the digest (a dependency, a deploy service, a directory, a doc). Cite-or-die: do not invent components the evidence doesn't support.",

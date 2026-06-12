@@ -88,6 +88,18 @@ test("a model that narrates without calling tools is nudged to act", async () =>
   assert.equal(result.trace.length, 1);
 });
 
+test("edit turn limit preserves progress and gives a continuation path", async () => {
+  const turns = [
+    { content: [{ type: "tool_use", id: "t1", name: "arch_add_node", input: { type: "service", label: "API" } }] },
+  ];
+  const result = await runAssistant({ userText: "add a larger design", spec: emptySpec(), client: fakeClient(turns), maxTurns: 1 });
+  assert.equal(result.spec.views.architecture.nodes.length, 1);
+  assert.equal(result.limited, true);
+  assert.match(result.text, /saved that progress/);
+  assert.match(result.text, /continue/);
+  assert.doesNotMatch(result.text, /Reached the edit limit/);
+});
+
 test("no api key and no client returns a helpful message, not a crash", async () => {
   const result = await runAssistant({ userText: "hi", spec: emptySpec() });
   assert.match(result.text, /No Anthropic API key/);

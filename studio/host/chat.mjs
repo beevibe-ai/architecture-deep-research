@@ -239,7 +239,7 @@ export async function runArchitectReview({ userText, spec, model, apiKey, baseUR
 
 // onEvent receives { type: "chatToken"|"specPatch", ... }. The host wires it to
 // postMessage. `client` is injectable for tests (no network).
-export async function runAssistant({ userText, spec, model, apiKey, baseURL, onEvent = () => {}, client, catalog, provider }) {
+export async function runAssistant({ userText, spec, model, apiKey, baseURL, onEvent = () => {}, client, catalog, provider, maxTurns = 14 }) {
   // An injected client (tests) always uses the Anthropic shape.
   const providerName = client ? "anthropic" : provider || "anthropic";
   if (!apiKey && !client) {
@@ -254,7 +254,7 @@ export async function runAssistant({ userText, spec, model, apiKey, baseURL, onE
   let nudged = false;
   const history = [{ role: "user", text: `Current design:\n${specSummary(spec)}\n\nUser: ${userText}` }];
 
-  for (let turn = 0; turn < 8; turn++) {
+  for (let turn = 0; turn < maxTurns; turn++) {
     const { blocks } = await prov.stream({
       system: systemPrompt(catalog),
       tools: TOOLS,
@@ -296,5 +296,13 @@ export async function runAssistant({ userText, spec, model, apiKey, baseURL, onE
     history.push({ role: "tool", results });
   }
 
-  return { text: "Reached the edit limit for one message — check the canvas and tell me what to adjust.", spec: working, trace };
+  const applied = trace.filter((t) => t.result?.ok && t.result.applied > 0).length;
+  const { violations } = lint(working);
+  const issueHint = violations.length
+    ? ` There are still ${violations.length} issue${violations.length === 1 ? "" : "s"} to resolve.`
+    : "";
+  const progressHint = applied
+    ? `I applied ${applied} edit step${applied === 1 ? "" : "s"} and saved that progress, but this request needs another pass to finish cleanly.${issueHint} Send “continue” and I’ll continue from the current canvas.`
+    : `I could not complete this request within one assistant pass.${issueHint} Try a smaller step or ask me to continue with a narrower target.`;
+  return { text: progressHint, spec: working, trace, limited: true };
 }

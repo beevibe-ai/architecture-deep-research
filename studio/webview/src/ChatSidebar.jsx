@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { memo, useState, useRef, useEffect } from "react";
+import MarkdownText from "./MarkdownText.jsx";
 
 // The design assistant. Plain product chat — the user sketches what they want,
 // gets expert discussion by default, and can preview/apply changes when needed.
@@ -64,20 +65,14 @@ export default function ChatSidebar({
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`msg msg-${m.role} ${m.streaming ? "streaming" : ""}`}>
-            <div>{m.text}</div>
-            {m.streaming && <span className="caret">▍</span>}
-            {m.role === "assistant" && m.kind === "architect" && !m.streaming && (
-              <div className="msg-actions">
-                <button className="mini-btn" onClick={() => onPreviewRecommendation?.(m)} disabled={busy || !onPreviewRecommendation}>
-                  Preview recommendation
-                </button>
-                <button className="mini-btn ghost" onClick={() => onApplyRecommendation?.(m)} disabled={busy || !onApplyRecommendation}>
-                  Apply recommendation
-                </button>
-              </div>
-            )}
-          </div>
+          <MessageRow
+            key={i}
+            message={m}
+            busy={busy}
+            onSend={onSend}
+            onPreviewRecommendation={onPreviewRecommendation}
+            onApplyRecommendation={onApplyRecommendation}
+          />
         ))}
         {busy && !messages[messages.length - 1]?.streaming && (
           <div className="msg msg-assistant typing">…</div>
@@ -122,3 +117,40 @@ export default function ChatSidebar({
     </aside>
   );
 }
+
+const MessageRow = memo(function MessageRow({
+  message,
+  busy,
+  onSend,
+  onPreviewRecommendation,
+  onApplyRecommendation,
+}) {
+  const renderMarkdown = !message.streaming && (message.role === "assistant" || message.role === "system");
+  return (
+    <div className={`msg msg-${message.role} ${message.streaming ? "streaming" : ""}`}>
+      {renderMarkdown ? (
+        <MarkdownText text={message.text} />
+      ) : (
+        <div className="msg-text">{message.text}</div>
+      )}
+      {message.streaming && <span className="caret">▍</span>}
+      {message.role === "assistant" && message.kind === "architect" && !message.streaming && (
+        <div className="msg-actions">
+          <button className="mini-btn" onClick={() => onPreviewRecommendation?.(message)} disabled={busy || !onPreviewRecommendation}>
+            Preview recommendation
+          </button>
+          <button className="mini-btn ghost" onClick={() => onApplyRecommendation?.(message)} disabled={busy || !onApplyRecommendation}>
+            Apply recommendation
+          </button>
+        </div>
+      )}
+      {message.role === "assistant" && message.limited && !message.streaming && (
+        <div className="msg-actions">
+          <button className="mini-btn" onClick={() => onSend?.("continue")} disabled={busy || !onSend}>
+            Continue
+          </button>
+        </div>
+      )}
+    </div>
+  );
+});

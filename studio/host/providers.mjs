@@ -60,6 +60,15 @@ const PROVIDERS = {
     modelSetting: "togetherModel",
     env: ["TOGETHER_API_KEY", "ADR_TOGETHER_API_KEY"],
   },
+  deepseek: {
+    id: "deepseek",
+    label: "DeepSeek",
+    kind: "openai-compatible",
+    baseURL: "https://api.deepseek.com",
+    defaultModel: "deepseek-v4-flash",
+    modelSetting: "deepseekModel",
+    env: ["DEEPSEEK_API_KEY", "ADR_DEEPSEEK_API_KEY"],
+  },
   "openai-compatible": {
     id: "openai-compatible",
     label: "Custom OpenAI-compatible",

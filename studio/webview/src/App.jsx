@@ -13,6 +13,7 @@ import { post, onMessage } from "./vscode.js";
 import { emptySpec, applyMutation } from "../../shared/ir.mjs";
 import { lint } from "../../shared/constraints.mjs";
 import { CATALOG } from "../../shared/catalog.mjs";
+import { summarizeSpecChange } from "../../shared/change-diff.mjs";
 
 function violationKey(v) {
   return [v.constraintId, v.view, v.nodeId || "", v.edgeId || "", v.message].join("|");
@@ -21,6 +22,37 @@ function violationKey(v) {
 function addedViolations(beforeSpec, nextSpec) {
   const before = new Set(lint(beforeSpec).violations.map(violationKey));
   return lint(nextSpec).violations.filter((v) => !before.has(violationKey(v)));
+}
+
+function ChangeSummary({ change, activeView, onClear }) {
+  if (!change?.total) return null;
+  const activeItems = change.items.filter((item) => item.view === activeView);
+  const items = (activeItems.length ? activeItems : change.items).slice(0, 6);
+  const overflow = Math.max(0, change.items.length - items.length);
+  return (
+    <div className="change-summary" role="status" aria-live="polite">
+      <div className="change-summary-head">
+        <div>
+          <div className="change-summary-title">Last change</div>
+          <div className="change-summary-source">{change.source}</div>
+        </div>
+        <div className="change-summary-counts">
+          <span className="change-count added">{change.added} added</span>
+          <span className="change-count updated">{change.updated} updated</span>
+          <span className="change-count removed">{change.removed} removed</span>
+        </div>
+        <button className="mini-btn ghost" onClick={onClear}>Hide</button>
+      </div>
+      <div className="change-summary-list">
+        {items.map((item, index) => (
+          <span className={`change-pill ${item.change}`} key={`${item.change}-${item.id || item.label}-${index}`}>
+            {item.change} {item.label}
+          </span>
+        ))}
+        {overflow ? <span className="change-more">+{overflow} more</span> : null}
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -34,7 +66,10 @@ export default function App() {
   const [, setHistoryVersion] = useState(0);
   const [options, setOptions] = useState(null); // { status, count, progress, options }
   const [drift, setDrift] = useState(null); // { status, repo, report, actual, stream }
+  const [infraCluster, setInfraCluster] = useState({ statusById: {}, summary: null, busy: null, profile: "minikube" });
+  const [lastChange, setLastChange] = useState(null);
   const pendingTurnRef = useRef(null);
+  const lastLimitedTurnRef = useRef(null);
   // Mirror `busy` into a ref so the (stable) commit callback can gate edits
   // while a stream is in flight without re-creating itself.
   const busyRef = useRef(false);
@@ -60,23 +95,28 @@ export default function App() {
     setSaveState("saving");
     post({ type: "persist", spec: next });
   }, []);
-  const restore = useCallback((next) => {
+  const rememberChange = useCallback((before, after, source) => {
+    const change = summarizeSpecChange(before, after, source);
+    if (change.total) setLastChange(change);
+  }, []);
+  const restore = useCallback((next, source = "History restore") => {
+    rememberChange(specRef.current, next, source);
     setSpec(next);
     persistSpec(next);
-  }, [persistSpec]);
+  }, [persistSpec, rememberChange]);
   const undo = useCallback(() => {
     if (busyRef.current || !pastRef.current.length) return;
     futureRef.current.push(specRef.current);
     const next = pastRef.current.pop();
     setHistoryVersion((v) => v + 1);
-    restore(next);
+    restore(next, "Undo");
   }, [restore]);
   const redo = useCallback(() => {
     if (busyRef.current || !futureRef.current.length) return;
     pastRef.current.push(specRef.current);
     const next = futureRef.current.pop();
     setHistoryVersion((v) => v + 1);
-    restore(next);
+    restore(next, "Redo");
   }, [restore]);
 
   useEffect(() => {
@@ -107,6 +147,7 @@ export default function App() {
           futureRef.current = [];
           setHistoryVersion((v) => v + 1);
           setSaveState("saved");
+          setLastChange(null);
           setSpec(msg.spec);
           break;
         case "saved":
@@ -139,12 +180,13 @@ export default function App() {
           break;
         case "driftReport":
           setDrift({ status: "ready", repo: msg.repo, report: msg.report, actual: msg.actual, full: msg.full });
+          if (msg.message) flash(msg.message);
           break;
         case "scanDone":
           // Discover mode: the host loaded the reverse-engineered system into the
           // canvas (a "spec" message). Just acknowledge and close any scan UI.
           setDrift(null);
-          flash(`Reverse-engineered ${msg.count} component${msg.count === 1 ? "" : "s"} from ${msg.repo}`);
+          flash(msg.message || `Reverse-engineered ${msg.count} component${msg.count === 1 ? "" : "s"} from ${msg.repo}`);
           break;
         case "scanError":
           setDrift(null);
@@ -161,8 +203,19 @@ export default function App() {
           setSpec(msg.spec); // canvases animate mid-stream
           break;
         case "chatDone":
+          if (pendingTurnRef.current?.kind === "direct" && pendingTurnRef.current.beforeSpec) {
+            rememberChange(pendingTurnRef.current.beforeSpec, msg.spec, "Assistant suggestion");
+          }
           setSpec(msg.spec);
-          setMessages((m) => finalizeLast(m, msg.text));
+          if (msg.limited && pendingTurnRef.current?.kind === "direct") {
+            lastLimitedTurnRef.current = {
+              sourceText: pendingTurnRef.current.sourceText || "",
+              statusText: msg.text || "",
+            };
+          } else if (!msg.limited) {
+            lastLimitedTurnRef.current = null;
+          }
+          setMessages((m) => finalizeLast(m, msg.text, { limited: !!msg.limited }));
           setBusy(false);
           setSaveState("saved");
           pendingTurnRef.current = null;
@@ -175,6 +228,32 @@ export default function App() {
           break;
         case "manifestsWritten":
           flash(msg.count ? `Manifests written → ${msg.dir} (${msg.count} files)` : "No manifests to write yet");
+          break;
+        case "infraOpStart":
+          setInfraCluster((c) => ({ ...c, busy: msg.op, lastError: null }));
+          break;
+        case "infraOpDone":
+          setInfraCluster((c) => ({ ...c, busy: null, dir: msg.dir, namespace: msg.namespace, lastMessage: msg.message }));
+          flash(msg.message || `${msg.op} complete`);
+          break;
+        case "infraStatus":
+          setInfraCluster((c) => ({
+            ...c,
+            busy: null,
+            statusById: msg.statusById || {},
+            summary: msg.summary || null,
+            profile: msg.profile || c.profile || "minikube",
+            context: msg.context,
+            namespace: msg.namespace,
+            dir: msg.dir || c.dir,
+            lastMessage: msg.message,
+            lastError: null,
+          }));
+          flash(msg.message || `Cluster status refreshed for ${msg.namespace || "default"}`);
+          break;
+        case "infraOpError":
+          setInfraCluster((c) => ({ ...c, busy: null, lastError: msg.message }));
+          flash(msg.message);
           break;
         case "error":
           setMessages((m) => [...m, { role: "system", text: `⚠ ${msg.message}` }]);
@@ -204,11 +283,11 @@ export default function App() {
     return copy;
   }
   // Replace the streaming bubble's text with the final assistant text.
-  function finalizeLast(list, text) {
+  function finalizeLast(list, text, patch = {}) {
     if (!list.length) return list;
     const copy = list.slice();
     const last = copy[copy.length - 1];
-    copy[copy.length - 1] = { ...last, text: text || last.text || "Done.", streaming: false };
+    copy[copy.length - 1] = { ...last, ...patch, text: text || last.text || "Done.", streaming: false };
     return copy;
   }
 
@@ -216,24 +295,38 @@ export default function App() {
   // persist to disk via the host. Single write path. Edits are ignored while
   // the assistant is streaming, so a user drag can't race incoming specPatches.
   const commit = useCallback(
-    (nextSpec) => {
+    (nextSpec, source = "Canvas edit") => {
       if (busyRef.current) return;
+      const beforeSpec = specRef.current;
       recordHistory();
+      rememberChange(beforeSpec, nextSpec, source);
       setSpec(nextSpec);
       persistSpec(nextSpec);
     },
-    [persistSpec, recordHistory]
+    [persistSpec, recordHistory, rememberChange]
   );
 
   const sendChat = useCallback(
     (text) => {
+      const rawText = text.trim();
+      const continuation = /^(continue|继续)$/i.test(rawText) ? lastLimitedTurnRef.current : null;
+      const prompt = continuation?.sourceText
+        ? [
+            "Continue the previous architecture edit request from the current canvas.",
+            "Do not restart the design or duplicate components that were already added.",
+            "Prefer the remaining smallest safe edits, then run the constraint check and stop.",
+            `Original request:\n${continuation.sourceText}`,
+            continuation.statusText ? `Previous status:\n${continuation.statusText}` : "",
+          ].filter(Boolean).join("\n\n")
+        : rawText;
+      const beforeSpec = specRef.current;
       recordHistory(); // one undo step reverts the whole assistant turn
-      setMessages((m) => [...m, { role: "user", text }]);
+      setMessages((m) => [...m, { role: "user", text: rawText }]);
       setBusy(true);
-      pendingTurnRef.current = { kind: "direct", sourceText: text };
-      post({ type: "chat", text, spec });
+      pendingTurnRef.current = { kind: "direct", sourceText: continuation?.sourceText || rawText, beforeSpec };
+      post({ type: "chat", text: prompt, spec: beforeSpec });
     },
-    [spec, recordHistory]
+    [recordHistory]
   );
 
   const askArchitect = useCallback(
@@ -315,7 +408,7 @@ export default function App() {
         setMessages((m) => [...m, { role: "system", text: `Suggestion not applied because it introduces ${newIssues.length} new issue${newIssues.length === 1 ? "" : "s"}. ${sample}` }]);
         return;
       }
-      commit(next);
+      commit(next, `Loaded ${opt.label} design`);
       setOptions(null);
       flash(`Loaded the “${opt.label}” design`);
     },
@@ -328,21 +421,21 @@ export default function App() {
   const addFromCode = useCallback(
     (d) => {
       const note = d.evidence?.length ? `In code: ${d.evidence.join(", ")}` : "";
-      commit(applyMutation(spec, { op: "add_node", view: "architecture", type: d.type, label: d.label, tech: d.tech, notes: note }));
+      commit(applyMutation(spec, { op: "add_node", view: "architecture", type: d.type, label: d.label, tech: d.tech, notes: note }), "Added code component");
       flash(`Added “${d.label}” from the code`);
     },
     [spec, commit]
   );
   const fixTech = useCallback(
     (d) => {
-      commit(applyMutation(spec, { op: "update_node", view: "architecture", id: d.id, tech: d.actual_tech }));
+      commit(applyMutation(spec, { op: "update_node", view: "architecture", id: d.id, tech: d.actual_tech }), "Fixed code drift");
       flash(`${d.label} → ${d.actual_tech}`);
     },
     [spec, commit]
   );
   const removePhantom = useCallback(
     (d) => {
-      commit(applyMutation(spec, { op: "remove_node", view: "architecture", ref: d.id }));
+      commit(applyMutation(spec, { op: "remove_node", view: "architecture", ref: d.id }), "Removed phantom component");
       flash(`Removed “${d.label}”`);
     },
     [spec, commit]
@@ -350,7 +443,7 @@ export default function App() {
   // Replace the whole design with the system reverse-engineered from the repo.
   const loadActual = useCallback(
     (full) => {
-      if (full) commit(full);
+      if (full) commit(full, "Loaded real system from repo");
       setDrift(null);
       flash("Loaded the real system from the repo");
     },
@@ -417,10 +510,11 @@ export default function App() {
         <div className="view-col">
           <ViewTabs active={activeView} onChange={setActiveView} counts={counts} />
           <div className="view-stage">
-            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} onSuggest={suggestOptions} />}
+            <ChangeSummary change={lastChange} activeView={activeView} onClear={() => setLastChange(null)} />
+            {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} changeHighlights={lastChange?.byView?.architecture} onSuggest={suggestOptions} />}
             {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
-            {activeView === "infra" && <InfrastructureView spec={spec} commit={commit} />}
+            {activeView === "infra" && <InfrastructureView spec={spec} commit={commit} cluster={infraCluster} />}
             {activeView === "classes" && <ClassView spec={spec} commit={commit} />}
             {activeView === "sequences" && <SequenceView spec={spec} commit={commit} />}
           </div>

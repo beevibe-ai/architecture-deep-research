@@ -48,6 +48,18 @@ test("compileManifests emits a Deployment with image + replicas", () => {
   assert.match(yaml, /image: ghcr\.io\/org\/api:1\.0/);
   assert.match(yaml, /replicas: 3/);
   assert.match(yaml, /namespace: app/);
+  assert.match(yaml, /adr\.studio\/node-id: "inf_3"/);
+  assert.match(yaml, /app\.kubernetes\.io\/managed-by: "adr-studio"/);
+});
+
+test("compileManifests keeps Service selectors aligned with exposed workload labels", () => {
+  let s = deployedApp();
+  s = applyMutation(s, { op: "add_infra", view: "infra", type: "service", label: "api-svc", props: { port: 80, target_port: 8080 } });
+  s = applyMutation(s, { op: "connect_infra", view: "infra", from: "api-svc", to: "API", kind: "exposes" });
+  const yaml = compileManifests(s).find((f) => f.path.endsWith("k8s.yaml")).content;
+  assert.match(yaml, /kind: Service/);
+  assert.match(yaml, /selector: \{ app: api \}/);
+  assert.match(yaml, /targetPort: 8080/);
 });
 
 test("managed cloud resources compile to Terraform", () => {

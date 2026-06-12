@@ -39,8 +39,9 @@ function inferKind(fromType, toType) {
 
 function GroupNode({ data }) {
   return (
-    <div className={`infra-group lvl-${data.level} ${data.bad ? "bad" : ""}`} style={{ width: data.w, height: data.h }}>
+    <div className={`infra-group lvl-${data.level} ${data.bad ? "bad" : ""} ${data.clusterState ? `cluster-${data.clusterState}` : ""}`} style={{ width: data.w, height: data.h }}>
       <div className="infra-group-head">{data.label} <span className="infra-type">{data.typeLabel}</span></div>
+      {data.clusterState && <div className={`infra-status infra-status-${data.clusterState}`} title={data.clusterDetail}>{data.clusterState}</div>}
       <Handle type="target" position={Position.Top} className="arch-handle" />
       <Handle type="source" position={Position.Bottom} className="arch-handle" />
     </div>
@@ -48,10 +49,11 @@ function GroupNode({ data }) {
 }
 function LeafNode({ data, selected }) {
   return (
-    <div className={`infra-leaf ${data.type === "deploy_gap" ? "gap" : ""} ${data.bad ? "bad" : ""} ${selected ? "sel" : ""}`}>
+    <div className={`infra-leaf ${data.type === "deploy_gap" ? "gap" : ""} ${data.bad ? "bad" : ""} ${data.clusterState ? `cluster-${data.clusterState}` : ""} ${selected ? "sel" : ""}`}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="infra-leaf-type">{data.typeLabel}</div>
       <div className="infra-leaf-label">{data.label}</div>
+      {data.clusterState && <div className={`infra-status infra-status-${data.clusterState}`} title={data.clusterDetail}>{data.clusterState}</div>}
       {data.reason ? <div className="infra-leaf-note">{data.reason}</div> : null}
       <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
@@ -59,7 +61,7 @@ function LeafNode({ data, selected }) {
 }
 const nodeTypes = { infraGroup: GroupNode, infraLeaf: LeafNode };
 
-function Inner({ spec, commit }) {
+function Inner({ spec, commit, cluster }) {
   const nodes = spec.views.infra.nodes;
   const edges = spec.views.infra.edges;
   const vIndex = useMemo(() => violationIndex(spec).byView.infra, [spec]);
@@ -69,6 +71,8 @@ function Inner({ spec, commit }) {
   const { screenToFlowPosition } = useReactFlow();
 
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const statusById = cluster?.statusById || {};
+  const infraBusy = cluster?.busy || null;
   const depth = useCallback((n) => { let d = 0, c = n; while (c && c.parent) { c = byId.get(c.parent); d++; } return d; }, [byId]);
   const absPos = useCallback((n) => {
     let x = n.position?.x || 0, y = n.position?.y || 0, c = byId.get(n.parent);
@@ -82,6 +86,7 @@ function Inner({ spec, commit }) {
       sorted.map((n) => {
         const t = getInfraType(n.type);
         const container = isContainer(n.type);
+        const clusterStatus = statusById[n.id] || null;
         // Prefer the size auto-layout computed to fit the children; fall back to
         // the fixed per-level box for hand-placed containers.
         const size = container ? (n.size || LEVEL_SIZE[t.level]) : null;
@@ -96,6 +101,8 @@ function Inner({ spec, commit }) {
             level: t?.level,
             bad: vIndex.nodes.has(n.id),
             reason: n.props?.reason,
+            clusterState: clusterStatus?.state,
+            clusterDetail: clusterStatus?.detail,
             ...(container ? size : {}),
           },
           selected: n.id === selectedId,
@@ -106,7 +113,7 @@ function Inner({ spec, commit }) {
       })
     );
     setRfEdges(edges.map((e) => ({ id: e.id, source: e.from, target: e.to, label: e.kind, className: vIndex.edges.has(e.id) ? "edge-bad" : "edge-ok" })));
-  }, [spec, vIndex, selectedId, nodes, edges, depth, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, nodes, edges, statusById, depth, setRfNodes, setRfEdges]);
 
   // Deepest container whose absolute rect contains the point.
   const containerAt = useCallback((pt) => {
@@ -162,15 +169,22 @@ function Inner({ spec, commit }) {
     if (compId) s = applyMutation(s, { op: "add_cross_ref", from: { view: "architecture", ref: compId }, to: { view: "infra", ref: selected.id }, kind: "deployed_as" });
     commit(s);
   };
+  const runInfra = (type) => post({ type, spec, profile: cluster?.profile || "minikube" });
+  const summary = cluster?.summary;
 
   return (
     <div className="view-area">
       <InfraPalette />
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={onDragOver}>
         <div className="canvas-toolbar">
+          <span className="cluster-pill" title="Local Kubernetes target">minikube {cluster?.namespace ? `/${cluster.namespace}` : ""}</span>
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "derive", view: "infra" }))}>Sync from architecture</button>
           <button className="mini-btn" onClick={() => commit(applyMutation(spec, { op: "auto_layout", view: "infra", direction: "TB" }))}>Auto-arrange</button>
           <button className="mini-btn" onClick={() => post({ type: "writeManifests", spec })}>Generate manifests</button>
+          <button className="mini-btn" onClick={() => runInfra("infraValidate")} disabled={!!infraBusy}>Validate YAML</button>
+          <button className="mini-btn" onClick={() => runInfra("infraDeploy")} disabled={!!infraBusy}>Deploy</button>
+          <button className="mini-btn" onClick={() => runInfra("infraStatus")} disabled={!!infraBusy}>Refresh</button>
+          <button className="mini-btn ghost" onClick={() => runInfra("infraTeardown")} disabled={!!infraBusy}>Tear down</button>
         </div>
         <ReactFlow
           nodes={rfNodes}
@@ -194,6 +208,13 @@ function Inner({ spec, commit }) {
         </ReactFlow>
 
         {nodes.length === 0 && <div className="empty-hint">Drag a Cluster in, then nest namespaces and workloads — or ask the assistant to deploy your architecture.</div>}
+        {(infraBusy || summary || cluster?.lastError) && (
+          <div className="cluster-status-panel">
+            <div className="cluster-status-title">{infraBusy ? `Running ${infraBusy}...` : "Cluster status"}</div>
+            {summary && <div className="cluster-status-counts">{summary.running || 0} running · {summary.pending || 0} pending · {summary.error || 0} error · {summary.unknown || 0} unknown</div>}
+            {cluster?.lastError && <div className="cluster-status-error">{cluster.lastError}</div>}
+          </div>
+        )}
 
         {selected && (
           <div className="inspector wide" onClick={(e) => e.stopPropagation()}>
@@ -231,10 +252,10 @@ function Inner({ spec, commit }) {
   );
 }
 
-export default function InfrastructureView({ spec, commit }) {
+export default function InfrastructureView({ spec, commit, cluster }) {
   return (
     <ReactFlowProvider>
-      <Inner spec={spec} commit={commit} />
+      <Inner spec={spec} commit={commit} cluster={cluster} />
     </ReactFlowProvider>
   );
 }

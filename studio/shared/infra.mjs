@@ -193,14 +193,14 @@ function renderK8s(n, ctx) {
   const { ns, slug, nodes, edges } = ctx;
   const name = slug(n.label);
   const p = n.props || {};
-  const meta = `metadata:\n  name: ${name}\n  namespace: ${ns}`;
+  const meta = renderMeta(n, { name, ns, slug, namespaced: kind !== "Namespace" });
   switch (kind) {
     case "Namespace":
-      return `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${slug(p.name || n.label)}`;
+      return `apiVersion: v1\nkind: Namespace\n${renderMeta(n, { name: slug(p.name || n.label), ns, slug, namespaced: false })}`;
     case "Deployment":
     case "StatefulSet": {
       const gpu = Number(p.gpu) > 0 ? `\n            nvidia.com/gpu: "${p.gpu}"` : "";
-      return `apiVersion: apps/v1\nkind: ${kind}\n${meta}\nspec:\n  replicas: ${p.replicas ?? 1}\n  selector:\n    matchLabels: { app: ${name} }\n  template:\n    metadata:\n      labels: { app: ${name} }\n    spec:\n      containers:\n        - name: ${name}\n          image: ${p.image || "app:latest"}\n          ports: [ { containerPort: ${p.port || 8080} } ]\n          resources:\n            requests:\n              cpu: "${p.cpu || "250m"}"\n              memory: "${p.memory || "256Mi"}"\n            limits:${gpu ? gpu : `\n              cpu: "${p.cpu || "500m"}"\n              memory: "${p.memory || "512Mi"}"`}`;
+      return `apiVersion: apps/v1\nkind: ${kind}\n${meta}\nspec:\n  replicas: ${p.replicas ?? 1}\n  selector:\n    matchLabels: { app: ${name} }\n  template:\n    metadata:\n      labels:\n        app: ${name}\n${adrLabels(n, slug, "        ").join("\n")}\n    spec:\n      containers:\n        - name: ${name}\n          image: ${p.image || "app:latest"}\n          ports: [ { containerPort: ${p.port || 8080} } ]\n          resources:\n            requests:\n              cpu: "${p.cpu || "250m"}"\n              memory: "${p.memory || "256Mi"}"\n            limits:${gpu ? gpu : `\n              cpu: "${p.cpu || "500m"}"\n              memory: "${p.memory || "512Mi"}"`}`;
     }
     case "Service": {
       const target = findEdge(edges, n.id, "exposes");
@@ -253,3 +253,22 @@ function renderTerraform(n, slug) {
 }
 
 const findEdge = (edges, from, kind) => (edges.find((e) => e.from === from && e.kind === kind) || {}).to || null;
+
+function renderMeta(n, { name, ns, slug, namespaced = true }) {
+  const lines = [
+    "metadata:",
+    `  name: ${name}`,
+  ];
+  if (namespaced) lines.push(`  namespace: ${ns}`);
+  lines.push("  labels:");
+  lines.push(...adrLabels(n, slug, "    "));
+  return lines.join("\n");
+}
+
+function adrLabels(n, slug, indent = "") {
+  return [
+    `${indent}adr.studio/node-id: "${n.id}"`,
+    `${indent}adr.studio/node-label: "${slug(n.label)}"`,
+    `${indent}app.kubernetes.io/managed-by: "adr-studio"`,
+  ];
+}

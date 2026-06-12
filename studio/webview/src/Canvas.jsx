@@ -48,19 +48,20 @@ function ZoneNode({ data }) {
 
 // A container component (e.g. Agent Runtime) — a titled box children nest inside.
 function ArchGroupNode({ data }) {
-  const { node, bad } = data;
+  const { node, bad, change } = data;
   const color = CAT_COLOR[node.category] || "#b9c5ff";
   return (
-    <div className={`arch-group ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""}`} style={{ width: data.w, height: data.h, borderColor: bad ? "#ff6b6b" : color }}>
+    <div className={`arch-group ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""} ${change ? `change-${change}` : ""}`} style={{ width: data.w, height: data.h, borderColor: bad ? "#ff6b6b" : color }}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-group-title" style={{ color }}>{node.label}</div>
+      {change ? <span className={`arch-change-tag ${change}`}>{changeLabel(change)}</span> : null}
       <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
   );
 }
 
 function ArchNode({ data, selected }) {
-  const { node, bad, drift } = data;
+  const { node, bad, drift, change } = data;
   const color = CAT_COLOR[node.category] || "#cccccc";
   const plane = node.plane || "execution";
   // drift: "phantom" = drawn but not in code; "mismatch" = tech differs from code.
@@ -70,7 +71,7 @@ function ArchNode({ data, selected }) {
     ...(data.w ? { width: data.w, minHeight: data.h } : {}),
   };
   return (
-    <div className={`arch-node ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""} ${driftClass} ${selected ? "sel" : ""}`} style={style}>
+    <div className={`arch-node ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""} ${driftClass} ${change ? `change-${change}` : ""} ${selected ? "sel" : ""}`} style={style}>
       <Handle type="target" position={Position.Left} className="arch-handle" />
       <div className="arch-kind" style={{ color }}>
         {getType(node.type)?.label || node.type || node.kind}
@@ -79,12 +80,17 @@ function ArchNode({ data, selected }) {
       <div className="arch-label">{node.label}</div>
       {node.tech ? <div className="arch-tech">{node.tech}</div> : null}
       {drift ? <span className="arch-drift-tag">{drift === "phantom" ? "not in code" : "tech drift"}</span> : null}
+      {change ? <span className={`arch-change-tag ${change}`}>{changeLabel(change)}</span> : null}
       <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
   );
 }
 
 const nodeTypes = { arch: ArchNode, zone: ZoneNode, archGroup: ArchGroupNode };
+
+function changeLabel(change) {
+  return change === "added" ? "new" : "changed";
+}
 
 function summarizeCurrentLayout(nodes, layout) {
   const topLevel = nodes.filter((n) => !n.parent);
@@ -202,7 +208,7 @@ function computeLayered(topLevel) {
   return { used, bandY, pos };
 }
 
-export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }) {
+export default function Canvas({ spec, commit, catalog, driftStatus, changeHighlights, onSuggest }) {
   const vIndex = useMemo(() => violationIndex(spec).byView.architecture, [spec]);
   const archNodes = spec.views.architecture.nodes;
   const archEdges = spec.views.architecture.edges;
@@ -253,7 +259,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
         id: n.id,
         type: container ? "archGroup" : "arch",
         position: pos,
-        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], viewMode: layout, ...(size ? size : {}) },
+        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], change: changeHighlights?.nodes?.[n.id], viewMode: layout, ...(size ? size : {}) },
         selected: n.id === selectedId,
       };
       if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }
@@ -262,13 +268,16 @@ export default function Canvas({ spec, commit, catalog, driftStatus, onSuggest }
     });
     setRfNodes([...zones, ...comps]);
     setRfEdges(
-      archEdges.map((e) => ({
-        id: e.id, source: e.from, target: e.to,
-        label: layout === "composed" ? compactEdgeLabel(e) : edgeLabel(e),
-        className: `${layout === "composed" ? "composed-edge" : ""} ${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"}`,
-      }))
+      archEdges.map((e) => {
+        const change = changeHighlights?.edges?.[e.id];
+        return {
+          id: e.id, source: e.from, target: e.to,
+          label: layout === "composed" ? compactEdgeLabel(e) : edgeLabel(e),
+          className: `${layout === "composed" ? "composed-edge" : ""} ${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"} ${change ? `edge-change-${change}` : ""}`,
+        };
+      })
     );
-  }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, driftStatus, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, driftStatus, changeHighlights, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) => commit(applyMutation(spec, { op: "connect", view: "architecture", from: c.source, to: c.target, kind: "calls", protocol: "http" })),

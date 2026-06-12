@@ -31,6 +31,7 @@ function shared() {
       buildViews: await import("./build-views.mjs"),
       repoScan: await import("./repo-scan.mjs"),
       infer: await import("./infer.mjs"),
+      cluster: await import("./cluster.mjs"),
     }))();
   }
   return sharedPromise;
@@ -133,7 +134,7 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, plan, schema, catalog, chat, layout, constraints } = await shared();
+  const { ir, handoff, plan, schema, catalog, chat, layout, constraints, cluster } = await shared();
   switch (msg.type) {
     case "ready":
       post({ type: "spec", spec: readSpec(ir, schema, layout) });
@@ -183,18 +184,28 @@ async function handleMessage(msg) {
     }
 
     case "writeManifests": {
-      const infra = await import("../shared/infra.mjs");
-      const out = infra.compileManifests(msg.spec);
       const baseDir = path.dirname(specPath());
-      for (const f of out) {
-        const p = path.join(baseDir, f.path);
-        fs.mkdirSync(path.dirname(p), { recursive: true });
-        fs.writeFileSync(p, f.content);
-      }
+      const out = cluster.writeGeneratedManifests(msg.spec, baseDir);
       writeSpec(msg.spec);
-      post({ type: "manifestsWritten", dir: vscode.workspace.asRelativePath(path.join(baseDir, "deploy")), count: out.length });
+      post({ type: "manifestsWritten", dir: vscode.workspace.asRelativePath(out.deployDir), count: out.files.length });
       return;
     }
+
+    case "infraValidate":
+      await runInfraOp("validate", msg.spec, () => cluster.validateManifests(msg.spec, { baseDir: path.dirname(specPath()), cwd: workspaceRoot() }));
+      return;
+
+    case "infraDeploy":
+      await runInfraOp("deploy", msg.spec, () => cluster.deployToMinikube(msg.spec, { baseDir: path.dirname(specPath()), cwd: workspaceRoot(), profile: msg.profile || "minikube" }), { refresh: true });
+      return;
+
+    case "infraStatus":
+      await runInfraOp("status", msg.spec, () => cluster.refreshClusterStatus(msg.spec, { cwd: workspaceRoot(), profile: msg.profile || "minikube" }), { statusOnly: true });
+      return;
+
+    case "infraTeardown":
+      await runInfraOp("teardown", msg.spec, () => cluster.teardownMinikube(msg.spec, { baseDir: path.dirname(specPath()), cwd: workspaceRoot(), profile: msg.profile || "minikube" }));
+      return;
 
     case "chat":
       await runAssistantTurn(chat, catalog, constraints, msg.text, msg.spec);
@@ -211,7 +222,7 @@ async function handleMessage(msg) {
       return;
 
     case "generateOptions":
-      await generateOptions(ir, chat, catalog, msg.spec, msg.idea || "", msg.context || "");
+      await generateOptions(ir, chat, catalog, msg.spec, msg.idea || "", msg.context || "", msg.count);
       return;
 
     case "scanRepo":
@@ -307,7 +318,7 @@ async function runAssistantTurn(chat, catalog, constraints, userText, spec) {
     return;
   }
   writeSpec(result.spec);
-  post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace });
+  post({ type: "chatDone", text: result.text, spec: result.spec, trace: result.trace, limited: !!result.limited });
 }
 
 async function runArchitectReview(chat, catalog, userText, spec) {
@@ -325,14 +336,51 @@ async function runArchitectReview(chat, catalog, userText, spec) {
   post({ type: "chatDone", text: result.text, spec, trace: [] });
 }
 
+async function runInfraOp(op, spec, fn, opts = {}) {
+  post({ type: "infraOpStart", op });
+  try {
+    const result = await fn();
+    const relDir = result.deployDir ? vscode.workspace.asRelativePath(result.deployDir) : "";
+    if (opts.refresh) {
+      const { cluster } = await shared();
+      const status = await cluster.refreshClusterStatus(spec, {
+        cwd: workspaceRoot(),
+        profile: result.profile || "minikube",
+        context: result.context,
+        namespace: result.namespace,
+      });
+      post({ type: "infraStatus", op, ...status, dir: relDir, message: result.message });
+      return;
+    }
+    if (opts.statusOnly || result.statusById) {
+      post({ type: "infraStatus", op, ...result, dir: relDir });
+      return;
+    }
+    post({ type: "infraOpDone", op, dir: relDir, namespace: result.namespace, message: result.message || `${op} complete.` });
+  } catch (err) {
+    post({ type: "infraOpError", op, message: String(err && err.message ? err.message : err) });
+  }
+}
+
 // Generate candidate architectures from the captured requirements — each built
 // in isolation (a fresh seed) so the live canvas isn't touched, optimized for a
 // different angle. The human is the judge; we present rationale + tradeoffs.
 const OPTION_ANGLES = [
+  { id: "recommended", label: "Recommended", desc: "the smallest coherent change that best fits the current diagram and user intent" },
   { id: "pragmatic", label: "Pragmatic", desc: "the simplest design that fully meets the requirements, minimal moving parts" },
   { id: "scalable", label: "Scalable", desc: "maximum scalability and resilience, even at higher complexity/cost" },
   { id: "lean", label: "Lean / low-cost", desc: "lowest cost and operational overhead, managed services where possible" },
 ];
+
+function optionAnglesFor({ idea = "", context = "", requestedCount }) {
+  const text = `${idea}\n${context}`.toLowerCase();
+  const wantsAlternatives = /\b(compare|alternative|option|tradeoff|variants?|choices?)\b/.test(text);
+  const configured = Number(config().get("optionCount") || 0);
+  const desired = Number(requestedCount || 0) || (idea && !wantsAlternatives ? 1 : configured || 3);
+  const count = Math.max(1, Math.min(OPTION_ANGLES.length, desired));
+  if (idea && count === 1) return OPTION_ANGLES.slice(0, 1);
+  return OPTION_ANGLES.filter((a) => a.id !== "recommended").slice(0, count);
+}
 
 function requirementsText(spec) {
   const reqs = (spec.notes || []).filter((n) => n.kind === "functional" || n.kind === "non_functional");
@@ -340,10 +388,11 @@ function requirementsText(spec) {
   return reqs.map((n) => `- [${n.kind}${n.priority ? "/" + n.priority : ""}] ${n.title}${n.body ? ": " + n.body : ""}`).join("\n");
 }
 
-async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context = "") {
+async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context = "", requestedCount = null) {
   const cleanIdea = String(idea || "").trim();
   const cleanContext = String(context || "").trim();
-  post({ type: "optionsStart", count: OPTION_ANGLES.length, idea: cleanIdea });
+  const angles = optionAnglesFor({ idea: cleanIdea, context: cleanContext, requestedCount });
+  post({ type: "optionsStart", count: angles.length, idea: cleanIdea });
   const candidates = await resolveLlmCandidates();
   if (!candidates.length) {
     post({ type: "optionsError", message: "The assistant needs an API key. Run “ADR Studio: Set LLM API Key” or set a provider env var." });
@@ -351,8 +400,8 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context =
   }
   const reqs = requirementsText(baseSpec);
   const options = [];
-  for (let i = 0; i < OPTION_ANGLES.length; i++) {
-    const angle = OPTION_ANGLES[i];
+  for (let i = 0; i < angles.length; i++) {
+    const angle = angles[i];
     post({ type: "optionsProgress", index: i, label: angle.label });
     const seed = cleanIdea ? JSON.parse(JSON.stringify(baseSpec)) : ir.emptySpec();
     if (!cleanIdea) {
@@ -364,10 +413,10 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context =
       ? `User idea:\n${cleanIdea}${cleanContext ? `\n\nAdditional architecture guidance:\n${cleanContext}` : ""}`
       : "";
     const instr = cleanIdea
-      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, update, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Keep this as a small diff: for a short/vague idea, add at most two top-level architecture components and four edges unless the idea explicitly needs more. Prefer removals, rewiring, notes, and edge semantics over new boxes. Use apply_skill and arch_* tools only when they produce a coherent minimal change; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS changed version.`
+      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, update, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Keep this as a small diff: for a short/vague idea, add at most two top-level architecture components and four edges unless the idea explicitly needs more. Prefer removals, rewiring, notes, and edge semantics over new boxes. Use apply_skill and arch_* tools only when they produce a coherent minimal change; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a short rationale: one sentence for the change, then up to three bullets for tradeoffs.`
       : `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
         `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
-        `When done, reply with a one-paragraph rationale and 2-3 concrete tradeoffs of THIS approach.`;
+        `When done, reply with a short rationale: one sentence for the approach, then up to three bullets for concrete tradeoffs.`;
     try {
       const result = await withLlmFallback(({ provider, key, model, baseURL }) =>
         chat.runAssistant({ userText: instr, spec: seed, provider, model, apiKey: key, baseURL, catalog: loadCatalog(catalog) })
@@ -397,12 +446,6 @@ async function scanAndDrift(designSpec) {
   const repoPath = config().get("repoPath") || workspaceRoot();
   post({ type: "scanStart", repo: vscode.workspace.asRelativePath(repoPath) || repoPath });
 
-  const candidates = await resolveLlmCandidates();
-  if (!candidates.length) {
-    post({ type: "scanError", message: "The assistant needs an API key to read the repo. Run “ADR Studio: Set LLM API Key” or set a provider env var." });
-    return;
-  }
-
   let scan;
   try {
     scan = await repoScan.scanRepo(repoPath);
@@ -413,23 +456,50 @@ async function scanAndDrift(designSpec) {
 
   const seed = ir.emptySpec();
   seed.decision = { ...designSpec.decision };
-  const instruction = infer.inferenceInstruction(infer.digestForInference(scan));
+  const baseline = infer.architectureFromScan(scan, seed);
+  const baselineCount = topLevelCount(baseline);
+  const instruction = infer.inferenceInstruction(infer.digestForInference(scan), { hasBaseline: baselineCount > 0 });
+  const candidates = await resolveLlmCandidates();
 
   let actual;
-  try {
-    // Stream tokens (so the user sees progress) but NOT specPatch — the inferred
-    // spec is isolated and must not touch the live canvas.
-    const result = await withLlmFallback(({ provider, key, model, baseURL }) =>
-      chat.runAssistant({
-        userText: instruction, spec: seed, provider, model, apiKey: key,
-        baseURL,
-        catalog: loadCatalog(catalog),
-        onEvent: (e) => { if (e.type === "chatToken") post({ type: "scanToken", text: e.text }); },
-      })
-    );
-    actual = result.spec;
-  } catch (err) {
-    post({ type: "scanError", message: `Inference failed: ${err.message}` });
+  let scanMessage = baselineCount
+    ? "Loaded a deterministic repo baseline; the assistant refined it when provider access was available."
+    : "";
+  if (!candidates.length) {
+    if (!baselineCount) {
+      post({ type: "scanError", message: "The scanner found no architecture-sized components, and no API key is configured for LLM inference. Run “ADR Studio: Set LLM API Key” or add a workspace .env key." });
+      return;
+    }
+    actual = baseline;
+    scanMessage = "No LLM provider key was available, so Scan repo loaded the deterministic repo baseline.";
+  } else {
+    try {
+      // Stream tokens (so the user sees progress) but NOT specPatch — the inferred
+      // spec is isolated and must not touch the live canvas.
+      const result = await withLlmFallback(({ provider, key, model, baseURL }) =>
+        chat.runAssistant({
+          userText: instruction, spec: baseline, provider, model, apiKey: key,
+          baseURL,
+          catalog: loadCatalog(catalog),
+          onEvent: (e) => { if (e.type === "chatToken") post({ type: "scanToken", text: e.text }); },
+        })
+      );
+      actual = topLevelCount(result.spec) ? result.spec : baseline;
+      if (!topLevelCount(result.spec) && baselineCount) {
+        scanMessage = "The provider returned no diagram edits, so Scan repo kept the deterministic repo baseline.";
+      }
+    } catch (err) {
+      if (!baselineCount) {
+        post({ type: "scanError", message: `Inference failed: ${err.message}` });
+        return;
+      }
+      actual = baseline;
+      scanMessage = `Provider inference failed (${err.message}); Scan repo loaded the deterministic repo baseline instead.`;
+    }
+  }
+
+  if (!topLevelCount(actual)) {
+    post({ type: "scanError", message: "Scan repo completed, but neither the scanner nor the assistant found architecture-sized components." });
     return;
   }
 
@@ -446,13 +516,17 @@ async function scanAndDrift(designSpec) {
     full.decision = { ...designSpec.decision, title: designSpec.decision?.title || `${repo} — reverse-engineered` };
     writeSpec(full);
     post({ type: "spec", spec: full });
-    post({ type: "scanDone", repo, count: componentCount });
+    post({ type: "scanDone", repo, count: componentCount, message: scanMessage });
     return;
   }
 
   // Existing design → diff, with the full inferred system available to load.
   const report = drift.diffArchitecture(designSpec.views.architecture, actual.views.architecture);
-  post({ type: "driftReport", report, actual: actual.views.architecture, full, repo, count: componentCount });
+  post({ type: "driftReport", report, actual: actual.views.architecture, full, repo, count: componentCount, message: scanMessage });
+}
+
+function topLevelCount(spec) {
+  return spec.views.architecture.nodes.filter((n) => !n.parent).length;
 }
 
 // Per-view instruction for LLM derivation from the architecture.
@@ -566,6 +640,8 @@ async function apiKey(provider = "anthropic") {
     /* ignore */
   }
   for (const envName of envNames) if (process.env[envName]) return process.env[envName];
+  const envKey = apiKeyFromWorkspaceEnv(envNames);
+  if (envKey) return envKey;
   try {
     const cfg = path.join(require("os").homedir(), ".adr", "config.json");
     if (fs.existsSync(cfg)) {
@@ -578,6 +654,35 @@ async function apiKey(provider = "anthropic") {
     /* ignore */
   }
   return null;
+}
+
+function apiKeyFromWorkspaceEnv(envNames) {
+  const root = workspaceRoot();
+  for (const file of [".env.local", ".env"]) {
+    const p = path.join(root, file);
+    if (!fs.existsSync(p)) continue;
+    const parsed = parseEnvFile(fs.readFileSync(p, "utf8"));
+    for (const envName of envNames) if (parsed[envName]) return parsed[envName];
+  }
+  return null;
+}
+
+function parseEnvFile(text) {
+  const out = {};
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!m) continue;
+    let value = m[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    } else {
+      value = value.replace(/\s+#.*$/, "");
+    }
+    out[m[1]] = value;
+  }
+  return out;
 }
 
 // ---- webview html ----------------------------------------------------------

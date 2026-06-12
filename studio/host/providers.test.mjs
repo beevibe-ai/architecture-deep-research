@@ -12,10 +12,12 @@ function chunks(items) {
 
 test("provider registry exposes fallback-friendly hosted providers", () => {
   const ids = providerDefinitions().map((p) => p.id);
-  assert.deepEqual(ids, ["anthropic", "openai", "openrouter", "groq", "together", "openai-compatible"]);
+  assert.deepEqual(ids, ["anthropic", "openai", "openrouter", "groq", "together", "deepseek", "openai-compatible"]);
   assert.equal(providerLabel("openrouter"), "OpenRouter");
   assert.equal(defaultModel("openrouter"), "openrouter/auto");
   assert.ok(providerEnvNames("groq").includes("GROQ_API_KEY"));
+  assert.equal(defaultModel("deepseek"), "deepseek-v4-flash");
+  assert.ok(providerEnvNames("deepseek").includes("DEEPSEEK_API_KEY"));
 });
 
 test("OpenAI-compatible providers normalize streaming text and tool calls", async () => {

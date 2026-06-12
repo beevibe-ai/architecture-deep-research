@@ -68,15 +68,16 @@ Then in any VS Code window: open a folder → `Cmd+Shift+P` → **ADR Studio: Op
 Architecture Canvas**. The design saves to `.adr/architecture.spec.json` in that
 folder.
 
-The assistant can run on Anthropic, OpenAI, OpenRouter, Groq, Together AI, or a
-custom OpenAI-compatible endpoint. Run **ADR Studio: Set LLM API Key** to store a
-key in VS Code SecretStorage, or provide the matching env var:
+The assistant can run on Anthropic, OpenAI, OpenRouter, Groq, Together AI,
+DeepSeek, or a custom OpenAI-compatible endpoint. Run **ADR Studio: Set LLM API
+Key** to store a key in VS Code SecretStorage, or provide the matching env var:
 
 - `ANTHROPIC_API_KEY`
 - `OPENAI_API_KEY`
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
 - `TOGETHER_API_KEY`
+- `DEEPSEEK_API_KEY`
 - `OPENAI_COMPATIBLE_API_KEY`
 
 Drag-and-drop editing works keyless.
@@ -102,6 +103,7 @@ npm test --prefix studio              # node --test, shared + host
 | `adrStudio.openrouterModel` | `openrouter/auto` | OpenRouter model |
 | `adrStudio.groqModel` | `llama-3.3-70b-versatile` | Groq model |
 | `adrStudio.togetherModel` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | Together AI model |
+| `adrStudio.deepseekModel` | `deepseek-v4-flash` | DeepSeek model |
 | `adrStudio.openaiCompatibleBaseUrl` | empty | custom OpenAI-compatible base URL |
 | `adrStudio.openaiCompatibleModel` | `gpt-4o-mini` | custom OpenAI-compatible model |
 | `adrStudio.repoPath` | empty | repo scanned by “Scan repo”; empty means the open workspace |

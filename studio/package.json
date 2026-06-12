@@ -50,7 +50,15 @@
         },
         "adrStudio.provider": {
           "type": "string",
-          "enum": ["anthropic", "openai", "openrouter", "groq", "together", "openai-compatible"],
+          "enum": [
+            "anthropic",
+            "openai",
+            "openrouter",
+            "groq",
+            "together",
+            "deepseek",
+            "openai-compatible"
+          ],
           "default": "anthropic",
           "description": "Which LLM provider powers the design assistant. Set the key via 'ADR Studio: Set LLM API Key'."
         },
@@ -79,6 +87,11 @@
           "default": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
           "description": "Together AI model used by the design assistant (when provider is together)."
         },
+        "adrStudio.deepseekModel": {
+          "type": "string",
+          "default": "deepseek-v4-flash",
+          "description": "DeepSeek model used by the design assistant (when provider is deepseek)."
+        },
         "adrStudio.openaiCompatibleBaseUrl": {
           "type": "string",
           "default": "",
@@ -93,6 +106,13 @@
           "type": "string",
           "default": "",
           "description": "Path to the repo whose real architecture 'Scan repo' infers and checks for drift. Empty = the open workspace folder."
+        },
+        "adrStudio.optionCount": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 3,
+          "description": "How many candidate designs to generate from the top-level 'Generate options' command. Co-design suggestions default to one recommendation unless the prompt asks for alternatives."
         }
       }
     }
