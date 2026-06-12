@@ -81,15 +81,18 @@ function Inner({ spec, commit }) {
       sorted.map((n) => {
         const t = getInfraType(n.type);
         const container = isContainer(n.type);
+        // Prefer the size auto-layout computed to fit the children; fall back to
+        // the fixed per-level box for hand-placed containers.
+        const size = container ? (n.size || LEVEL_SIZE[t.level]) : null;
         const base = {
           id: n.id,
           type: container ? "infraGroup" : "infraLeaf",
           position: n.position || { x: 0, y: 0 },
-          data: { label: n.label, typeLabel: t?.label || n.type, level: t?.level, bad: vIndex.nodes.has(n.id), ...(container ? LEVEL_SIZE[t.level] : {}) },
+          data: { label: n.label, typeLabel: t?.label || n.type, level: t?.level, bad: vIndex.nodes.has(n.id), ...(container ? size : {}) },
           selected: n.id === selectedId,
         };
         if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }
-        if (container) base.style = { width: LEVEL_SIZE[t.level].w, height: LEVEL_SIZE[t.level].h };
+        if (container) base.style = { width: size.w, height: size.h };
         return base;
       })
     );

@@ -125,15 +125,17 @@ export default function Canvas({ spec, commit, catalog, driftStatus }) {
     const comps = sorted.map((n) => {
       const container = isContainer(n.type);
       const pos = layered && !n.parent ? layered.pos[n.id] : n.position || { x: 0, y: 0 };
+      // Prefer the size auto-layout computed to fit children; else the fixed box.
+      const size = container ? (n.size || containerSize(n.type)) : null;
       const base = {
         id: n.id,
         type: container ? "archGroup" : "arch",
         position: pos,
-        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], ...(container ? containerSize(n.type) : {}) },
+        data: { node: n, bad: vIndex.nodes.has(n.id), drift: driftStatus?.[n.id], ...(container ? size : {}) },
         selected: n.id === selectedId,
       };
       if (n.parent) { base.parentId = n.parent; base.extent = "parent"; }
-      if (container) base.style = { ...containerSize(n.type) };
+      if (container) base.style = { ...size };
       return base;
     });
     setRfNodes([...zones, ...comps]);

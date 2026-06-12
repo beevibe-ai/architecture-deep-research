@@ -22,15 +22,46 @@ function rankPositions(nodes, edges, { direction, sizeOf, nodesep = 45, ranksep 
   return pos;
 }
 
+// Hierarchical layout: lay out each container's direct children relative to the
+// container (offset below its title), size every container to fit its children,
+// then lay out the top level. Without this, nested nodes (a namespace's
+// deployments, a runtime's internals) all stack at (0,0) and overlap into an
+// unreadable pile. Container sizes are stored on `node.size` for the renderer.
+const HEADER_Y = 40, PAD = 16;
+function layoutHierarchy(nodes, edges, leafSize, direction) {
+  const childrenOf = new Map();
+  for (const n of nodes) {
+    const p = n.parent || null;
+    if (!childrenOf.has(p)) childrenOf.set(p, []);
+    childrenOf.get(p).push(n);
+  }
+  const sizeOf = (n) => n.size || leafSize(n);
+
+  function layoutLevel(parentId) {
+    const kids = childrenOf.get(parentId) || [];
+    for (const k of kids) if (childrenOf.has(k.id)) k.size = layoutLevel(k.id); // bottom-up
+    const ids = new Set(kids.map((k) => k.id));
+    const innerEdges = edges.filter((e) => ids.has(e.from) && ids.has(e.to));
+    const pos = rankPositions(kids, innerEdges, { direction, sizeOf });
+    const ox = parentId ? PAD : 0;
+    const oy = parentId ? HEADER_Y : 0;
+    let maxX = 0, maxY = 0;
+    for (const k of kids) {
+      const p = pos[k.id] || { x: 0, y: 0 };
+      k.position = { x: p.x + ox, y: p.y + oy };
+      const s = sizeOf(k);
+      maxX = Math.max(maxX, k.position.x + s.w);
+      maxY = Math.max(maxY, k.position.y + s.h);
+    }
+    return { w: maxX + PAD, h: maxY + PAD };
+  }
+  layoutLevel(null);
+}
+
 // Apply auto-layout to one view, mutating node positions in place.
 export function applyAutoLayout(spec, view, direction) {
   if (view === "architecture") {
-    const a = spec.views.architecture;
-    const top = a.nodes.filter((n) => !n.parent); // children stay relative to their container
-    const ids = new Set(top.map((n) => n.id));
-    const edges = a.edges.filter((e) => ids.has(e.from) && ids.has(e.to));
-    const pos = rankPositions(top, edges, { direction: direction || "TB", sizeOf: () => ({ w: 180, h: 80 }) });
-    for (const n of top) if (pos[n.id]) n.position = pos[n.id];
+    layoutHierarchy(spec.views.architecture.nodes, spec.views.architecture.edges, () => ({ w: 180, h: 80 }), direction || "TB");
   } else if (view === "data_model") {
     const dm = spec.views.data_model;
     const pos = rankPositions(dm.entities, dm.relations, {
@@ -53,12 +84,7 @@ export function applyAutoLayout(spec, view, direction) {
     });
     for (const c of cv.nodes) if (pos[c.id]) c.position = pos[c.id];
   } else if (view === "infra") {
-    const inf = spec.views.infra;
-    const top = inf.nodes.filter((n) => !n.parent);
-    const ids = new Set(top.map((n) => n.id));
-    const edges = inf.edges.filter((e) => ids.has(e.from) && ids.has(e.to));
-    const pos = rankPositions(top, edges, { direction: direction || "TB", sizeOf: () => ({ w: 200, h: 90 }) });
-    for (const n of top) if (pos[n.id]) n.position = pos[n.id];
+    layoutHierarchy(spec.views.infra.nodes, spec.views.infra.edges, () => ({ w: 200, h: 90 }), direction || "TB");
   }
   return spec;
 }

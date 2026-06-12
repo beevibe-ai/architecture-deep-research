@@ -715,9 +715,13 @@ function sequencesReducer(next, m) {
 function infraReducer(next, m) {
   const inf = next.views.infra;
   switch (m.op) {
-    case "add_infra":
-      inf.nodes.push(makeInfraNode(m));
+    case "add_infra": {
+      // Resolve parent (label or id) → id so nesting works however it was called
+      // (the canvas passes ids; the derive engine passes container labels).
+      const parentRef = m.parent ? resolve(next, "infra", m.parent) : null;
+      inf.nodes.push(makeInfraNode({ ...m, parent: parentRef ? parentRef.id : null }));
       break;
+    }
     case "update_infra": {
       const n = resolve(next, "infra", m.id || m.ref);
       if (!n) throw new Error(`update_infra: no node "${m.id || m.ref}"`);

@@ -182,8 +182,11 @@ function lintCross(spec, c, out) {
 function checkCrossRefs(spec, out) {
   const exists = (end) => {
     if (end.view === "architecture") return spec.views.architecture.nodes.some((n) => n.id === end.ref);
+    if (end.view === "infra") return spec.views.infra.nodes.some((n) => n.id === end.ref);
+    if (end.view === "classes") return spec.views.classes.nodes.some((n) => n.id === end.ref);
     if (end.view === "data_model") return spec.views.data_model.entities.some((e) => e.id === end.ref);
     if (end.view === "flows") return spec.views.flows.some((f) => f.nodes.some((s) => s.id === end.ref));
+    if (end.view === "sequences") return spec.views.sequences.some((q) => (q.participants || []).some((p) => p.id === end.ref));
     return false;
   };
   for (const x of spec.cross_refs || [])
