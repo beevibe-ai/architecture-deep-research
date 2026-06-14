@@ -3,8 +3,10 @@ import { getType, layerForNode } from "./catalog.mjs";
 const ZONES = [
   { id: "access", label: "Clients / Access", layers: ["clients"], color: "#ffb9d5" },
   { id: "control", label: "Control / Orchestration", layers: ["orchestration"], color: "#c8a7ff" },
-  { id: "capabilities", label: "Capabilities / Services", layers: ["capabilities", "tools"], color: "#7fd7ff" },
-  { id: "knowledge", label: "Memory / Knowledge", layers: ["memory", "knowledge", "model"], color: "#9ee3c6" },
+  { id: "capabilities", label: "Capabilities / Services", layers: ["capabilities"], color: "#7fd7ff" },
+  { id: "tools", label: "Tools / Execution", layers: ["tools"], color: "#7fd7ff" },
+  { id: "knowledge", label: "Memory / Knowledge", layers: ["memory", "knowledge"], color: "#9ee3c6" },
+  { id: "models", label: "Models / External AI", layers: ["model"], color: "#ffb9d5" },
   { id: "ops", label: "Ops / External", layers: ["infrastructure", "external"], color: "#ffd7a3" },
 ];
 

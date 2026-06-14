@@ -37,6 +37,13 @@ const ZONE_W = 2200;
 const CONTAINER_SIZE = { agent_runtime: { w: 196, h: 268 } };
 const isContainer = (type) => !!getType(type)?.container;
 const containerSize = (type) => CONTAINER_SIZE[type] || { w: 220, h: 260 };
+const DEFAULT_NODE_SIZE = { w: 180, h: 80 };
+const HANDLE_POSITIONS = [
+  ["left", Position.Left],
+  ["right", Position.Right],
+  ["top", Position.Top],
+  ["bottom", Position.Bottom],
+];
 
 function ZoneNode({ data }) {
   return (
@@ -52,10 +59,9 @@ function ArchGroupNode({ data }) {
   const color = CAT_COLOR[node.category] || "#b9c5ff";
   return (
     <div className={`arch-group ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""} ${change ? `change-${change}` : ""}`} style={{ width: data.w, height: data.h, borderColor: bad ? "#ff6b6b" : color }}>
-      <Handle type="target" position={Position.Left} className="arch-handle" />
+      <ArchHandles />
       <div className="arch-group-title" style={{ color }}>{node.label}</div>
       {change ? <span className={`arch-change-tag ${change}`}>{changeLabel(change)}</span> : null}
-      <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
   );
 }
@@ -72,7 +78,7 @@ function ArchNode({ data, selected }) {
   };
   return (
     <div className={`arch-node ${data.viewMode === "composed" ? "composed" : ""} ${bad ? "bad" : ""} ${driftClass} ${change ? `change-${change}` : ""} ${selected ? "sel" : ""}`} style={style}>
-      <Handle type="target" position={Position.Left} className="arch-handle" />
+      <ArchHandles />
       <div className="arch-kind" style={{ color }}>
         {getType(node.type)?.label || node.type || node.kind}
         <span className="arch-plane" title={PLANE_LABEL[plane] || plane} style={{ background: PLANE_COLOR[plane] }}>{PLANE_BADGE[plane] || plane}</span>
@@ -81,15 +87,56 @@ function ArchNode({ data, selected }) {
       {node.tech ? <div className="arch-tech">{node.tech}</div> : null}
       {drift ? <span className="arch-drift-tag">{drift === "phantom" ? "not in code" : "tech drift"}</span> : null}
       {change ? <span className={`arch-change-tag ${change}`}>{changeLabel(change)}</span> : null}
-      <Handle type="source" position={Position.Right} className="arch-handle" />
     </div>
   );
 }
 
 const nodeTypes = { arch: ArchNode, zone: ZoneNode, archGroup: ArchGroupNode };
 
+function ArchHandles() {
+  return (
+    <>
+      {HANDLE_POSITIONS.map(([side, position]) => (
+        <Handle key={`target-${side}`} id={`target-${side}`} type="target" position={position} className={`arch-handle arch-handle-${side} arch-handle-target`} />
+      ))}
+      {HANDLE_POSITIONS.map(([side, position]) => (
+        <Handle key={`source-${side}`} id={`source-${side}`} type="source" position={position} className={`arch-handle arch-handle-${side} arch-handle-source`} />
+      ))}
+    </>
+  );
+}
+
 function changeLabel(change) {
   return change === "added" ? "new" : "changed";
+}
+
+function absoluteBox(id, visualById, seen = new Set()) {
+  const box = visualById.get(id);
+  if (!box || seen.has(id)) return box || null;
+  if (!box.parentId) return box;
+  seen.add(id);
+  const parent = absoluteBox(box.parentId, visualById, seen);
+  if (!parent) return box;
+  return { ...box, x: parent.x + box.x, y: parent.y + box.y };
+}
+
+function handlePairForEdge(edge, visualById) {
+  const from = absoluteBox(edge.from, visualById);
+  const to = absoluteBox(edge.to, visualById);
+  if (!from || !to) return {};
+  const fromCenter = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+  const toCenter = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+  const vertical = Math.abs(dy) > Math.abs(dx) * 0.75;
+  if (vertical) {
+    return dy >= 0
+      ? { sourceHandle: "source-bottom", targetHandle: "target-top" }
+      : { sourceHandle: "source-top", targetHandle: "target-bottom" };
+  }
+  return dx >= 0
+    ? { sourceHandle: "source-right", targetHandle: "target-left" }
+    : { sourceHandle: "source-left", targetHandle: "target-right" };
 }
 
 function summarizeCurrentLayout(nodes, layout) {
@@ -216,7 +263,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus, changeHighl
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
-  const [layout, setLayout] = useState("free"); // "free" | "layered" | "composed"
+  const [layout, setLayout] = useState("composed"); // "free" | "layered" | "composed"
   const [showPlanes, setShowPlanes] = useState(false); // plane swimlanes off by default
   const { screenToFlowPosition } = useReactFlow();
 
@@ -266,18 +313,25 @@ export default function Canvas({ spec, commit, catalog, driftStatus, changeHighl
       if (container) base.style = { ...size };
       return base;
     });
+    const visualById = new Map(comps.map((n) => {
+      const size = n.data.w ? { w: n.data.w, h: n.data.h } : DEFAULT_NODE_SIZE;
+      return [n.id, { x: n.position.x, y: n.position.y, parentId: n.parentId || null, ...size }];
+    }));
     setRfNodes([...zones, ...comps]);
     setRfEdges(
       archEdges.map((e) => {
         const change = changeHighlights?.edges?.[e.id];
         return {
           id: e.id, source: e.from, target: e.to,
-          label: layout === "composed" ? compactEdgeLabel(e) : edgeLabel(e),
+          ...handlePairForEdge(e, visualById),
+          type: "simplebezier",
+          interactionWidth: 18,
+          label: e.id === selectedEdgeId ? edgeLabel(e) : compactEdgeLabel(e),
           className: `${layout === "composed" ? "composed-edge" : ""} ${vIndex.edges.has(e.id) ? "edge-bad" : EDGE_KIND_CLASS[e.kind] || "edge-ok"} ${change ? `edge-change-${change}` : ""}`,
         };
       })
     );
-  }, [spec, vIndex, selectedId, layout, showPlanes, archNodes, archEdges, depth, driftStatus, changeHighlights, setRfNodes, setRfEdges]);
+  }, [spec, vIndex, selectedId, selectedEdgeId, layout, showPlanes, archNodes, archEdges, depth, driftStatus, changeHighlights, setRfNodes, setRfEdges]);
 
   const onConnect = useCallback(
     (c) => commit(applyMutation(spec, { op: "connect", view: "architecture", from: c.source, to: c.target, kind: "calls", protocol: "http" })),
@@ -398,7 +452,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus, changeHighl
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: "smoothstep" }}
+        defaultEdgeOptions={{ type: "simplebezier" }}
         deleteKeyCode={["Backspace", "Delete"]}
         nodesDraggable={layout === "free"}
         onNodesChange={onNodesChange}
@@ -488,7 +542,7 @@ export default function Canvas({ spec, commit, catalog, driftStatus, changeHighl
 }
 
 function edgeLabel(e) {
-  const bits = [e.protocol];
+  const bits = [e.label || e.protocol];
   if (e.delivery) bits.push(e.delivery);
   if (e.consistency && e.consistency !== "none") bits.push(e.consistency);
   if (e.required_role) bits.push("🔒" + e.required_role);
@@ -497,7 +551,7 @@ function edgeLabel(e) {
 }
 
 function compactEdgeLabel(e) {
-  if (e.kind === "publishes" || e.kind === "subscribes" || e.kind === "streams") return e.protocol || "event";
+  if (e.kind === "publishes" || e.kind === "subscribes" || e.kind === "streams") return e.label || e.protocol || "event";
   if (e.kind === "owns") return "owns";
-  return e.protocol || "";
+  return e.label || e.protocol || "";
 }

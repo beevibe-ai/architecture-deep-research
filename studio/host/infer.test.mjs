@@ -45,9 +45,13 @@ test("architectureFromScan builds a grounded baseline when LLM inference is unav
   });
 
   const labels = spec.views.architecture.nodes.map((n) => n.label);
-  for (const label of ["Web Client", "API Service", "Daemon", "MCP Server", "Postgres Database", "Postgres Event Bus", "LLM Provider"]) {
+  for (const label of ["Web Client", "API Service", "Agent Runtime", "Daemon", "MCP Server", "Postgres Database", "LLM Provider"]) {
     assert.ok(labels.includes(label), `expected ${label}`);
   }
+  assert.equal(labels.includes("Postgres Event Bus"), false, "LISTEN/NOTIFY should stay an edge mechanism, not a top-level bus");
+  const runtime = spec.views.architecture.nodes.find((n) => n.label === "Agent Runtime");
+  const daemon = spec.views.architecture.nodes.find((n) => n.label === "Daemon");
+  assert.equal(daemon.parent, runtime.id);
 
   const edge = (from, to, protocol) => spec.views.architecture.edges.some((e) => {
     const f = spec.views.architecture.nodes.find((n) => n.id === e.from)?.label;
@@ -57,7 +61,8 @@ test("architectureFromScan builds a grounded baseline when LLM inference is unav
   assert.equal(edge("Web Client", "API Service", "http"), true);
   assert.equal(edge("API Service", "Postgres Database", "sql"), true);
   assert.equal(edge("API Service", "MCP Server", "http"), true);
-  assert.equal(edge("API Service", "Postgres Event Bus", "event"), true);
+  assert.equal(edge("Postgres Database", "Agent Runtime", "event"), true);
+  assert.equal(spec.views.architecture.edges.some((e) => e.label === "LISTEN/NOTIFY"), true);
 
   const distinctPositions = new Set(spec.views.architecture.nodes.map((n) => `${n.position.x},${n.position.y}`));
   assert.equal(distinctPositions.size, spec.views.architecture.nodes.length);

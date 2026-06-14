@@ -139,6 +139,7 @@ const TYPE_LAYER = {
   gateway: "orchestration", load_balancer: "orchestration",
   mcp_server: "tools",
   model_router: "model", llm_provider: "model",
+  external_api: "external", webhook: "external",
   vector_db: "knowledge", search_index: "knowledge",
   logger: "infrastructure", monitor: "infrastructure",
 };

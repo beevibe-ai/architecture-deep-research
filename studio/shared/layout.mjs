@@ -1,7 +1,8 @@
-// Auto-layout — the same engine Mermaid uses (dagre) so the editable React Flow
-// canvas lays out as cleanly as a Mermaid diagram. Drives both the "Auto-arrange"
-// button and the assistant's auto_layout tool. Deterministic (no Date/random).
+// Auto-layout for editable diagrams. Dagre gives us deterministic graph order;
+// the architecture view then groups top-level components into semantic layer
+// bands so the canvas reads like an architecture map instead of a wiring board.
 import dagre from "dagre";
+import { LAYERS, layerForNode } from "./catalog.mjs";
 
 // Run dagre over a node/edge set and return id → top-left position.
 function rankPositions(nodes, edges, { direction, sizeOf, nodesep = 45, ranksep = 80 }) {
@@ -58,10 +59,136 @@ function layoutHierarchy(nodes, edges, leafSize, direction) {
   layoutLevel(null);
 }
 
+const ARCH_NODE_GAP_X = 82;
+const ARCH_NODE_GAP_Y = 44;
+const ARCH_LAYER_GAP = 96;
+const ARCH_MARGIN_X = 48;
+const ARCH_MARGIN_Y = 44;
+const ARCH_MAX_ROW_ITEMS = 5;
+
+function layoutArchitecture(nodes, edges, direction = "TB") {
+  layoutNestedContainers(nodes, edges, () => ({ w: 180, h: 80 }), direction);
+  const topLevel = nodes.filter((n) => !n.parent);
+  if (!topLevel.length) return;
+
+  const topIds = new Set(topLevel.map((n) => n.id));
+  const topEdges = edges.filter((e) => topIds.has(e.from) && topIds.has(e.to));
+  const sizeOf = (n) => n.size || { w: 180, h: 80 };
+  const rough = rankPositions(topLevel, topEdges, {
+    direction,
+    sizeOf,
+    nodesep: 90,
+    ranksep: 140,
+  });
+  const layers = orderedLayers(topLevel);
+  const byLayer = new Map(layers.map((layer) => [layer, []]));
+  for (const node of topLevel) {
+    const layer = layerForNode(node);
+    if (!byLayer.has(layer)) byLayer.set(layer, []);
+    byLayer.get(layer).push(node);
+  }
+
+  const sortAxis = direction === "LR" ? "y" : "x";
+  for (const layer of byLayer.keys()) {
+    byLayer.get(layer).sort((a, b) =>
+      (rough[a.id]?.[sortAxis] ?? 0) - (rough[b.id]?.[sortAxis] ?? 0) ||
+      String(a.label || a.id).localeCompare(String(b.label || b.id))
+    );
+  }
+
+  if (direction === "LR") layoutLayersLeftToRight(layers, byLayer, sizeOf);
+  else layoutLayersTopToBottom(layers, byLayer, sizeOf);
+}
+
+function layoutNestedContainers(nodes, edges, leafSize, direction) {
+  const childrenOf = new Map();
+  for (const n of nodes) {
+    const p = n.parent || null;
+    if (!childrenOf.has(p)) childrenOf.set(p, []);
+    childrenOf.get(p).push(n);
+  }
+  const sizeOf = (n) => n.size || leafSize(n);
+
+  function layoutLevel(parentId) {
+    const kids = childrenOf.get(parentId) || [];
+    for (const k of kids) if (childrenOf.has(k.id)) k.size = layoutLevel(k.id);
+    const ids = new Set(kids.map((k) => k.id));
+    const innerEdges = edges.filter((e) => ids.has(e.from) && ids.has(e.to));
+    const pos = rankPositions(kids, innerEdges, { direction, sizeOf });
+    let maxX = 0, maxY = 0;
+    for (const k of kids) {
+      const p = pos[k.id] || { x: 0, y: 0 };
+      k.position = { x: p.x + PAD, y: p.y + HEADER_Y };
+      const s = sizeOf(k);
+      maxX = Math.max(maxX, k.position.x + s.w);
+      maxY = Math.max(maxY, k.position.y + s.h);
+    }
+    return { w: maxX + PAD, h: maxY + PAD };
+  }
+
+  for (const node of childrenOf.get(null) || []) {
+    if (childrenOf.has(node.id)) node.size = layoutLevel(node.id);
+  }
+}
+
+function orderedLayers(nodes) {
+  const present = new Set(nodes.map((n) => layerForNode(n)));
+  const known = LAYERS.map((l) => l.id).filter((id) => present.has(id));
+  const extra = [...present].filter((id) => !known.includes(id)).sort();
+  return [...known, ...extra];
+}
+
+function rowsFor(items, maxItems) {
+  const rows = [];
+  for (const item of items) {
+    const row = rows[rows.length - 1];
+    if (!row || row.length >= maxItems) rows.push([item]);
+    else row.push(item);
+  }
+  return rows;
+}
+
+function layoutLayersTopToBottom(layers, byLayer, sizeOf) {
+  let y = ARCH_MARGIN_Y;
+  for (const layer of layers) {
+    const nodes = byLayer.get(layer) || [];
+    if (!nodes.length) continue;
+    const measured = nodes.map((node) => ({ node, size: sizeOf(node) }));
+    const maxItems = Math.min(ARCH_MAX_ROW_ITEMS, Math.max(1, Math.ceil(Math.sqrt(measured.length * 2))));
+    const rows = rowsFor(measured, maxItems);
+    for (const row of rows) {
+      let x = ARCH_MARGIN_X;
+      const rowH = Math.max(...row.map((item) => item.size.h));
+      for (const item of row) {
+        item.node.position = { x, y };
+        x += item.size.w + ARCH_NODE_GAP_X;
+      }
+      y += rowH + ARCH_NODE_GAP_Y;
+    }
+    y += ARCH_LAYER_GAP - ARCH_NODE_GAP_Y;
+  }
+}
+
+function layoutLayersLeftToRight(layers, byLayer, sizeOf) {
+  let x = ARCH_MARGIN_X;
+  for (const layer of layers) {
+    const nodes = byLayer.get(layer) || [];
+    if (!nodes.length) continue;
+    const measured = nodes.map((node) => ({ node, size: sizeOf(node) }));
+    const colW = Math.max(...measured.map((item) => item.size.w));
+    let y = ARCH_MARGIN_Y;
+    for (const item of measured) {
+      item.node.position = { x, y };
+      y += item.size.h + ARCH_NODE_GAP_Y;
+    }
+    x += colW + ARCH_LAYER_GAP + ARCH_NODE_GAP_X;
+  }
+}
+
 // Apply auto-layout to one view, mutating node positions in place.
 export function applyAutoLayout(spec, view, direction) {
   if (view === "architecture") {
-    layoutHierarchy(spec.views.architecture.nodes, spec.views.architecture.edges, () => ({ w: 180, h: 80 }), direction || "TB");
+    layoutArchitecture(spec.views.architecture.nodes, spec.views.architecture.edges, direction || "TB");
   } else if (view === "data_model") {
     const dm = spec.views.data_model;
     const pos = rankPositions(dm.entities, dm.relations, {

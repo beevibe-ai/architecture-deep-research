@@ -174,10 +174,10 @@ export function __resetIds(n = 0) {
 // vector_db, semantic_gateway, …) — which fills category/plane/coarse-kind/tech —
 // or from a bare legacy `kind`. Catalog-driven is the norm; bare kind stays for
 // back-compat and tests.
-export function makeNode({ kind, type, category, plane, label, tech, context = "", notes = "", ports, parent = null, position }) {
+export function makeNode({ kind, type, category, plane, label, tech, context = "", notes = "", ports, parent = null, layer, position }) {
   const def = type ? nodeDefaults(type) : {};
   const resolvedKind = kind || def.kind || "service";
-  return {
+  const node = {
     id: nextId(type || resolvedKind),
     kind: resolvedKind,
     type: type || def.type || resolvedKind,
@@ -191,6 +191,8 @@ export function makeNode({ kind, type, category, plane, label, tech, context = "
     parent, // containment: nested inside another component (e.g. an agent_runtime)
     position: position || { x: 0, y: 0 },
   };
+  if (layer) node.layer = layer;
+  return node;
 }
 
 // An edge now carries distributed/governance/observability semantics:

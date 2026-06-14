@@ -27,6 +27,21 @@ test("auto_layout is deterministic", () => {
   assert.deepEqual(r1.views.architecture.nodes.map((n) => n.position), r2.views.architecture.nodes.map((n) => n.position));
 });
 
+test("auto_layout separates architecture layers into readable bands", () => {
+  let s = emptySpec();
+  s = applyMutation(s, { op: "add_node", view: "architecture", type: "client", label: "Web Client" });
+  s = applyMutation(s, { op: "add_node", view: "architecture", type: "service", label: "API Service" });
+  s = applyMutation(s, { op: "add_node", view: "architecture", type: "vector_db", label: "Vector Memory" });
+  s = applyMutation(s, { op: "connect", view: "architecture", from: "Web Client", to: "API Service", protocol: "http" });
+  s = applyMutation(s, { op: "connect", view: "architecture", from: "API Service", to: "Vector Memory", protocol: "sql" });
+  s = applyMutation(s, { op: "auto_layout", view: "architecture", direction: "TB" });
+  const web = s.views.architecture.nodes.find((n) => n.label === "Web Client");
+  const api = s.views.architecture.nodes.find((n) => n.label === "API Service");
+  const memory = s.views.architecture.nodes.find((n) => n.label === "Vector Memory");
+  assert.ok(web.position.y < api.position.y, "client layer should sit above capabilities");
+  assert.ok(api.position.y < memory.position.y, "capabilities should sit above knowledge");
+});
+
 test("auto_layout positions data-model and flow views too", () => {
   let s = emptySpec();
   s = applyMutation(s, { op: "add_entity", view: "data_model", name: "User", fields: [{ name: "id", pk: true }] });

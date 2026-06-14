@@ -29,9 +29,9 @@ export function architectureFromScan(scan, seed = emptySpec()) {
   const routes = routeFactsFromSources(scan.route_sources || []);
   const source = (...paths) => paths.filter(Boolean).join(", ");
 
-  const add = (label, type, { tech = "", notes = "", context = "" } = {}) => {
+  const add = (label, type, { tech = "", notes = "", context = "", parent = null, layer = null } = {}) => {
     if (!label || hasNode(spec, label)) return label;
-    apply({ op: "add_node", view: "architecture", type, label, tech, notes, context });
+    apply({ op: "add_node", view: "architecture", type, label, tech, notes, context, parent, layer });
     return label;
   };
   const connect = (from, to, { kind = "calls", protocol = "http", label = "" } = {}) => {
@@ -55,35 +55,36 @@ export function architectureFromScan(scan, seed = emptySpec()) {
 
   const web = hasWeb ? add("Web Client", "client", { tech: /\bnext\b/i.test(text) ? "Next.js" : "React", notes: source("packages/web", "package.json") }) : null;
   const api = hasApi ? add("API Service", "service", { tech: /\bexpress\b/i.test(text) ? "Express" : "Node.js", notes: source("packages/api", routes[0]?.file) }) : null;
-  const daemon = packageNames.has("daemon") ? add("Daemon", "worker", { tech: "Node.js", notes: "packages/daemon" }) : null;
-  const scheduler = packageNames.has("scheduler") ? add("Scheduler", "scheduler", { tech: "Node.js", notes: "packages/scheduler" }) : null;
-  const executor = packageNames.has("executor") ? add("Executor", "worker", { tech: "Node.js", notes: "packages/executor" }) : null;
+  const runtimePackages = ["daemon", "scheduler", "executor", "sandbox"].filter((name) => packageNames.has(name));
+  const runtime = runtimePackages.length
+    ? add("Agent Runtime", "agent_runtime", {
+        tech: "Node.js",
+        notes: runtimePackages.map((name) => `packages/${name}`).join(", "),
+        context: "Runtime boundary for background agents, scheduling, execution, and sandboxed work.",
+      })
+    : null;
+  const runtimeId = runtime ? nodeId(spec, runtime) : null;
+  const daemon = packageNames.has("daemon") ? add("Daemon", "worker", { tech: "Node.js", notes: "packages/daemon", parent: runtimeId }) : null;
+  const scheduler = packageNames.has("scheduler") ? add("Scheduler", "scheduler", { tech: "Node.js", notes: "packages/scheduler", parent: runtimeId }) : null;
+  const executor = packageNames.has("executor") ? add("Executor", "worker", { tech: "Node.js", notes: "packages/executor", parent: runtimeId }) : null;
   const mcp = packageNames.has("mcp-server") ? add("MCP Server", "mcp_server", { tech: "MCP", notes: "packages/mcp-server" }) : null;
-  const sandbox = packageNames.has("sandbox") ? add("Sandbox", "worker", { tech: "Node.js", notes: "packages/sandbox" }) : null;
+  const sandbox = packageNames.has("sandbox") ? add("Sandbox", "worker", { tech: "Node.js", notes: "packages/sandbox", parent: runtimeId }) : null;
   const db = hasDb ? add("Postgres Database", "relational_db", { tech: hasPgvector ? "pgvector" : "Postgres", notes: source("docker-compose.yml", "migrations", "package.json") }) : null;
   const cache = hasRedis ? add("Redis Cache", "cache", { tech: "Redis", notes: "package/deploy config" }) : null;
   const queue = queueTech ? add(`${queueTech} Queue`, "event_queue", { tech: queueTech, notes: "package/deploy config" }) : null;
-  const notifyBus = routes.some((r) => r.notifications?.length)
-    ? add("Postgres Event Bus", "event_queue", { tech: "LISTEN/NOTIFY", notes: "route SQL notifications" })
-    : null;
   const llm = llmTech.length ? add("LLM Provider", "llm_provider", { tech: llmTech.join(" / "), notes: "package.json" }) : null;
 
   connect(web, api, { protocol: "http" });
   if (routes.some((r) => r.sql_ops?.length)) connect(api, db, { protocol: "sql" });
   if (routes.some((r) => /^\/mcp\b/.test(r.path))) connect(api, mcp, { protocol: "http", label: "/mcp" });
-  if (routes.some((r) => r.notifications?.length)) {
-    connect(api, notifyBus, { kind: "publishes", protocol: "event", label: "pg_notify" });
-    connect(notifyBus, daemon, { kind: "subscribes", protocol: "event", label: "LISTEN" });
-    connect(notifyBus, scheduler, { kind: "subscribes", protocol: "event", label: "LISTEN" });
-  }
+  if (routes.some((r) => r.notifications?.length)) connect(db, runtime, { kind: "streams", protocol: "event", label: "LISTEN/NOTIFY" });
   connect(api, cache, { protocol: "internal" });
   connect(api, queue, { kind: "publishes", protocol: "event" });
-  connect(queue, daemon, { kind: "subscribes", protocol: "event" });
+  connect(queue, runtime, { kind: "subscribes", protocol: "event" });
   connect(api, llm, { protocol: "http" });
-  connect(daemon, db, { protocol: "sql" });
-  connect(scheduler, db, { protocol: "sql" });
-  connect(executor, sandbox, { protocol: "internal" });
-  connect(executor, mcp, { protocol: "internal" });
+  if (daemon || scheduler) connect(runtime || daemon || scheduler, db, { protocol: "sql", label: "runtime state" });
+  if (executor && sandbox) connect(executor, sandbox, { protocol: "internal" });
+  if (executor && mcp) connect(runtime || executor, mcp, { protocol: "internal", label: "tool calls" });
 
   if (spec.views.architecture.nodes.filter((n) => !n.parent).length > 1) {
     apply({ op: "auto_layout", view: "architecture", direction: "LR" });

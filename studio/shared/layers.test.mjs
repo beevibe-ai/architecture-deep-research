@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { layerForNode, LAYERS } from "./catalog.mjs";
+import { makeNode } from "./ir.mjs";
 
 test("components derive a sensible layer from type/category", () => {
   assert.equal(layerForNode({ type: "orchestrator", category: "agent_harness" }), "orchestration");
@@ -15,6 +16,12 @@ test("components derive a sensible layer from type/category", () => {
 
 test("an explicit node.layer overrides the derivation", () => {
   assert.equal(layerForNode({ type: "vector_db", category: "data", layer: "tools" }), "tools");
+});
+
+test("new nodes keep an explicit layer", () => {
+  const node = makeNode({ type: "service", label: "Gateway Runner", layer: "orchestration" });
+  assert.equal(node.layer, "orchestration");
+  assert.equal(layerForNode(node), "orchestration");
 });
 
 test("every derived layer is a real layer id", () => {

@@ -6,10 +6,12 @@
 
 import { applyMutation } from "../shared/ir.mjs";
 import { lint } from "../shared/constraints.mjs";
-import { catalogVocabulary } from "../shared/catalog.mjs";
+import { LAYERS, catalogVocabulary, layerForNode } from "../shared/catalog.mjs";
 import { infraVocabulary } from "../shared/infra.mjs";
 import { skillVocabulary } from "../shared/skills.mjs";
 import { makeProvider, defaultModel, providerEnvNames, providerLabel } from "./providers.mjs";
+
+const ARCH_LAYER_IDS = LAYERS.map((l) => l.id);
 
 // View-namespaced tools so the model never edits the wrong view.
 const TOOLS = [
@@ -17,7 +19,7 @@ const TOOLS = [
   { name: "apply_skill", description: "Lay down a coherent design pattern in one step. Use this when the user asks for a real subsystem/pattern, not for small edits that can be handled by updating or rewiring existing components. Skills are listed in the system prompt.", input_schema: { type: "object", properties: { skill: { type: "string" }, params: { type: "object" } }, required: ["skill"] } },
   { name: "derive_view", description: "Project the architecture into another view, keeping them in sync. infra = deployment for each component; data_model = entities for datastores; sequences = the wiring as an interaction; classes = a class per service. Idempotent. (e.g. 'from ui to infra' = derive_view infra.)", input_schema: { type: "object", properties: { view: { type: "string", enum: ["infra", "data_model", "sequences", "classes"] } }, required: ["view"] } },
   // architecture
-  { name: "arch_add_node", description: "Add a component. Prefer a catalog `type` (orchestrator, semantic_gateway, vector_db, search_index, event_queue, otel_collector, rbac_policy, …) — it sets the category, plane, and tech options.", input_schema: { type: "object", properties: { type: { type: "string", description: "catalog component type id" }, label: { type: "string" }, tech: { type: "string", description: "specific tech, e.g. pgvector, SQLite FTS5, Kafka" }, plane: { type: "string", enum: ["control", "execution", "data"] }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["type", "label"] } },
+  { name: "arch_add_node", description: "Add a component. Prefer a catalog `type` (orchestrator, semantic_gateway, vector_db, search_index, event_queue, otel_collector, rbac_policy, …) — it sets the category, plane, and tech options. Set layer when the default layer would hide the component's architectural group.", input_schema: { type: "object", properties: { type: { type: "string", description: "catalog component type id" }, label: { type: "string" }, tech: { type: "string", description: "specific tech, e.g. pgvector, SQLite FTS5, Kafka" }, plane: { type: "string", enum: ["control", "execution", "data"] }, layer: { type: "string", enum: ARCH_LAYER_IDS, description: "visual/semantic architecture group" }, context: { type: "string" }, notes: { type: "string", description: "design intent for the coding agent" } }, required: ["type", "label"] } },
   { name: "arch_update_node", description: "Update an existing component by id or label. Prefer this for plane/layer/label/tech/intent changes instead of adding duplicate boxes.", input_schema: { type: "object", properties: { ref: { type: "string", description: "component id or label" }, label: { type: "string" }, tech: { type: "string" }, plane: { type: "string", enum: ["control", "execution", "data"] }, layer: { type: "string" }, context: { type: "string" }, notes: { type: "string" } }, required: ["ref"] } },
   { name: "arch_set_edge_semantics", description: "Set distributed/governance/observability properties on a wire.", input_schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, protocol: { type: "string" }, delivery: { type: "string", enum: ["best-effort", "at-least-once", "exactly-once", "ordered"] }, consistency: { type: "string", enum: ["none", "eventual", "linearizable", "vector_clock", "lamport"] }, required_role: { type: "string", description: "RBAC role required to traverse this edge" }, instrumented: { type: "boolean", description: "OTel-traced" } }, required: ["from", "to"] } },
   { name: "arch_remove_node", description: "Remove a component by id or label.", input_schema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] } },
@@ -137,7 +139,9 @@ function systemPrompt(catalog) {
     "After the edits, run_constraint_check. If you introduced a violation, fix it before answering. Then",
     "give a one-line confirmation. You can set distributed/governance/observability edge",
     "semantics (delivery, consistency incl. vector_clock, required_role for RBAC, instrumented for OTel),",
-    "capture requirements/decisions with add_note, and tidy any view with auto_layout.",
+    "capture requirements/decisions with add_note, and tidy any view with auto_layout. Use node layers",
+    "(clients, orchestration, capabilities, memory, knowledge, model, tools, external, infrastructure)",
+    "to preserve visual grouping; do not create decorative boxes just to group nodes.",
     "\n\nSkills (prefer these):\n" + skillVocabulary(),
     "\n\nComponent catalog (for refinement):\n" + catalogVocabulary(catalog),
     "\n\nInfrastructure catalog:\n" + infraVocabulary(),
@@ -149,7 +153,7 @@ function specSummary(spec) {
   const a = spec.views.architecture;
   const dm = spec.views.data_model;
   const flows = spec.views.flows;
-  const comps = a.nodes.map((n) => `${n.label}(${n.kind})`).join(", ") || "none";
+  const comps = a.nodes.map((n) => `${n.label}(${n.type || n.kind}/${n.plane || "execution"}/${n.layer || layerForNode(n)})`).join(", ") || "none";
   const wires = a.edges.map((e) => `${label(a.nodes, e.from)}→${label(a.nodes, e.to)}[${e.protocol}]`).join(", ") || "none";
   const ents = dm.entities.map((e) => `${e.name}{${e.fields.map((f) => f.name + (f.pk ? "*" : "")).join(",")}}`).join(", ") || "none";
   const fl = flows.map((f) => `${f.name}(${f.nodes.length} steps)`).join(", ") || "none";
