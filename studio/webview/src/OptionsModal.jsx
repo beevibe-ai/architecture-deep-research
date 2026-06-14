@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import MarkdownText from "./MarkdownText.jsx";
+import SketchPreview from "./SketchPreview.jsx";
 
 // Compare generated candidate architectures and load one. The human is the judge.
 export default function OptionsModal({ state, onUse, onClose }) {
@@ -55,11 +57,15 @@ export default function OptionsModal({ state, onUse, onClose }) {
                     </div>
                     <button className="btn" onClick={() => onUse(selected)} disabled={!selected.components.length}>{idea ? "Apply suggestion" : "Use this design"}</button>
                   </div>
+                  <div className="option-section-title">Sketch</div>
+                  <SketchPreview markdown={selected.sketch || selected.rationale} />
+                  <div className="option-section-title">Structured change</div>
                   <div className="option-components">
                     {selected.components.length ? selected.components.slice(0, 12).map((c, i) => <span className="option-chip" key={i}>{c}</span>) : <span className="option-empty">no components</span>}
                     {selected.components.length > 12 && <span className="option-empty">+{selected.components.length - 12} more</span>}
                   </div>
-                  <div className="option-rationale">{selected.rationale}</div>
+                  <div className="option-section-title">Rationale</div>
+                  <MarkdownText text={stripMermaid(selected.rationale)} className="option-rationale" />
                 </div>
               )}
             </div>
@@ -77,4 +83,8 @@ function firstSentence(text) {
   if (!clean) return "No rationale returned.";
   const sentence = clean.match(/^(.{20,220}?[.!?])\s/)?.[1] || clean.slice(0, 180);
   return sentence.length < clean.length ? `${sentence.replace(/[.!?]$/, "")}...` : sentence;
+}
+
+function stripMermaid(text) {
+  return String(text || "").replace(/```mermaid\s*\n[\s\S]*?```/gi, "").trim() || "No rationale returned.";
 }

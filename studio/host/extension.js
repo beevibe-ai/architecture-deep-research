@@ -32,6 +32,7 @@ function shared() {
       repoScan: await import("./repo-scan.mjs"),
       infer: await import("./infer.mjs"),
       cluster: await import("./cluster.mjs"),
+      sketch: await import("../shared/sketch.mjs"),
     }))();
   }
   return sharedPromise;
@@ -134,7 +135,7 @@ async function openCanvas(context) {
 }
 
 async function handleMessage(msg) {
-  const { ir, handoff, plan, schema, catalog, chat, layout, constraints, cluster } = await shared();
+  const { ir, handoff, plan, schema, catalog, chat, layout, constraints, cluster, sketch } = await shared();
   switch (msg.type) {
     case "ready":
       post({ type: "spec", spec: readSpec(ir, schema, layout) });
@@ -222,7 +223,7 @@ async function handleMessage(msg) {
       return;
 
     case "generateOptions":
-      await generateOptions(ir, chat, catalog, msg.spec, msg.idea || "", msg.context || "", msg.count);
+      await generateOptions(ir, chat, catalog, sketch, msg.spec, msg.idea || "", msg.context || "", msg.count);
       return;
 
     case "scanRepo":
@@ -388,7 +389,7 @@ function requirementsText(spec) {
   return reqs.map((n) => `- [${n.kind}${n.priority ? "/" + n.priority : ""}] ${n.title}${n.body ? ": " + n.body : ""}`).join("\n");
 }
 
-async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context = "", requestedCount = null) {
+async function generateOptions(ir, chat, catalog, sketch, baseSpec, idea = "", context = "", requestedCount = null) {
   const cleanIdea = String(idea || "").trim();
   const cleanContext = String(context || "").trim();
   const angles = optionAnglesFor({ idea: cleanIdea, context: cleanContext, requestedCount });
@@ -412,11 +413,12 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context =
     const ideaBlock = cleanIdea
       ? `User idea:\n${cleanIdea}${cleanContext ? `\n\nAdditional architecture guidance:\n${cleanContext}` : ""}`
       : "";
+    const sketchInstruction = "In the final answer, include one fenced Mermaid code block first; the first line inside the fence must be `flowchart TD`. Then add a short rationale. The sketch is advisory, must match the structured edits you made, should group ideas conceptually with concise labels, and should not imply the live canvas has changed.";
     const instr = cleanIdea
-      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, update, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Keep this as a small diff: for a short/vague idea, add at most two top-level architecture components and four edges unless the idea explicitly needs more. Prefer removals, rewiring, notes, and edge semantics over new boxes. Use apply_skill and arch_* tools only when they produce a coherent minimal change; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. Reply with a short rationale: one sentence for the change, then up to three bullets for tradeoffs.`
+      ? `Current design is loaded in the canvas. ${ideaBlock}\n\nCreate a concrete changed version of the current architecture optimized for ${angle.desc}. Preserve existing components unless the idea clearly replaces them. Reuse, rename, update, or rewire matching existing components instead of pasting a generic pattern template beside the real system. Keep this as a small diff: for a short/vague idea, add at most two top-level architecture components and four edges unless the idea explicitly needs more. Prefer removals, rewiring, notes, and edge semantics over new boxes. Use apply_skill and arch_* tools only when they produce a coherent minimal change; use add_note to capture assumptions, decisions, risks, or requirements. Keep the result coherent and focused, then run auto_layout on architecture. ${sketchInstruction}`
       : `Requirements:\n${reqs}\n\nDesign a system architecture optimized for ${angle.desc}. ` +
         `Build it on the architecture view using apply_skill and the arch_* tools — coherent and focused, not exhaustive. ` +
-        `When done, reply with a short rationale: one sentence for the approach, then up to three bullets for concrete tradeoffs.`;
+        `${sketchInstruction}`;
     try {
       const result = await withLlmFallback(({ provider, key, model, baseURL }) =>
         chat.runAssistant({ userText: instr, spec: seed, provider, model, apiKey: key, baseURL, catalog: loadCatalog(catalog) })
@@ -425,12 +427,13 @@ async function generateOptions(ir, chat, catalog, baseSpec, idea = "", context =
         id: angle.id,
         label: angle.label,
         rationale: result.text,
+        sketch: sketch.normalizeSketchMarkdown(result.text, result.spec, { title: `${angle.label} sketch` }),
         architecture: result.spec.views.architecture,
         notes: result.spec.notes || [],
         components: result.spec.views.architecture.nodes.filter((n) => !n.parent).map((n) => n.label),
       });
     } catch (err) {
-      options.push({ id: angle.id, label: angle.label, rationale: `(generation failed: ${err.message})`, architecture: { nodes: [], edges: [] }, components: [] });
+      options.push({ id: angle.id, label: angle.label, rationale: `(generation failed: ${err.message})`, sketch: "", architecture: { nodes: [], edges: [] }, components: [] });
     }
   }
   post({ type: "options", options, idea: cleanIdea });

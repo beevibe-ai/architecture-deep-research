@@ -105,6 +105,24 @@ function noteText(note) {
   return [note.title || "", note.body || ""].filter(Boolean).join("\n");
 }
 
+function notesBrief(notes) {
+  const recent = (notes || []).slice(-10);
+  if (!recent.length) return "none";
+  return recent.map((note) => {
+    const priority = note.priority ? `/${note.priority}` : "";
+    const refs = (note.refs || []).map((ref) => ref.ref).filter(Boolean);
+    return `- [${note.kind}${priority}] ${noteText(note)}${refs.length ? ` (refs: ${refs.join(", ")})` : ""}`;
+  }).join("\n");
+}
+
+function componentBrief(components) {
+  const topLevel = components.filter((component) => !component.parent);
+  if (!topLevel.length) return "none";
+  return topLevel
+    .map((component) => `${component.label}(${component.type || component.kind}, ${component.plane || "execution"})`)
+    .join(", ");
+}
+
 function unique(list) {
   return [...new Set(list.filter(Boolean))];
 }
@@ -112,7 +130,7 @@ function unique(list) {
 // A free-form notebook for requirements, ideas, decisions, questions, and
 // risks. The user writes rough text; we infer structure so plan.md/handoff keep
 // receiving clean note records.
-export default function NotesPanel({ spec, commit, busy = false, onSend }) {
+export default function NotesPanel({ spec, commit, busy = false, onSend, onSuggest }) {
   const [filter, setFilter] = useState("all");
   const [draft, setDraft] = useState("");
   const [kindOverride, setKindOverride] = useState(null);
@@ -166,6 +184,29 @@ export default function NotesPanel({ spec, commit, busy = false, onSend }) {
     if (!text || busy || !onSend) return;
     onSend(`Turn this rough architecture note into structured Notes entries. Use add_note for each requirement, decision, question, idea, or risk; infer priority and refs when obvious.\n\n${text}`);
     resetDraft();
+  };
+
+  const proposeDiagram = () => {
+    if (busy || !onSuggest) return;
+    const text = draft.trim();
+    const noteSeed = text || notes.slice(-6).map(noteText).filter(Boolean).join("\n");
+    if (!noteSeed) return;
+    const inferredText = text
+      ? `Draft inference: kind=${draftKind}${draftPriority ? `, priority=${draftPriority}` : ""}${draftRefs.length ? `, refs=${draftRefs.join(", ")}` : ""}`
+      : "";
+    onSuggest({
+      idea: `Turn rough notes into a proposed architecture diagram:\n${noteSeed}`,
+      context: [
+        "Treat these notes as a loose design brief, not a form submission.",
+        "Start with a freeform Mermaid sketch so the user can inspect the idea before accepting the structured canvas change.",
+        "Autocomplete missing architecture responsibilities only when the notes imply them.",
+        "Return one small proposed diagram change; do not directly mutate the canvas.",
+        "Prefer reusing, renaming, annotating, or rewiring existing components before adding boxes.",
+        inferredText,
+        `Current top-level components:\n${componentBrief(components)}`,
+        `Recent captured notes:\n${notesBrief(notes)}`,
+      ].filter(Boolean).join("\n\n"),
+    });
   };
 
   const setFreeText = (note, value) => {
@@ -247,6 +288,9 @@ export default function NotesPanel({ spec, commit, busy = false, onSend }) {
         )}
 
         <div className="notes-compose-actions">
+          <button className="mini-btn" onClick={proposeDiagram} disabled={busy || !onSuggest || (!draft.trim() && !notes.length)}>
+            Propose diagram
+          </button>
           <button className="btn" onClick={capture} disabled={!items.length}>
             {items.length > 1 ? `Capture ${items.length}` : "Capture"}
           </button>

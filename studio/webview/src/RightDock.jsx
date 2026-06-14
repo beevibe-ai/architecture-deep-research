@@ -54,7 +54,7 @@ export default function RightDock({
             violations={violations}
           />
         )}
-        {tab === "notes" && <NotesPanel spec={spec} commit={commit} busy={busy} onSend={sendFromNotes} />}
+        {tab === "notes" && <NotesPanel spec={spec} commit={commit} busy={busy} onSend={sendFromNotes} onSuggest={onSuggest} />}
         {tab === "ir" && <IrJsonPanel spec={spec} />}
         {tab === "plan" && <PlanPanel spec={spec} onWritePlan={onWritePlan} />}
       </div>
