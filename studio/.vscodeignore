@@ -1,0 +1,12 @@
+# The host is bundled into out/extension.js, so ship out/ + the built webview
+# (dist/) and nothing else. Everything below is source or tooling.
+host/**
+shared/**
+webview/**
+esbuild.mjs
+.vscode/**
+.gitignore
+**/*.test.mjs
+**/*.map
+node_modules/**
+.DS_Store

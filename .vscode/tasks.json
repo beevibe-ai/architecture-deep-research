@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "studio: build",
+      "type": "shell",
+      "command": "npm run build --prefix studio",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent" }
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "name": "adr-studio",
+  "displayName": "ADR Studio — Architecture Canvas",
+  "description": "Drag-and-drop system architecture canvas with an AI design assistant. Designs compile to architecture.spec.json for coding agents.",
+  "version": "0.1.0",
+  "publisher": "beevibe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/beevibe-ai/architecture-deep-research"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Visualization", "Other"],
+  "main": "./out/extension.js",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.32.1",
+    "openai": "^4.77.0",
+    "ajv": "8.20.0",
+    "dagre": "^0.8.5",
+    "elkjs": "^0.11.1",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "@vscode/vsce": "^3.2.0"
+  },
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "adrStudio.open",
+        "title": "Open Architecture Canvas",
+        "category": "ADR Studio"
+      },
+      {
+        "command": "adrStudio.setApiKey",
+        "title": "Set LLM API Key",
+        "category": "ADR Studio"
+      }
+    ],
+    "configuration": {
+      "title": "ADR Studio",
+      "properties": {
+        "adrStudio.specPath": {
+          "type": "string",
+          "default": ".adr/architecture.spec.json",
+          "description": "Workspace-relative path to the architecture spec the canvas reads and writes."
+        },
+        "adrStudio.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "openrouter",
+            "groq",
+            "together",
+            "deepseek",
+            "openai-compatible"
+          ],
+          "default": "anthropic",
+          "description": "Which LLM provider powers the design assistant. Set the key via 'ADR Studio: Set LLM API Key'."
+        },
+        "adrStudio.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-6",
+          "description": "Anthropic model the design assistant uses (when provider is anthropic)."
+        },
+        "adrStudio.openaiModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "OpenAI model the design assistant uses (when provider is openai)."
+        },
+        "adrStudio.openrouterModel": {
+          "type": "string",
+          "default": "openrouter/auto",
+          "description": "OpenRouter model used by the design assistant (when provider is openrouter)."
+        },
+        "adrStudio.groqModel": {
+          "type": "string",
+          "default": "llama-3.3-70b-versatile",
+          "description": "Groq model used by the design assistant (when provider is groq)."
+        },
+        "adrStudio.togetherModel": {
+          "type": "string",
+          "default": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          "description": "Together AI model used by the design assistant (when provider is together)."
+        },
+        "adrStudio.deepseekModel": {
+          "type": "string",
+          "default": "deepseek-v4-flash",
+          "description": "DeepSeek model used by the design assistant (when provider is deepseek)."
+        },
+        "adrStudio.openaiCompatibleBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for a custom OpenAI-compatible chat completions API, e.g. a self-hosted gateway. Used when provider is openai-compatible."
+        },
+        "adrStudio.openaiCompatibleModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model name for the custom OpenAI-compatible provider."
+        },
+        "adrStudio.repoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the repo whose real architecture 'Scan repo' infers and checks for drift. Empty = the open workspace folder."
+        },
+        "adrStudio.optionCount": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 3,
+          "description": "How many candidate designs to generate from the top-level 'Generate options' command. Co-design suggestions default to one recommendation unless the prompt asks for alternatives."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:webview": "vite build --config webview/vite.config.js",
+    "build:host": "node esbuild.mjs",
+    "build": "npm run build:webview && npm run build:host",
+    "watch:host": "node esbuild.mjs --watch",
+    "dev": "vite build --watch --config webview/vite.config.js",
+    "package": "npm run build && vsce package",
+    "test": "node --test shared/*.test.mjs host/*.test.mjs"
+  }
+}
