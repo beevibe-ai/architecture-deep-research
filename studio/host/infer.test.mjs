@@ -61,8 +61,8 @@ test("architectureFromScan builds a grounded baseline when LLM inference is unav
   assert.equal(edge("Web Client", "API Service", "http"), true);
   assert.equal(edge("API Service", "Postgres Database", "sql"), true);
   assert.equal(edge("API Service", "MCP Server", "http"), true);
-  assert.equal(edge("Postgres Database", "Agent Runtime", "event"), true);
-  assert.equal(spec.views.architecture.edges.some((e) => e.label === "LISTEN/NOTIFY"), true);
+  assert.equal(edge("API Service", "Agent Runtime", "event"), true);
+  assert.equal(spec.views.architecture.edges.some((e) => e.label === "via Postgres LISTEN/NOTIFY"), true);
 
   const distinctPositions = new Set(spec.views.architecture.nodes.map((n) => `${n.position.x},${n.position.y}`));
   assert.equal(distinctPositions.size, spec.views.architecture.nodes.length);

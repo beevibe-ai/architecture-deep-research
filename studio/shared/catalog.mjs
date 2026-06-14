@@ -132,7 +132,8 @@ export const layerLabel = (id) => (LAYER_BY_ID.get(id) || {}).label || id;
 
 // Type-level overrides where category alone is too coarse.
 const TYPE_LAYER = {
-  orchestrator: "orchestration", query_engine: "orchestration", agent_runtime: "orchestration",
+  orchestrator: "orchestration", query_engine: "orchestration",
+  agent_runtime: "capabilities",
   scheduler: "orchestration", state_manager: "orchestration", context_layer: "orchestration",
   agent_loop: "capabilities", tool_system: "capabilities", subagent: "capabilities", skill: "capabilities",
   task_queue: "capabilities", semantic_gateway: "capabilities", guardrail: "capabilities", permission_layer: "infrastructure",

@@ -43,6 +43,8 @@ function graphScore(node, edges) {
 
 function stableNodeSort(edges) {
   return (a, b) => {
+    const order = domainOrder(a) - domainOrder(b);
+    if (order) return order;
     const za = zoneIdForNode(a);
     const zb = zoneIdForNode(b);
     if (za !== zb) return ZONES.findIndex((z) => z.id === za) - ZONES.findIndex((z) => z.id === zb);
@@ -51,6 +53,28 @@ function stableNodeSort(edges) {
     if (sa !== sb) return sb - sa;
     return String(a.label || a.id).localeCompare(String(b.label || b.id));
   };
+}
+
+function domainOrder(node) {
+  const label = String(node.label || "").toLowerCase();
+  const type = String(node.type || "");
+  const order = [
+    ["client", /\b(web|client|ui|frontend)\b/],
+    ["gateway", /\b(gateway|edge)\b/],
+    ["service", /\b(api|service)\b/],
+    ["agent_runtime", /\bruntime\b/],
+    ["daemon", /\bdaemon\b/],
+    ["scheduler", /\bscheduler\b/],
+    ["executor", /\bexecutor\b/],
+    ["sandbox", /\bsandbox\b/],
+    ["mcp_server", /\bmcp\b/],
+    ["event_queue", /\b(queue|event|bus)\b/],
+    ["relational_db", /\b(postgres|database|db)\b/],
+    ["vector_db", /\b(vector|memory)\b/],
+    ["llm_provider", /\b(llm|model|openai|anthropic)\b/],
+  ];
+  const idx = order.findIndex(([t, re]) => type === t || re.test(label));
+  return idx === -1 ? 999 : idx;
 }
 
 function cardSize(node) {
@@ -89,7 +113,7 @@ function layoutChildren(parent, children, nodeLayouts, edges) {
     const h = Math.max(...row.map((item) => item.size.h), CARD_H);
     for (const item of row) {
       nodeLayouts.set(item.node.id, {
-        position: { x, y },
+        position: { x, y: y + Math.round((h - item.size.h) / 2) },
         size: item.size,
         role: "child",
       });
@@ -157,7 +181,7 @@ export function composeArchitectureView(spec, options = {}) {
       let x = ZONE_X + Math.round((zoneW - ZONE_X * 2 - w) / 2);
       for (const item of row) {
         nodeLayouts.set(item.node.id, {
-          position: { x, y: rowY },
+          position: { x, y: rowY + Math.round((h - item.size.h) / 2) },
           size: item.size,
           role: item.forceLeaf ? "leaf" : isContainer(item.node) ? "group" : "leaf",
           forceLeaf: item.forceLeaf,

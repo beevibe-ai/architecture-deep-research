@@ -75,9 +75,9 @@ export function architectureFromScan(scan, seed = emptySpec()) {
   const llm = llmTech.length ? add("LLM Provider", "llm_provider", { tech: llmTech.join(" / "), notes: "package.json" }) : null;
 
   connect(web, api, { protocol: "http" });
-  if (routes.some((r) => r.sql_ops?.length)) connect(api, db, { protocol: "sql" });
-  if (routes.some((r) => /^\/mcp\b/.test(r.path))) connect(api, mcp, { protocol: "http", label: "/mcp" });
-  if (routes.some((r) => r.notifications?.length)) connect(db, runtime, { kind: "streams", protocol: "event", label: "LISTEN/NOTIFY" });
+  if (routes.some((r) => r.sql_ops?.length)) connect(api, db, { protocol: "sql", label: "app state" });
+  if (routes.some((r) => /^\/mcp\b/.test(r.path)) && !(runtime && executor)) connect(api, mcp, { protocol: "http", label: "/mcp" });
+  if (routes.some((r) => r.notifications?.length)) connect(api, runtime, { kind: "publishes", protocol: "event", label: "via Postgres LISTEN/NOTIFY" });
   connect(api, cache, { protocol: "internal" });
   connect(api, queue, { kind: "publishes", protocol: "event" });
   connect(queue, runtime, { kind: "subscribes", protocol: "event" });
@@ -87,7 +87,7 @@ export function architectureFromScan(scan, seed = emptySpec()) {
   if (executor && mcp) connect(runtime || executor, mcp, { protocol: "internal", label: "tool calls" });
 
   if (spec.views.architecture.nodes.filter((n) => !n.parent).length > 1) {
-    apply({ op: "auto_layout", view: "architecture", direction: "LR" });
+    apply({ op: "auto_layout", view: "architecture", direction: "TB" });
   }
   return spec;
 }

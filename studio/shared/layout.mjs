@@ -65,6 +65,17 @@ const ARCH_LAYER_GAP = 96;
 const ARCH_MARGIN_X = 48;
 const ARCH_MARGIN_Y = 44;
 const ARCH_MAX_ROW_ITEMS = 5;
+const ARCH_LAYER_ORDER = [
+  "clients",
+  "orchestration",
+  "capabilities",
+  "tools",
+  "memory",
+  "knowledge",
+  "model",
+  "external",
+  "infrastructure",
+];
 
 function layoutArchitecture(nodes, edges, direction = "TB") {
   layoutNestedContainers(nodes, edges, () => ({ w: 180, h: 80 }), direction);
@@ -97,7 +108,7 @@ function layoutArchitecture(nodes, edges, direction = "TB") {
   }
 
   if (direction === "LR") layoutLayersLeftToRight(layers, byLayer, sizeOf);
-  else layoutLayersTopToBottom(layers, byLayer, sizeOf);
+  else layoutLayersTopToBottom(layers, byLayer, sizeOf, rough);
 }
 
 function layoutNestedContainers(nodes, edges, leafSize, direction) {
@@ -133,9 +144,10 @@ function layoutNestedContainers(nodes, edges, leafSize, direction) {
 
 function orderedLayers(nodes) {
   const present = new Set(nodes.map((n) => layerForNode(n)));
-  const known = LAYERS.map((l) => l.id).filter((id) => present.has(id));
-  const extra = [...present].filter((id) => !known.includes(id)).sort();
-  return [...known, ...extra];
+  const known = ARCH_LAYER_ORDER.filter((id) => present.has(id));
+  const legacyKnown = LAYERS.map((l) => l.id).filter((id) => present.has(id) && !known.includes(id));
+  const extra = [...present].filter((id) => !known.includes(id) && !legacyKnown.includes(id)).sort();
+  return [...known, ...legacyKnown, ...extra];
 }
 
 function rowsFor(items, maxItems) {
@@ -148,7 +160,12 @@ function rowsFor(items, maxItems) {
   return rows;
 }
 
-function layoutLayersTopToBottom(layers, byLayer, sizeOf) {
+function layoutLayersTopToBottom(layers, byLayer, sizeOf, rough = {}) {
+  const roughXs = [...byLayer.values()]
+    .flat()
+    .map((node) => rough[node.id]?.x)
+    .filter((x) => Number.isFinite(x));
+  const minRoughX = roughXs.length ? Math.min(...roughXs) : 0;
   let y = ARCH_MARGIN_Y;
   for (const layer of layers) {
     const nodes = byLayer.get(layer) || [];
@@ -157,11 +174,15 @@ function layoutLayersTopToBottom(layers, byLayer, sizeOf) {
     const maxItems = Math.min(ARCH_MAX_ROW_ITEMS, Math.max(1, Math.ceil(Math.sqrt(measured.length * 2))));
     const rows = rowsFor(measured, maxItems);
     for (const row of rows) {
-      let x = ARCH_MARGIN_X;
       const rowH = Math.max(...row.map((item) => item.size.h));
+      let nextX = ARCH_MARGIN_X;
       for (const item of row) {
+        const desiredX = Number.isFinite(rough[item.node.id]?.x)
+          ? rough[item.node.id].x - minRoughX + ARCH_MARGIN_X
+          : ARCH_MARGIN_X;
+        const x = Math.max(Math.round(desiredX), nextX);
         item.node.position = { x, y };
-        x += item.size.w + ARCH_NODE_GAP_X;
+        nextX = x + item.size.w + ARCH_NODE_GAP_X;
       }
       y += rowH + ARCH_NODE_GAP_Y;
     }
