@@ -53,7 +53,7 @@ const VIEW_CONFIGS = [
   },
 ];
 
-export function summarizeSpecChange(beforeSpec, afterSpec, source = "Last change") {
+export function summarizeSpecChange(beforeSpec, afterSpec, source = "Canvas edit") {
   const result = {
     source,
     total: 0,

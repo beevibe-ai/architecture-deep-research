@@ -24,37 +24,6 @@ function addedViolations(beforeSpec, nextSpec) {
   return lint(nextSpec).violations.filter((v) => !before.has(violationKey(v)));
 }
 
-function ChangeSummary({ change, activeView, onClear }) {
-  if (!change?.total) return null;
-  const activeItems = change.items.filter((item) => item.view === activeView);
-  const items = (activeItems.length ? activeItems : change.items).slice(0, 6);
-  const overflow = Math.max(0, change.items.length - items.length);
-  return (
-    <div className="change-summary" role="status" aria-live="polite">
-      <div className="change-summary-head">
-        <div>
-          <div className="change-summary-title">Last change</div>
-          <div className="change-summary-source">{change.source}</div>
-        </div>
-        <div className="change-summary-counts">
-          <span className="change-count added">{change.added} added</span>
-          <span className="change-count updated">{change.updated} updated</span>
-          <span className="change-count removed">{change.removed} removed</span>
-        </div>
-        <button className="mini-btn ghost" onClick={onClear}>Hide</button>
-      </div>
-      <div className="change-summary-list">
-        {items.map((item, index) => (
-          <span className={`change-pill ${item.change}`} key={`${item.change}-${item.id || item.label}-${index}`}>
-            {item.change} {item.label}
-          </span>
-        ))}
-        {overflow ? <span className="change-more">+{overflow} more</span> : null}
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [spec, setSpec] = useState(emptySpec());
   const [catalog, setCatalog] = useState(CATALOG);
@@ -510,7 +479,6 @@ export default function App() {
         <div className="view-col">
           <ViewTabs active={activeView} onChange={setActiveView} counts={counts} />
           <div className="view-stage">
-            <ChangeSummary change={lastChange} activeView={activeView} onClear={() => setLastChange(null)} />
             {activeView === "architecture" && <ArchitectureView spec={spec} commit={commit} catalog={catalog} driftStatus={driftStatus} changeHighlights={lastChange?.byView?.architecture} onSuggest={suggestOptions} />}
             {activeView === "data_model" && <DataModelView spec={spec} commit={commit} />}
             {activeView === "flows" && <FlowsView spec={spec} commit={commit} />}
